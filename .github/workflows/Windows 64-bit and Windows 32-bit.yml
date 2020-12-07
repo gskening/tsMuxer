@@ -1,0 +1,34 @@
+name: Build for Windows 64-bit and Windows 32-bit
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    container:
+      image: docker://justdan96/tsmuxer_build:latest
+      volumes:
+      - /workspace:/github/workspace
+
+    steps:
+    - uses: actions/checkout@master
+      name: checkout
+
+    - run: rm -f bin/.gitkeep
+      name: clean-bin-folder
+
+    - run: ./rebuild_mxe_with_gui_docker.sh
+      name: build-for-win64
+
+    - run: ./rebuild_mxe32_with_gui_docker.sh
+      name: build-for-win32
+
+    - uses: actions/upload-artifact@master
+      with:
+         name: HA_tsMuxeR GUI-2020-12-06
+         path: bin
+      name: upload-artefact
