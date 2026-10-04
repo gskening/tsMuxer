@@ -796,7 +796,38 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
         }
     }
 
-    AbstractStreamReader* codecReader = createCodec(codec, addParams, fileList[0], mergePlayItems(mplsInfoList));
+    // delPulldown on MPEG-2 promises that the frame rate goes from 30 to 24 when pulldown is present.
+    // Only the window kept that promise, by writing fps=24000/1001 into the meta itself. A meta
+    // written by hand, or the command line, cleared the repeat flags and kept 29.97, so film played
+    // a quarter too fast. Ask the stream, as the listing does, and supply the rate when it is
+    // pulldown and nobody chose one.
+    map<string, string> readerParams = addParams;
+    if (codec == "V_MPEG-2" && addParams.count("delPulldown") && !addParams.count("fps"))
+    {
+        const DetectStreamRez probe = DetectStreamReader(m_readManager, fileList[0], false);
+        for (const CheckStreamRez& s : probe.streams)
+        {
+            if (s.codecInfo.codecID != CODEC_V_MPEG2 || (pid && s.trackID != pid))
+                continue;
+            const size_t at = s.streamDescr.find("Frame rate: ");
+            if (s.streamDescr.find("(pulldown)") == string::npos || at == string::npos)
+                break;
+            const double streamFps = strToDouble(s.streamDescr.substr(at + 12).c_str());
+            const char* filmFps = fabs(streamFps - 29.97) < 0.01  ? "24000/1001"
+                                  : fabs(streamFps - 30.0) < 0.01 ? "24"
+                                                                  : nullptr;
+            if (filmFps)
+            {
+                readerParams["fps"] = filmFps;
+                LTRACE(LT_INFO, 2,
+                       "delPulldown: the MPEG-2 stream carries pulldown at " << streamFps << " fps, so it is muxed at "
+                                                                             << filmFps << " fps.");
+            }
+            break;
+        }
+    }
+
+    AbstractStreamReader* codecReader = createCodec(codec, readerParams, fileList[0], mergePlayItems(mplsInfoList));
     codecReader->setStreamIndex(static_cast<int>(m_codecInfo.size() + 1));
     codecReader->setStreamName(fileList[0]);
     codecReader->setTimeOffset(m_timeOffset);
