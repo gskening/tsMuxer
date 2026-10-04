@@ -368,7 +368,15 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
         // Bit depth for LPCM
         const auto lpcmReader = dynamic_cast<LPCMStreamReader*>(codecReader);
         if (lpcmReader)
+        {
             track.bitDepth = lpcmReader->m_bitsPerSample;
+            // A_PCM/INT/LIT is plain little endian PCM in WAV channel order. Left to itself the
+            // reader produces Blu-ray LPCM: a 4 byte header on every 5 ms frame, big endian samples,
+            // Blu-ray channel order and a silent extra channel when the count is odd. Every other
+            // player decoded that as noise. Its demux mode is the one that writes .wav, which is
+            // exactly the payload this codec ID promises.
+            lpcmReader->setDemuxMode(true);
+        }
     }
     else if (codecName[0] == 'S')
     {
