@@ -2547,6 +2547,14 @@ bool MatroskaMuxer::muxPacket(AVPacket& avPacket)
     {
         if (it->second.trackType != MKV_TRACK_TYPE_SUBTITLE)
             m_seenStreams.insert(avPacket.stream_index);
+        if (it->second.trackType == 1)
+        {
+            auto& [lastPts, count] =
+                m_preHeaderPictures.try_emplace(avPacket.stream_index, avPacket.pts, 0).first->second;
+            if (count == 0 || avPacket.pts != lastPts)
+                ++count;
+            lastPts = avPacket.pts;
+        }
 
         // Buffer a copy of this packet
         BufferedPacket bp;
@@ -2557,7 +2565,20 @@ bool MatroskaMuxer::muxPacket(AVPacket& avPacket)
         bp.data.assign(avPacket.data, avPacket.data + avPacket.size);
         m_preHeaderPackets.push_back(std::move(bp));
 
-        if (m_seenStreams.size() >= tracksNeedingFirstPacket())
+        // The timeline starts at the earliest timestamp in this buffer, so the buffer must reach
+        // every picture that can come before it. A stream that begins at an open GOP, an HEVC CRA
+        // or an MPEG-2 GOP whose B pictures lead it, delivers those leading pictures AFTER its
+        // first one, with earlier timestamps. Writing the header at the first video packet left
+        // them before zero: -125, -83 and -41 ms on an HEVC CRA start, which mkvmerge moved to
+        // zero and ffmpeg read as a 42 ms file. So each video track first delivers a few pictures.
+        bool videoReady = true;
+        for (const auto& [idx, track] : m_tracks)
+            if (track.trackType == 1 && track.foldedIntoStream < 0)
+            {
+                const auto pic = m_preHeaderPictures.find(idx);
+                videoReady &= pic != m_preHeaderPictures.end() && pic->second.second >= PRE_HEADER_PICTURES;
+            }
+        if (m_seenStreams.size() >= tracksNeedingFirstPacket() && videoReady)
         {
             writeDeferredHeader();
             replayBufferedPackets();
