@@ -234,8 +234,21 @@ int TrueHDAC3MergeReader::readPacket(AVPacket& avPacket)
         // queue alone therefore never re-arms, Priority 1 is never reached again, and that frame
         // dies with the reader: N frames in and N-1 out, on every length, for the same reason
         // every time.
+        // ** A DUE CORE FRAME WAITS; IT IS NOT POSTPONED. ** This also required one to be already
+        // BUFFERED, so a momentarily empty queue put the frame out one unit LATE and, the surplus
+        // having been banked, the next one one unit EARLY. Measured on a two hour track taken from
+        // a Matroska: ten such postponements, eighteen core frames moved by one 0.833 ms unit, and
+        // a combined stream that no longer matched its source byte for byte although both
+        // substreams did. A gap histogram does NOT catch all ten, because a frame due exactly on a
+        // unit boundary turns a gap of 38 into 39, which is an ordinary value.
+        //
+        // Arming the wait with nothing buffered sends readPacket to Priority 3, which asks for more
+        // AC-3 and gets it, because the demuxer feeds both sides in lockstep. The only reason not to
+        // wait is that none is coming, and that is the AC-3 side's own end of data: with
+        // merge-ac3-file the core can end while most of the lossless track remains, so asking the
+        // LOSSLESS stream instead threw part way through a short core run rather than warning.
         if (m_ac3SamplesPerSyncFrame > 0 && m_demuxedTHDSamplesForAc3 >= m_ac3SamplesPerSyncFrame &&
-            (!m_ac3FrameQueue.empty() || !m_delayedAc3Buffer.isEmpty()))
+            (!m_ac3FrameQueue.empty() || !m_delayedAc3Buffer.isEmpty() || !m_ac3SideEof))
         {
             m_demuxedTHDSamplesForAc3 -= m_ac3SamplesPerSyncFrame;
             m_thdDemuxWaitAc3 = true;

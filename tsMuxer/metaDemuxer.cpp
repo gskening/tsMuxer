@@ -2359,6 +2359,12 @@ int StreamInfo::read()
                 if (ac3Data != nullptr)
                     ac3Data += mergeReader->getTmpBufferSize();
                 mergeReader->setAc3SideData(ac3Data, ac3Cnt);
+                // The reader must be able to tell "none buffered yet" from "there will never be
+                // any more", because a core frame that is due waits for one. With merge-ac3-file
+                // the AC-3 can end while most of the lossless track is still to come, so the
+                // lossless stream's own end of data is the wrong thing to ask.
+                if (ac3Rez == BufferedFileReader::DATA_EOF)
+                    mergeReader->setAc3SideEof();
             }
         }
 

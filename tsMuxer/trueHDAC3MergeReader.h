@@ -46,6 +46,7 @@ class TrueHDAC3MergeReader final : public MLPStreamReader
     void setNewStyleAudioPES(bool value) { m_useNewStyleAudioPES = value; }
 
     void setAc3SideData(const uint8_t* data, uint32_t len);
+    void setAc3SideEof() { m_ac3SideEof = true; }
 
     const CodecInfo& getCodecInfo() override;
     int readPacket(AVPacket& avPacket) override;
@@ -73,6 +74,13 @@ class TrueHDAC3MergeReader final : public MLPStreamReader
     std::deque<Ac3QueuedFrame> m_ac3FrameQueue;
 
     bool m_thdDemuxWaitAc3;
+    // Whether the AC-3 SIDE has run out, which is not the same question as whether the lossless
+    // stream has. A core frame that is DUE but has none buffered must WAIT for one, because
+    // emitting it late moves it against the lossless frames. The only reason not to wait is that
+    // nothing is coming, and with merge-ac3-file the AC-3 can end while most of the TrueHD
+    // remains: a core cut to a quarter made the lossless stream's own end of data the wrong
+    // question to ask, and waiting on it threw part way through instead of warning.
+    bool m_ac3SideEof = false;
     MemoryBlock m_delayedAc3Buffer;
     MemoryBlock m_immediateAc3Buffer;
     AVPacket m_delayedAc3Packet;
