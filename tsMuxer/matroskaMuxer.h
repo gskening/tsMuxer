@@ -428,6 +428,8 @@ class MatroskaMuxer final : public AbstractMuxer
     // path, which writes its frames later than it finishes them.
     void writeBlock(MkvTrackInfo& track, const uint8_t* frameData, int frameSize, int64_t pts, uint8_t pendingFlags);
     void drainHeldFrames(MkvTrackInfo& track, bool atEndOfStream);
+    void finishFoldedTracks();  // release every held fold frame and report the merge, once
+    bool m_foldsFinished = false;
 
     // Internal mux logic (called after header is written)
     bool muxPacketInternal(AVPacket& avPacket);

@@ -2649,7 +2649,25 @@ bool MatroskaMuxer::doFlush()
     // Flush all pending accumulated frames
     for (auto& [streamIdx, track] : m_tracks) flushPendingFrame(track);
 
-    // Then release every base layer frame still held for its enhancement layer.
+    finishFoldedTracks();
+
+    flushCluster();
+    return true;
+}
+
+// Release every base layer frame still held for its enhancement layer, and say how the merge went.
+// doFlush is the usual place, but when some track never delivers a packet the header is first
+// written in close(): doFlush then found no folded track at all, and the frames close() replays
+// stayed held and were never written. The last frames of a dual layer Dolby Vision or MVC track
+// went missing with no message. Called from both, it does its work once there is any.
+void MatroskaMuxer::finishFoldedTracks()
+{
+    bool anyFold = false;
+    for (auto& [streamIdx, track] : m_tracks) anyFold |= track.foldElStreamIndex >= 0;
+    if (m_foldsFinished || !anyFold)
+        return;
+    m_foldsFinished = true;
+
     for (auto& [streamIdx, track] : m_tracks)
         if (track.foldElStreamIndex >= 0)
             drainHeldFrames(track, true);
@@ -2674,9 +2692,6 @@ bool MatroskaMuxer::doFlush()
                                : " could not be matched to a base layer picture")
                        << " and were left out.");
     }
-
-    flushCluster();
-    return true;
 }
 
 // ──────────────── Cues ───────────────────────────────────────────────────────
@@ -3242,6 +3257,7 @@ bool MatroskaMuxer::close()
 
     // Flush any pending accumulated frames for all tracks
     for (auto& [streamIdx, track] : m_tracks) flushPendingFrame(track);
+    finishFoldedTracks();
 
     // Flush any remaining cluster data
     flushCluster();
