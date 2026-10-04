@@ -1047,6 +1047,12 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track)
                                  static_cast<int>(track.codecPrivate.size()));
     }
 
+    // Opus needs 80 ms of decoded audio before a seek point to converge, and its Matroska mapping
+    // says so with SeekPreRoll. Both mkvmerge and ffmpeg write it; without it a player that seeks
+    // starts decoding cold, at the seek point itself.
+    if (track.codecID == CODEC_A_OPUS)
+        pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_SEEKPREROLL, 80000000);
+
     if (track.fps > 0)
     {
         const uint64_t durationNs = static_cast<uint64_t>(1000000000.0 / track.fps);

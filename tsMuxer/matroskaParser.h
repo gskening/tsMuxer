@@ -92,6 +92,7 @@ static constexpr uint8_t MATROSKA_ID_TRACKAUDIO = 0xE1;
 static constexpr uint8_t MATROSKA_ID_TRACKVIDEO = 0xE0;
 static constexpr uint8_t MATROSKA_ID_CODECID = 0x86;
 static constexpr uint16_t MATROSKA_ID_CODECPRIVATE = 0x63A2;
+static constexpr uint16_t MATROSKA_ID_SEEKPREROLL = 0x56BB;
 static constexpr uint32_t MATROSKA_ID_CODECNAME = 0x258688;
 static constexpr uint32_t MATROSKA_ID_CODECINFOURL = 0x3B4040;
 static constexpr uint32_t MATROSKA_ID_CODECDOWNLOADURL = 0x26B240;
