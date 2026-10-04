@@ -139,7 +139,16 @@ All pull requests must pass code style checks which are executed with `clang-for
 
 ## Submitting Bugs
 
-You can report issues directly on Github, that would be a really useful contribution given that we lack some user testing on the project. Please document as much as possible the steps to reproduce your problem (even better with screenshots).
+Please report problems on GitHub with the bug report form. Every report helps, and a complete one can be fixed much sooner. Please include:
+
+* the version, from the first line of the log or the title bar of the window
+* the full log, especially the lines at the end of the run
+* the meta file: the text in the Meta file box of the window, or your .meta file
+* what you expected, and what happened instead
+* for a playback problem, the player or device you used
+* the source: what kind of file or disc it is, and a MediaInfo dump if you can
+
+A short sample that shows the problem helps most of all. A result often depends on the source, the player and the settings, so something that works on one machine can still fail on another, and a report is how that comes to light.
 
 ## Building
 

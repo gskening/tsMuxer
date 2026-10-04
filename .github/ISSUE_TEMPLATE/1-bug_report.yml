@@ -49,6 +49,7 @@ body:
       options:
         - BDMV folder to ISO
         - Muxing / authoring a disc
+        - Muxing to Matroska (MKV)
         - Demuxing
         - Playback of the result
         - Something else
@@ -59,7 +60,7 @@ body:
     id: what-happened
     attributes:
       label: What happened
-      description: Describe the problem. What did you expect, and what happened instead?
+      description: Describe the problem. What did you expect, and what happened instead? For a playback problem, say which player or device you used.
     validations:
       required: true
 
@@ -87,6 +88,18 @@ body:
       render: shell
     validations:
       required: true
+
+  - type: textarea
+    id: meta
+    attributes:
+      label: Meta file (very helpful)
+      description: >
+        In the window, copy the text from the Meta file box (Metadatei in German). On the command
+        line, paste your .meta file. It holds every setting of the run, so the problem can be
+        reproduced exactly.
+      render: shell
+    validations:
+      required: false
 
   - type: textarea
     id: source
