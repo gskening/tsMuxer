@@ -44,6 +44,10 @@ class AC3StreamReader final : public SimplePacketizerReader, public AC3Codec
     // identified as TrueHD, and only once.
     void probeTrueHD();
     bool m_needTrueHDProbe;
+    // E-AC-3 without an AC-3 core: the timestamp of the last independent frame, which the
+    // dependent frames after it belong to
+    void stampDependentFrame(AVPacket& avPacket);
+    int64_t m_lastIndependentPts = -1;
 
    protected:
     int getHeaderLen() override { return AC3Codec::getHeaderLen(); }

@@ -206,12 +206,34 @@ int AC3StreamReader::readPacket(AVPacket& avPacket)
     }
     if (m_true_hd_mode && !m_downconvertToAC3)
         return readPacketTHD(avPacket);
-    return SimplePacketizerReader::readPacket(avPacket);
+    const int rez = SimplePacketizerReader::readPacket(avPacket);
+    if (rez == 0)
+        stampDependentFrame(avPacket);
+    return rez;
+}
+
+// A dependent E-AC-3 frame belongs to the independent frame before it: together they are one
+// period, a 7.1 stream carrying channels 7 and 8 in the dependent substream. The frame was stamped
+// with the time the reader had moved on to, which is the NEXT independent frame's, so in Matroska
+// each dependent frame was glued to the following period and a lone dependent frame closed the
+// track. Only E-AC-3 without an AC-3 core: in the Blu-ray arrangement the E-AC-3 frame is the one
+// that carries the period's time, and that already works.
+void AC3StreamReader::stampDependentFrame(AVPacket& avPacket)
+{
+    if (avPacket.size < 6 || avPacket.data[0] != 0x0B || avPacket.data[1] != 0x77 || (avPacket.data[5] >> 3) <= 10)
+        return;
+    const bool dependent = (avPacket.data[2] >> 6) == 1;
+    if (!dependent)
+        m_lastIndependentPts = avPacket.pts;
+    else if (!m_bit_rate && m_lastIndependentPts >= 0)
+        avPacket.pts = avPacket.dts = m_lastIndependentPts;
 }
 
 int AC3StreamReader::flushPacket(AVPacket& avPacket)
 {
     const int rez = SimplePacketizerReader::flushPacket(avPacket);
+    if (rez > 0 && !m_true_hd_mode)
+        stampDependentFrame(avPacket);
     if (rez > 0 && m_true_hd_mode && !m_downconvertToAC3)
     {
         // The last frame of a braided track arrives through here, and it can be a CORE frame.
