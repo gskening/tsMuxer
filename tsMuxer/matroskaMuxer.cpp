@@ -2264,6 +2264,21 @@ void MatroskaMuxer::flushPendingFrame(MkvTrackInfo& track)
     case CODEC_V_MPEG4_H266:
         convertedData = convertAnnexBToLengthPrefixed(track, frameData, frameSize);
         break;
+    case CODEC_A_AAC:
+        // A_AAC carries raw frames and describes them once, in CodecPrivate. The reader hands over
+        // ADTS frames, header included, and they used to go in as they were: ffmpeg forgives that,
+        // but mkvextract puts its own ADTS header in front of each block on the way out, and the
+        // doubled header decodes to nothing. 7 bytes, or 9 when a CRC follows the header.
+        if (frameSize >= 7 && frameData[0] == 0xFF && (frameData[1] & 0xF6) == 0xF0)
+        {
+            const int headerLen = (frameData[1] & 0x01) ? 7 : 9;
+            if (frameSize > headerLen)
+            {
+                frameData += headerLen;
+                frameSize -= headerLen;
+            }
+        }
+        break;
     default:
         break;
     }
