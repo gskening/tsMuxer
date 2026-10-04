@@ -47,6 +47,7 @@ class AC3Codec
         AC3Codec::setTestMode(false);
         m_frameDuration = 0;
         m_bit_rateExt = 0;
+        m_nextFrameIsExt = false;
         m_bit_rate = 0;
         m_channels = 0;
         m_lfeon = 0;
@@ -65,6 +66,8 @@ class AC3Codec
 
     virtual int getHeaderLen() { return AC3_HEADER_SIZE; }
     [[nodiscard]] bool isEAC3() const { return m_bsid > 10; }
+    // An AC-3 core with an E-AC-3 part beside it, the Blu-ray DD+ arrangement, as seen so far
+    [[nodiscard]] bool carriesEac3() const { return m_bit_rateExt != 0 || m_nextFrameIsExt || m_bsid > 10; }
     [[nodiscard]] bool isAC3() const { return m_bsidBase > 0; }
     void setDownconvertToAC3(const bool value) { m_downconvertToAC3 = value; }
     [[nodiscard]] bool getDownconvertToAC3() const { return m_downconvertToAC3; }
@@ -124,6 +127,7 @@ class AC3Codec
     int m_samples;
 
     uint32_t m_bit_rateExt;
+    bool m_nextFrameIsExt;  // the frame after this AC-3 one is E-AC-3, so this one adds no time
     bool m_extChannelsExists;
 
     static bool crc32(const uint8_t* buf, int length);

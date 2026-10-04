@@ -1401,6 +1401,12 @@ void MatroskaMuxer::refreshTrackProperties()
             track.codecID = info.codecID;
             track.matroskaCodecID = codecNameToMatroskaID(info.programName, info.codecID);
         }
+        // An AC-3 core with an E-AC-3 part beside it is E-AC-3 to a decoder, and mkvmerge declares
+        // it so. It went out as A_AC3, named after whichever frame happened to be read last.
+        if (const auto ac3 = dynamic_cast<AC3StreamReader*>(track.codecReader);
+            ac3 && track.ac3CoreOfStream < 0 && track.matroskaCodecID == MATROSKA_CODEC_ID_AUDIO_AC3 &&
+            ac3->carriesEac3())
+            track.matroskaCodecID = MATROSKA_CODEC_ID_AUDIO_EAC3;
         // MPEG audio is one reader for three layers, and Matroska names each: an MP2 track was
         // declared A_MPEG/L3. The layer is known once a frame has been read.
         if (const auto mpa = dynamic_cast<MpegAudioStreamReader*>(track.codecReader); mpa && mpa->getLayer() >= 1)

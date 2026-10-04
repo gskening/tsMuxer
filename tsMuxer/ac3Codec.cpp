@@ -413,6 +413,16 @@ int AC3Codec::decodeFrame(uint8_t* buf, uint8_t* end, int& skipBytes)
 
             m_frameDuration = (INTERNAL_PTS_FREQ * m_samples) / m_sample_rate;
             rez = m_frame_size;
+
+            // In the Blu-ray DD+ arrangement every period is an AC-3 core frame followed by an
+            // E-AC-3 frame, and the pair shares one timestamp. That was only known once the first
+            // E-AC-3 frame had been read, so the first core frame took a whole frame's time for
+            // itself and everything after it ran 32 ms late. Look at the frame behind it instead.
+            if (m_bsid <= 10 && !m_bit_rateExt && end - buf >= m_frame_size + 6)
+            {
+                const uint8_t* next = buf + m_frame_size;
+                m_nextFrameIsExt = next[0] == 0x0B && next[1] == 0x77 && (next[5] >> 3) > 10;
+            }
         }
 
         if (getTestMode() && !m_true_hd_mode)
@@ -573,7 +583,7 @@ uint64_t AC3Codec::getFrameDuration() const
         return 0;
 
     // AC3 frame in AC3/EAC3 stream: wait for EAC3 frame
-    if (m_bit_rateExt && m_bsid <= 10)
+    if ((m_bit_rateExt || m_nextFrameIsExt) && m_bsid <= 10)
         return 0;
 
     // Interleaved AC3/TrueHD: wait for end of True HD frame
