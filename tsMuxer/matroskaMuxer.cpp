@@ -2450,7 +2450,6 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
 
     m_clusterBuf.insert(m_clusterBuf.end(), frameData, frameData + frameSize);
     m_clusterDataSize += hdrLen + blockPayloadSize;
-    track.anyBlockWritten = true;
 }
 
 // Emit held base layer frames whose enhancement layer access unit has arrived complete.

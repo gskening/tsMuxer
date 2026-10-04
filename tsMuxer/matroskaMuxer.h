@@ -188,7 +188,6 @@ class MatroskaMuxer final : public AbstractMuxer
         int64_t pendingDts;  // a VC-1 block is stamped with it, see writeBlock's caller
         uint8_t pendingFlags;
         bool hasPendingFrame;
-        bool anyBlockWritten;  // used to spot the leading AC-3 core frame of a TrueHD track
 
         // The two largest block timestamps written on this track, in internal units, from which
         // close() measures where the track ends. The largest, not the latest: video is written in
@@ -237,7 +236,6 @@ class MatroskaMuxer final : public AbstractMuxer
               pendingDts(0),
               pendingFlags(0),
               hasPendingFrame(false),
-              anyBlockWritten(false),
               maxBlockPts(0),
               nextMaxBlockPts(0),
               hasMaxBlockPts(false),
