@@ -189,6 +189,14 @@ class MatroskaMuxer final : public AbstractMuxer
         bool hasPendingFrame;
         bool anyBlockWritten;  // used to spot the leading AC-3 core frame of a TrueHD track
 
+        // The two largest block timestamps written on this track, in internal units, from which
+        // close() measures where the track ends. The largest, not the latest: video is written in
+        // decode order.
+        int64_t maxBlockPts;
+        int64_t nextMaxBlockPts;  // the largest below maxBlockPts
+        bool hasMaxBlockPts;
+        bool hasNextMaxBlockPts;
+
         MkvTrackInfo()
             : streamIndex(0),
               trackNumber(0),
@@ -227,7 +235,11 @@ class MatroskaMuxer final : public AbstractMuxer
               pendingPts(0),
               pendingFlags(0),
               hasPendingFrame(false),
-              anyBlockWritten(false)
+              anyBlockWritten(false),
+              maxBlockPts(0),
+              nextMaxBlockPts(0),
+              hasMaxBlockPts(false),
+              hasNextMaxBlockPts(false)
         {
         }
     };
@@ -369,7 +381,6 @@ class MatroskaMuxer final : public AbstractMuxer
     // Timecode tracking
     int64_t m_firstTimecode;  // first PTS seen (in INTERNAL_PTS_FREQ units) – used as reference
     bool m_firstTimecodeSet;
-    int64_t m_lastTimecodeMs;        // last PTS seen (in ms relative to start) for Duration
     int64_t m_durationValueFilePos;  // absolute file position of the Duration float64 value
 
     // Deferred header writing: SegmentInfo + Tracks are written once ALL tracks

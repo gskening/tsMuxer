@@ -217,7 +217,6 @@ MatroskaMuxer::MatroskaMuxer(MuxerManager* owner)
       m_cuesPos(0),
       m_firstTimecode(0),
       m_firstTimecodeSet(false),
-      m_lastTimecodeMs(0),
       m_durationValueFilePos(0),
       m_headerWritten(false),
       m_destinationOpen(false)
@@ -2299,9 +2298,22 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
     // Compute PTS relative to stream start (convert internal PTS units to milliseconds)
     const int64_t relMs = (pts - m_firstTimecode) / INTERNAL_PTS_PER_MS;
 
-    // Track the maximum timecode for the Duration element
-    if (relMs > m_lastTimecodeMs)
-        m_lastTimecodeMs = relMs;
+    // This track's two largest timestamps, for the Segment Duration at close
+    if (!track.hasMaxBlockPts || pts > track.maxBlockPts)
+    {
+        if (track.hasMaxBlockPts)
+        {
+            track.nextMaxBlockPts = track.maxBlockPts;
+            track.hasNextMaxBlockPts = true;
+        }
+        track.maxBlockPts = pts;
+        track.hasMaxBlockPts = true;
+    }
+    else if (pts < track.maxBlockPts && (!track.hasNextMaxBlockPts || pts > track.nextMaxBlockPts))
+    {
+        track.nextMaxBlockPts = pts;
+        track.hasNextMaxBlockPts = true;
+    }
 
     // Decide whether to start a new cluster
     const bool needNewCluster = !m_clusterOpen || (relMs - m_clusterTimecodeMs >= CLUSTER_MAX_DURATION_MS) ||
@@ -3180,20 +3192,50 @@ bool MatroskaMuxer::close()
     ebml_write_size_fixed(sizeBuf, segmentSize, 8);
     m_file.write(sizeBuf, 8);
 
-    // Patch Duration element: highest PTS + one frame duration
-    if (m_durationValueFilePos > 0 && m_lastTimecodeMs > 0)
+    // Patch the Duration element with the end of the track that ends LAST, each track measured by
+    // its OWN frames.
+    //
+    // It used to be the largest block start over all tracks, cut to whole milliseconds, plus one
+    // VIDEO frame, whichever track that block belonged to. The last block to start is usually
+    // audio, so a 0.833 ms TrueHD access unit was given a 41.7 ms video frame and the file came out
+    // 40 ms longer than mkvmerge and ffmpeg make it from the same streams. An audio only file had
+    // nothing added and came out one frame short.
+    //
+    //   video     its largest timestamp plus one frame: the step its reader advances by and the
+    //             DefaultDuration written for it. The largest, not the last written, because video
+    //             goes out in decode order
+    //   audio     its largest timestamp plus the distance to the one before it. NOT the packet's own
+    //             duration: a braided TrueHD reader takes its timestamps from the sample count but
+    //             its durations from the AC-3 side, so an access unit there can claim a whole AC-3
+    //             frame
+    //   subtitle  its largest timestamp. A display set has no length of its own
+    //
+    // In double and relative to the first timestamp, so nothing is truncated before the end is
+    // known and no timeline, however long, can overflow the sum.
+    //
+    // A file with nothing to measure, such as a single audio frame, gets no Duration at all. The
+    // placeholder is 0.0, which is outside the element's range, and the element is optional, so it
+    // becomes a Void of the same size rather than staying as a value that is not allowed.
+    double durationMs = 0.0;
+    for (const auto& [idx, track] : m_tracks)
     {
-        double frameDurationMs = 0.0;
-        for (const auto& [idx, track] : m_tracks)
-        {
-            if (track.trackType == 1 && track.fps > 0)
-            {
-                frameDurationMs = 1000.0 / track.fps;
-                break;
-            }
-        }
-        const double durationMs = static_cast<double>(m_lastTimecodeMs) + frameDurationMs;
+        if (!track.hasMaxBlockPts)
+            continue;
+        double endMs = static_cast<double>(track.maxBlockPts - m_firstTimecode) / INTERNAL_PTS_PER_MS;
+        if (track.trackType == 1 && track.fps > 0)
+            endMs += 1000.0 / track.fps;
+        else if (track.trackType != MKV_TRACK_TYPE_SUBTITLE && track.hasNextMaxBlockPts)
+            endMs += static_cast<double>(track.maxBlockPts - track.nextMaxBlockPts) / INTERNAL_PTS_PER_MS;
+        durationMs = std::max(durationMs, endMs);
+    }
 
+    if (m_durationValueFilePos > 0 && !(std::isfinite(durationMs) && durationMs > 0))
+    {
+        m_file.seek(m_durationValueFilePos - 3);  // back over the 2 byte ID and 1 byte size
+        writeVoid(3 + 8);
+    }
+    else if (m_durationValueFilePos > 0)
+    {
         // Write as big-endian IEEE 754 float64
         uint64_t bits;
         memcpy(&bits, &durationMs, 8);
