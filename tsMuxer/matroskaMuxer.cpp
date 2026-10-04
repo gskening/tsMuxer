@@ -947,7 +947,9 @@ void MatroskaMuxer::writeSegmentInfo()
     pos += ebml_write_float(buf + pos, MATROSKA_ID_DURATION, 0.0);
 
     pos += ebml_write_string(buf + pos, MATROSKA_ID_MUXINGAPP, "tsMuxeR");
-    pos += ebml_write_string(buf + pos, MATROSKA_ID_WRITINGAPP, "tsMuxeR");
+    // The version that wrote the file, as mkvmerge and ffmpeg record theirs. Without it nobody could
+    // tell from a file which tsMuxeR made it, which is the first thing a fault report needs
+    pos += ebml_write_string(buf + pos, MATROSKA_ID_WRITINGAPP, "tsMuxeR " TSMUXER_VERSION);
 
     uint8_t header[16];
     int hdrLen = ebml_write_id(header, MATROSKA_ID_INFO);
