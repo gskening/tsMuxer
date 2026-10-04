@@ -764,8 +764,8 @@ void MatroskaMuxer::buildCodecPrivate(MkvTrackInfo& track)
     case CODEC_V_VC1:
     {
         // V_MS/VFW/FOURCC is described entirely by a BITMAPINFOHEADER: without one a reader cannot
-        // even tell which codec the track holds. It used to be written EMPTY, so mkvmerge dropped
-        // the video and ffmpeg refused the file. For WVC1 the header is followed by a zero byte
+        // even tell which codec the track holds. It used to be written EMPTY, so other software
+        // dropped the video or refused the file. For WVC1 the header is followed by a zero byte
         // and the stream's own sequence header and entry point, start codes included.
         const auto vc1 = dynamic_cast<VC1StreamReader*>(track.codecReader);
         if (!vc1 || vc1->getSequenceHeader().empty())
@@ -947,8 +947,8 @@ void MatroskaMuxer::writeSegmentInfo()
     pos += ebml_write_float(buf + pos, MATROSKA_ID_DURATION, 0.0);
 
     pos += ebml_write_string(buf + pos, MATROSKA_ID_MUXINGAPP, "tsMuxeR");
-    // The version that wrote the file, as mkvmerge and ffmpeg record theirs. Without it nobody could
-    // tell from a file which tsMuxeR made it, which is the first thing a fault report needs
+    // The version that wrote the file. Without it nobody could tell from a file which tsMuxeR
+    // made it, which is the first thing a fault report needs
     pos += ebml_write_string(buf + pos, MATROSKA_ID_WRITINGAPP, "tsMuxeR " TSMUXER_VERSION);
 
     uint8_t header[16];
@@ -1050,8 +1050,8 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track)
     }
 
     // Opus needs 80 ms of decoded audio before a seek point to converge, and its Matroska mapping
-    // says so with SeekPreRoll. Both mkvmerge and ffmpeg write it; without it a player that seeks
-    // starts decoding cold, at the seek point itself.
+    // says so with SeekPreRoll. Without it a player that seeks starts decoding cold, at the seek
+    // point itself.
     if (track.codecID == CODEC_A_OPUS)
         pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_SEEKPREROLL, 80000000);
 
@@ -1412,8 +1412,8 @@ void MatroskaMuxer::refreshTrackProperties()
             track.codecID = info.codecID;
             track.matroskaCodecID = codecNameToMatroskaID(info.programName, info.codecID);
         }
-        // An AC-3 core with an E-AC-3 part beside it is E-AC-3 to a decoder, and mkvmerge declares
-        // it so. It went out as A_AC3, named after whichever frame happened to be read last.
+        // An AC-3 core with an E-AC-3 part beside it is E-AC-3 to a decoder, and is declared so. It
+        // went out as A_AC3, named after whichever frame happened to be read last.
         if (const auto ac3 = dynamic_cast<AC3StreamReader*>(track.codecReader);
             ac3 && track.ac3CoreOfStream < 0 && track.matroskaCodecID == MATROSKA_CODEC_ID_AUDIO_AC3 &&
             ac3->carriesEac3())
@@ -2335,8 +2335,8 @@ void MatroskaMuxer::flushPendingFrame(MkvTrackInfo& track)
         break;
     case CODEC_A_AAC:
         // A_AAC carries raw frames and describes them once, in CodecPrivate. The reader hands over
-        // ADTS frames, header included, and they used to go in as they were: ffmpeg forgives that,
-        // but mkvextract puts its own ADTS header in front of each block on the way out, and the
+        // ADTS frames, header included, and they used to go in as they were. Some players forgive
+        // that, but extracting the track puts a new ADTS header in front of each block, and the
         // doubled header decodes to nothing. 7 bytes, or 9 when a CRC follows the header.
         if (frameSize >= 7 && frameData[0] == 0xFF && (frameData[1] & 0xF6) == 0xF0)
         {
@@ -2376,9 +2376,8 @@ void MatroskaMuxer::flushPendingFrame(MkvTrackInfo& track)
     }
 
     // V_MS/VFW/FOURCC is the Video for Windows mapping, which has no notion of reordered frames:
-    // its blocks go out in decode order with DECODE timestamps, which is how mkvmerge writes VC-1
-    // too. Stamped with presentation times, the leading B pictures landed before zero and ffmpeg
-    // decoded 565 of 1436 frames.
+    // its blocks go out in decode order with DECODE timestamps. Stamped with presentation times,
+    // the leading B pictures landed before zero and only 565 of 1436 frames could be decoded.
     const int64_t blockTime = track.codecID == CODEC_V_VC1 ? track.pendingDts : track.pendingPts;
     writeBlock(track, frameData, frameSize, blockTime, track.pendingFlags);
 
@@ -2579,8 +2578,8 @@ bool MatroskaMuxer::muxPacket(AVPacket& avPacket)
         // every picture that can come before it. A stream that begins at an open GOP, an HEVC CRA
         // or an MPEG-2 GOP whose B pictures lead it, delivers those leading pictures AFTER its
         // first one, with earlier timestamps. Writing the header at the first video packet left
-        // them before zero: -125, -83 and -41 ms on an HEVC CRA start, which mkvmerge moved to
-        // zero and ffmpeg read as a 42 ms file. So each video track first delivers a few pictures.
+        // them before zero: -125, -83 and -41 ms on an HEVC CRA start, which other software moved
+        // to zero or read as a 42 ms file. So each video track first delivers a few pictures.
         bool videoReady = true;
         for (const auto& [idx, track] : m_tracks)
             if (track.trackType == 1 && track.foldedIntoStream < 0)
@@ -2684,10 +2683,10 @@ bool MatroskaMuxer::muxPacketInternal(AVPacket& avPacket)
     // A PGS display set is ONE block, at the time of its composition segment, and it is complete
     // when its END segment arrives. Grouping by equal timestamps, as below, got that wrong twice.
     // Text rendered to PGS gives each segment of a set its own decode side time, so a set was cut
-    // into three or four blocks, out of order, of which ffmpeg kept a few. And a block was written
-    // only when the NEXT packet arrived, which for the last piece of a set is the next subtitle,
-    // possibly a minute later: far enough behind its cluster to overflow the 16 bit block offset,
-    // so a cue due at 6.0 s was written as 71.5 s in a 60 s file.
+    // into three or four blocks, out of order, of which other software kept a few. And a block was
+    // written only when the NEXT packet arrived, which for the last piece of a set is the next
+    // subtitle, possibly a minute later: far enough behind its cluster to overflow the 16 bit block
+    // offset, so a cue due at 6.0 s was written as 71.5 s in a 60 s file.
     if (track.codecID == CODEC_S_PGS && avPacket.size > 0)
     {
         if (track.hasPendingFrame && avPacket.data[0] == PGS_SEGMENT_PCS)
@@ -3374,8 +3373,8 @@ bool MatroskaMuxer::close()
     // It used to be the largest block start over all tracks, cut to whole milliseconds, plus one
     // VIDEO frame, whichever track that block belonged to. The last block to start is usually
     // audio, so a 0.833 ms TrueHD access unit was given a 41.7 ms video frame and the file came out
-    // 40 ms longer than mkvmerge and ffmpeg make it from the same streams. An audio only file had
-    // nothing added and came out one frame short.
+    // 40 ms longer than its tracks really are. An audio only file had nothing added and came out
+    // one frame short.
     //
     //   video     its largest timestamp plus one frame: the step its reader advances by and the
     //             DefaultDuration written for it. The largest, not the last written, because video
