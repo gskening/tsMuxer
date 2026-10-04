@@ -2,7 +2,7 @@
 
 Seventeen changes, nearly all of them to Matroska output: fifteen fixes and two small additions.
 
-**Matroska output is still young.** tsMuxeR has only been able to write MKV files since 2.7.2, earlier this year, and a new feature needs time and real use before it is mature. Two of these fixes started with your reports, and checking those against MKVToolNix and ffmpeg turned up the rest. Some go back to when MKV output was first added.
+**Matroska output is still young.** tsMuxeR has only been able to write MKV files since 2.7.2, earlier this year, and a new feature needs time and real use before it is mature. Two of these fixes started with your reports, and looking more closely at the files tsMuxeR writes turned up the rest. Some go back to when MKV output was first added.
 
 More fixes like these will follow, because not everything can be found at once. Thank you for your patience. Every change is tested before it is released, but no test setup has your files, your player and your settings, so something can still behave differently for you.
 
@@ -14,9 +14,9 @@ More fixes like these will follow, because not everything can be found at once. 
 
 * **LPCM in a Matroska file played as noise in other players.** The track was labelled as plain PCM but held the Blu-ray form of it, with a header on every frame and the bytes in the other order. It holds plain PCM now, and decodes to exactly the source. Blu-ray and transport stream output are unchanged.
 
-* **AAC in a Matroska file could not be extracted.** Each frame still carried the header of the file it came from. Most players did not mind, but MKVToolNix's extractor added its own header in front, and what it wrote would not decode at all. The extra header is removed now.
+* **AAC in a Matroska file could not be extracted.** Each frame still carried the header of the file it came from, which Matroska does not expect. Most players did not mind, but extracting the track gave a file that would not decode at all. The extra header is removed now.
 
-* **VC-1 in a Matroska file could not be opened by other software.** The track described its video with an empty header, so MKVToolNix dropped the picture and ffmpeg refused the file. The header is written now, and the frames are timed the way this kind of track requires, so every frame decodes.
+* **VC-1 in a Matroska file could not be opened by other software.** The track described its video with an empty header, so other software dropped the picture or refused the file. The header is written now, and the frames are timed the way this kind of track requires, so every frame decodes.
 
 * **Blu-ray DD+ 7.1 in a Matroska file ran 32 ms late and played as 5.1.** The first frame was given time it does not have, and the track was declared as plain Dolby Digital, so players used the 5.1 core and ignored the extra channels. Both are right now.
 
@@ -26,7 +26,7 @@ More fixes like these will follow, because not everything can be found at once. 
 
 * **Removing pulldown from MPEG-2 left the frame rate at 29.97.** The help promises 24, but only the window set it; from a meta file or the command line, film then played a quarter too fast. The rate is now set to 24 whenever pulldown is removed and no rate is given.
 
-* **The duration of a Matroska file was a little too long.** It added a video frame to whichever track ended last, so a file with TrueHD came out up to 40 ms longer than the same tracks muxed by MKVToolNix or ffmpeg. Each track is now measured by its own frames. An audio-only file, which came out one frame short, is right too.
+* **The duration of a Matroska file was a little too long.** It added a video frame to whichever track ended last, so a file with TrueHD came out up to 40 ms longer than its tracks really are. Each track is now measured by its own frames. An audio-only file, which came out one frame short, is right too.
 
 * **A TrueHD track rebuilt from a Matroska file did not match its source.** When the core of a TrueHD track came from inside a Matroska file, a few core frames were placed one step late. The rebuilt track matches the original byte for byte now. Both halves of the audio were always intact.
 
@@ -36,7 +36,7 @@ More fixes like these will follow, because not everything can be found at once. 
 
 * **A Dolby Vision or 3D video could lose its last frames without a word.** This happened when another track in the same mux delivered nothing. All frames are written now, and the usual report is printed.
 
-* **A video that opens partway through a group of pictures started before zero.** Its first few pictures were placed at negative times, and ffmpeg could not process the file at all. The file now starts at zero.
+* **A video that opens partway through a group of pictures started before zero.** Its first few pictures were placed at negative times, and some software could not process the file at all. The file now starts at zero.
 
 * **The track list showed a negative duration for some broadcast recordings.** The length was read from two different clocks. It is read from one now.
 
@@ -44,9 +44,9 @@ More fixes like these will follow, because not everything can be found at once. 
 
 ### New
 
-* **A Matroska file now says which version of tsMuxeR wrote it.** The writing application reads, for example, `tsMuxeR 2.18.17`, as MKVToolNix and ffmpeg record theirs. Until now a file only said `tsMuxeR`, so the version behind a problem could not be told from the file.
+* **A Matroska file now says which version of tsMuxeR wrote it.** The writing application reads, for example, `tsMuxeR 2.18.17`. Until now a file only said `tsMuxeR`, so the version behind a problem could not be told from the file.
 
-* **Opus in Matroska tells players how much to decode before a seek point.** MKVToolNix and ffmpeg both write this for Opus, and now tsMuxeR does too.
+* **Opus in Matroska tells players how much to decode before a seek point.** The Matroska rules for Opus ask for it, and tsMuxeR now writes it.
 
 ## tsMuxeR 2.18.16
 
