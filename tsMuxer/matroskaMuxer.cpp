@@ -42,6 +42,8 @@ extern "C"
 // The Matroska TrackType values this muxer writes. Only the subtitle one is asked about away
 // from where the tracks are built, so only it is named.
 static constexpr uint8_t MKV_TRACK_TYPE_SUBTITLE = 17;
+static constexpr uint8_t PGS_SEGMENT_PCS = 0x16;  // presentation composition, opens a display set
+static constexpr uint8_t PGS_SEGMENT_END = 0x80;  // closes it
 
 // Key for the AC-3 core companion of a TrueHD track (see refreshTrackProperties). Packets are
 // routed by real stream index, so the companion is keyed clear of every real one.
@@ -2392,7 +2394,11 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
                                 (track.trackType == 1 && (pendingFlags & AVPacket::IS_IFRAME) && m_clusterOpen &&
                                  (relMs - m_clusterTimecodeMs >= 1000));
 
-    if (needNewCluster)
+    // The block offset is 16 bits. A block further from its cluster than that, in either direction,
+    // gets a cluster of its own rather than a wrapped, wrong time. Never at a negative time: the
+    // cluster timestamp is unsigned
+    const int64_t offset = relMs - m_clusterTimecodeMs;
+    if (needNewCluster || (m_clusterOpen && relMs >= 0 && (offset < INT16_MIN || offset > INT16_MAX)))
         startCluster(relMs);
 
     // Record cue entry for video keyframes
@@ -2556,6 +2562,19 @@ bool MatroskaMuxer::muxPacket(AVPacket& avPacket)
     return muxPacketInternal(avPacket);
 }
 
+// Whether the bytes are whole PGS segments, the last of them an END segment
+static bool pgsDisplaySetComplete(const std::vector<uint8_t>& data)
+{
+    size_t pos = 0;
+    uint8_t lastType = 0;
+    while (pos + 3 <= data.size())
+    {
+        lastType = data[pos];
+        pos += 3 + (static_cast<size_t>(data[pos + 1]) << 8 | data[pos + 2]);
+    }
+    return pos == data.size() && lastType == PGS_SEGMENT_END;
+}
+
 bool MatroskaMuxer::muxPacketInternal(AVPacket& avPacket)
 {
     auto it = m_tracks.find(avPacket.stream_index);
@@ -2615,6 +2634,30 @@ bool MatroskaMuxer::muxPacketInternal(AVPacket& avPacket)
         }
         bl.elPts = avPacket.pts;
         bl.pendingElData.insert(bl.pendingElData.end(), avPacket.data, avPacket.data + avPacket.size);
+        return true;
+    }
+
+    // A PGS display set is ONE block, at the time of its composition segment, and it is complete
+    // when its END segment arrives. Grouping by equal timestamps, as below, got that wrong twice.
+    // Text rendered to PGS gives each segment of a set its own decode side time, so a set was cut
+    // into three or four blocks, out of order, of which ffmpeg kept a few. And a block was written
+    // only when the NEXT packet arrived, which for the last piece of a set is the next subtitle,
+    // possibly a minute later: far enough behind its cluster to overflow the 16 bit block offset,
+    // so a cue due at 6.0 s was written as 71.5 s in a 60 s file.
+    if (track.codecID == CODEC_S_PGS && avPacket.size > 0)
+    {
+        if (track.hasPendingFrame && avPacket.data[0] == PGS_SEGMENT_PCS)
+            flushPendingFrame(track);  // a set that never got its END
+        if (!track.hasPendingFrame)
+        {
+            track.pendingPts = avPacket.pts;
+            track.pendingDts = avPacket.dts;
+            track.pendingFlags = avPacket.flags;
+            track.hasPendingFrame = true;
+        }
+        track.pendingFrameData.insert(track.pendingFrameData.end(), avPacket.data, avPacket.data + avPacket.size);
+        if (pgsDisplaySetComplete(track.pendingFrameData))
+            flushPendingFrame(track);
         return true;
     }
 
