@@ -25,6 +25,11 @@ class VC1StreamReader final : public MPEGStreamReader
     CheckStreamRez checkStream(uint8_t* buffer, int len);
     bool skipNal(uint8_t* nal) override;
     [[nodiscard]] bool needSPSForSplit() const override { return true; }
+    // The last sequence header and entry point seen, each with its 00 00 01 start code
+    [[nodiscard]] const std::vector<uint8_t>& getSequenceHeader() const { return m_seqBuffer; }
+    [[nodiscard]] const std::vector<uint8_t>& getEntryPoint() const { return m_entryPointBuffer; }
+    [[nodiscard]] unsigned getCodedWidth() const { return getStreamWidth(); }
+    [[nodiscard]] unsigned getCodedHeight() const { return getStreamHeight(); }
 
    protected:
     const CodecInfo& getCodecInfo() override { return vc1CodecInfo; }

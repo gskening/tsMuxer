@@ -34,6 +34,7 @@ extern "C"
 #include "simplePacketizerReader.h"
 #include "trueHDAC3MergeReader.h"
 #include "tsMuxer.h"  // HDR10_metadata, filled from the HEVC SEI while parsing
+#include "vc1StreamReader.h"
 #include "vodCoreException.h"
 #include "vvc.h"
 #include "vvcStreamReader.h"
@@ -754,6 +755,41 @@ void MatroskaMuxer::buildCodecPrivate(MkvTrackInfo& track)
     case CODEC_V_AV1:
         track.codecPrivate = buildAV1ConfigRecord(track.codecReader);
         break;
+    case CODEC_V_VC1:
+    {
+        // V_MS/VFW/FOURCC is described entirely by a BITMAPINFOHEADER: without one a reader cannot
+        // even tell which codec the track holds. It used to be written EMPTY, so mkvmerge dropped
+        // the video and ffmpeg refused the file. For WVC1 the header is followed by a zero byte
+        // and the stream's own sequence header and entry point, start codes included.
+        const auto vc1 = dynamic_cast<VC1StreamReader*>(track.codecReader);
+        if (!vc1 || vc1->getSequenceHeader().empty())
+            break;
+        std::vector<uint8_t> extra(1, 0);
+        extra.insert(extra.end(), vc1->getSequenceHeader().begin(), vc1->getSequenceHeader().end());
+        extra.insert(extra.end(), vc1->getEntryPoint().begin(), vc1->getEntryPoint().end());
+        const uint32_t width = vc1->getCodedWidth();
+        const uint32_t height = vc1->getCodedHeight();
+        const uint32_t fields[] = {static_cast<uint32_t>(40 + extra.size()), width, height};
+        std::vector<uint8_t>& bih = track.codecPrivate;
+        bih.clear();
+        auto le32 = [&bih](const uint32_t v)
+        {
+            for (int i = 0; i < 4; ++i) bih.push_back(static_cast<uint8_t>(v >> (8 * i)));
+        };
+        for (const uint32_t f : fields) le32(f);  // biSize, biWidth, biHeight
+        bih.push_back(1);                         // biPlanes, 16 bit
+        bih.push_back(0);
+        bih.push_back(24);  // biBitCount, 16 bit
+        bih.push_back(0);
+        for (const char c : {'W', 'V', 'C', '1'}) bih.push_back(static_cast<uint8_t>(c));  // biCompression
+        le32(width * height * 3);                                                          // biSizeImage
+        le32(0);                                                                           // biXPelsPerMeter
+        le32(0);                                                                           // biYPelsPerMeter
+        le32(0);                                                                           // biClrUsed
+        le32(0);                                                                           // biClrImportant
+        bih.insert(bih.end(), extra.begin(), extra.end());
+        break;
+    }
     case CODEC_A_AAC:
         track.codecPrivate = buildAACConfig(track.codecReader);
         break;
@@ -1828,9 +1864,16 @@ void MatroskaMuxer::replayBufferedPackets()
         return;
 
     // Determine the minimum PTS across all buffered packets so that no track
-    // produces negative relative timestamps.
+    // produces negative relative timestamps. A VC-1 track is stamped with its DTS, which can lie
+    // before every PTS, so that counts as well.
     int64_t minPts = m_preHeaderPackets[0].pts;
-    for (const auto& pkt : m_preHeaderPackets) minPts = std::min(minPts, pkt.pts);
+    for (const auto& pkt : m_preHeaderPackets)
+    {
+        minPts = std::min(minPts, pkt.pts);
+        const auto it = m_tracks.find(pkt.stream_index);
+        if (it != m_tracks.end() && it->second.codecID == CODEC_V_VC1)
+            minPts = std::min(minPts, pkt.dts);
+    }
 
     m_firstTimecode = minPts;
     m_firstTimecodeSet = true;
@@ -1841,7 +1884,7 @@ void MatroskaMuxer::replayBufferedPackets()
         AVPacket tmpPacket;
         tmpPacket.stream_index = pkt.stream_index;
         tmpPacket.pts = pkt.pts;
-        tmpPacket.dts = pkt.pts;
+        tmpPacket.dts = pkt.dts;
         tmpPacket.flags = pkt.flags;
         tmpPacket.data = pkt.data.data();
         tmpPacket.size = static_cast<int>(pkt.data.size());
@@ -2306,7 +2349,12 @@ void MatroskaMuxer::flushPendingFrame(MkvTrackInfo& track)
         return;
     }
 
-    writeBlock(track, frameData, frameSize, track.pendingPts, track.pendingFlags);
+    // V_MS/VFW/FOURCC is the Video for Windows mapping, which has no notion of reordered frames:
+    // its blocks go out in decode order with DECODE timestamps, which is how mkvmerge writes VC-1
+    // too. Stamped with presentation times, the leading B pictures landed before zero and ffmpeg
+    // decoded 565 of 1436 frames.
+    const int64_t blockTime = track.codecID == CODEC_V_VC1 ? track.pendingDts : track.pendingPts;
+    writeBlock(track, frameData, frameSize, blockTime, track.pendingFlags);
 
     track.pendingFrameData.clear();
     track.hasPendingFrame = false;
@@ -2485,6 +2533,7 @@ bool MatroskaMuxer::muxPacket(AVPacket& avPacket)
         BufferedPacket bp;
         bp.stream_index = avPacket.stream_index;
         bp.pts = avPacket.pts;
+        bp.dts = avPacket.dts;
         bp.flags = avPacket.flags;
         bp.data.assign(avPacket.data, avPacket.data + avPacket.size);
         m_preHeaderPackets.push_back(std::move(bp));
@@ -2579,6 +2628,7 @@ bool MatroskaMuxer::muxPacketInternal(AVPacket& avPacket)
     if (!track.hasPendingFrame)
     {
         track.pendingPts = avPacket.pts;
+        track.pendingDts = avPacket.dts;
         track.pendingFlags = avPacket.flags;
         track.hasPendingFrame = true;
     }

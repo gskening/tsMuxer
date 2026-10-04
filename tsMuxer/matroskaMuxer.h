@@ -185,6 +185,7 @@ class MatroskaMuxer final : public AbstractMuxer
         // write a single SimpleBlock when PTS changes or at flush time.
         std::vector<uint8_t> pendingFrameData;
         int64_t pendingPts;
+        int64_t pendingDts;  // a VC-1 block is stamped with it, see writeBlock's caller
         uint8_t pendingFlags;
         bool hasPendingFrame;
         bool anyBlockWritten;  // used to spot the leading AC-3 core frame of a TrueHD track
@@ -233,6 +234,7 @@ class MatroskaMuxer final : public AbstractMuxer
               ac3CoreOfStream(-1),
               dropAc3Core(false),
               pendingPts(0),
+              pendingDts(0),
               pendingFlags(0),
               hasPendingFrame(false),
               anyBlockWritten(false),
@@ -398,6 +400,7 @@ class MatroskaMuxer final : public AbstractMuxer
     {
         int stream_index;
         int64_t pts;
+        int64_t dts;
         uint32_t flags;
         std::vector<uint8_t> data;
     };
