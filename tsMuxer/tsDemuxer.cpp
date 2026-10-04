@@ -496,7 +496,8 @@ void TSDemuxer::setFileIterator(FileNameIterator* itr)
         THROW(ERR_COMMON, "Can not set file iterator. Reader does not support bufferedReader interface.")
 }
 
-int64_t getLastPCR(const File& file, const int bufferSize, const int frameSize, const int64_t fileSize)
+int64_t getLastPCR(const File& file, const int bufferSize, const int frameSize, const int64_t fileSize,
+                   const int pcrPid)
 {
     // pcr from end of file
     const auto tmpBuffer = new uint8_t[bufferSize];
@@ -510,7 +511,8 @@ int64_t getLastPCR(const File& file, const int bufferSize, const int frameSize, 
     while (curPtr <= bufferEnd - frameSize)
     {
         const auto tsPacket = reinterpret_cast<TSPacket*>(curPtr + frameSize - 188);
-        if (tsPacket->afExists && tsPacket->adaptiveField.length && tsPacket->adaptiveField.pcrExist)
+        if (tsPacket->afExists && tsPacket->adaptiveField.length && tsPacket->adaptiveField.pcrExist &&
+            (pcrPid < 0 || tsPacket->getPID() == pcrPid))
         {
             lastPcrVal = tsPacket->adaptiveField.getPCR33();
         }
@@ -544,12 +546,14 @@ int64_t getTSDuration(const char* fileName)
         uint8_t* curPtr = tmpBuffer;
         const uint8_t* bufferEnd = tmpBuffer + len;
         int64_t firstPcrVal = 0;
+        int pcrPid = -1;
         while (curPtr <= bufferEnd - frameSize)
         {
             const auto tsPacket = reinterpret_cast<TSPacket*>(curPtr + frameSize - 188);
             if (tsPacket->afExists && tsPacket->adaptiveField.length && tsPacket->adaptiveField.pcrExist)
             {
                 firstPcrVal = tsPacket->adaptiveField.getPCR33();
+                pcrPid = tsPacket->getPID();
                 break;
             }
             curPtr += frameSize;
@@ -561,14 +565,20 @@ int64_t getTSDuration(const char* fileName)
         bufferSize -= bufferSize % frameSize;
         do
         {
-            lastPcrVal = getLastPCR(file, bufferSize, frameSize, fileSize);
+            lastPcrVal = getLastPCR(file, bufferSize, frameSize, fileSize, pcrPid);
             bufferSize *= 4;
         } while (lastPcrVal == -1 && bufferSize <= 1024 * 1024);
 
         file.close();
         if (lastPcrVal < 0)
             return 0;
-        return lastPcrVal != -1 ? lastPcrVal - firstPcrVal : 0;
+        // The first and last clock reference come from the SAME PID: a broadcast capture carries one
+        // clock per programme, and subtracting one programme's clock from another's printed a
+        // duration of minus twelve hours. And the 33 bit clock may wrap once inside a file.
+        int64_t span = lastPcrVal - firstPcrVal;
+        if (span < 0)
+            span += 1ll << 33;
+        return span;
     }
     catch (...)
     {
