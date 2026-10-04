@@ -345,7 +345,10 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
 
     // Generate a random UID
     static std::mt19937_64 rng(std::random_device{}());
-    track.trackUID = rng();
+    // The top bit set: still random in 63 bits, never zero, and always written in 8 bytes. At its
+    // shortest, one UID in 256 took 7, and every byte of the file after it moved, so two runs of
+    // the same mux did not even agree on where the clusters were.
+    track.trackUID = rng() | 1ull << 63;
 
     // Determine track type & properties
     if (codecName[0] == 'V')
@@ -1665,7 +1668,7 @@ void MatroskaMuxer::refreshTrackProperties()
         core.markedDefault = false;
         core.ac3CoreOfStream = streamIdx;
         static std::mt19937_64 rng(std::random_device{}());
-        core.trackUID = rng();
+        core.trackUID = rng() | 1ull << 63;  // 8 bytes always, as above
 
         track.ac3CoreStreamIndex = core.streamIndex;
         coreTracks.emplace_back(core.streamIndex, core);
