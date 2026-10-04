@@ -1,8 +1,12 @@
 ## tsMuxeR 2.18.17
 
-Sixteen changes, nearly all of them to Matroska output: fifteen faults and one small addition.
+Seventeen changes, nearly all of them to Matroska output: fifteen fixes and two small additions.
 
-Two came from reports, a duration a little too long and a TrueHD file that did not come back the same after a round trip. The rest turned up while those were tested against MKVToolNix and ffmpeg, and several of them are worse than the faults that were reported.
+**Matroska output is still young.** tsMuxeR has only been able to write MKV files since 2.7.2, earlier this year, and a new feature needs time and real use before it is mature. Two of these fixes started with your reports, and checking those against MKVToolNix and ffmpeg turned up the rest. Some go back to when MKV output was first added.
+
+More fixes like these will follow, because not everything can be found at once. Thank you for your patience. Every change is tested before it is released, but no test setup has your files, your player and your settings, so something can still behave differently for you.
+
+**If something goes wrong, please report it** with the bug report form on GitHub, and include as much as you can: the version line and the full log, the meta file (the text in the Meta file box of the window), what you expected and what happened instead, and the player you used. A short sample of the source helps most.
 
 **There is no Intel macOS build this time either.** Homebrew has dropped support for Intel Macs, and the Intel build gets its font library from it, so that half of the macOS job still does not run. Apple Silicon is unaffected and is here as usual. If you are on an Intel Mac, 2.18.14 is still available and still works.
 
@@ -39,6 +43,8 @@ Two came from reports, a duration a little too long and a TrueHD file that did n
 * **Two runs of the same Matroska mux could differ in size by a byte.** An identifier was written in a varying length. It always has the same length now.
 
 ### New
+
+* **A Matroska file now says which version of tsMuxeR wrote it.** The writing application reads, for example, `tsMuxeR 2.18.17`, as MKVToolNix and ffmpeg record theirs. Until now a file only said `tsMuxeR`, so the version behind a problem could not be told from the file.
 
 * **Opus in Matroska tells players how much to decode before a seek point.** MKVToolNix and ffmpeg both write this for Opus, and now tsMuxeR does too.
 
