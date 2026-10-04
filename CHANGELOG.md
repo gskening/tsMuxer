@@ -1,3 +1,47 @@
+## tsMuxeR 2.18.17
+
+Sixteen changes, nearly all of them to Matroska output: fifteen faults and one small addition.
+
+Two came from reports, a duration a little too long and a TrueHD file that did not come back the same after a round trip. The rest turned up while those were tested against MKVToolNix and ffmpeg, and several of them are worse than the faults that were reported.
+
+**There is no Intel macOS build this time either.** Homebrew has dropped support for Intel Macs, and the Intel build gets its font library from it, so that half of the macOS job still does not run. Apple Silicon is unaffected and is here as usual. If you are on an Intel Mac, 2.18.14 is still available and still works.
+
+### Fixed
+
+* **LPCM in a Matroska file played as noise in other players.** The track was labelled as plain PCM but held the Blu-ray form of it, with a header on every frame and the bytes in the other order. It holds plain PCM now, and decodes to exactly the source. Blu-ray and transport stream output are unchanged.
+
+* **AAC in a Matroska file could not be extracted.** Each frame still carried the header of the file it came from. Most players did not mind, but MKVToolNix's extractor added its own header in front, and what it wrote would not decode at all. The extra header is removed now.
+
+* **VC-1 in a Matroska file could not be opened by other software.** The track described its video with an empty header, so MKVToolNix dropped the picture and ffmpeg refused the file. The header is written now, and the frames are timed the way this kind of track requires, so every frame decodes.
+
+* **Blu-ray DD+ 7.1 in a Matroska file ran 32 ms late and played as 5.1.** The first frame was given time it does not have, and the track was declared as plain Dolby Digital, so players used the 5.1 core and ignored the extra channels. Both are right now.
+
+* **DD+ 7.1 that is not from a Blu-ray lost its extra channels in Matroska.** The frames that carry channels 7 and 8 were attached to the following frame instead of their own. They stay with their own frame now.
+
+* **MP3 could play at half or double speed.** Mono MPEG-1 and stereo MPEG-2 Layer 3 were timed wrongly, in every output. MP2 was also declared as MP3 in Matroska, and every MPEG audio track as stereo. All of this is right now.
+
+* **Removing pulldown from MPEG-2 left the frame rate at 29.97.** The help promises 24, but only the window set it; from a meta file or the command line, film then played a quarter too fast. The rate is now set to 24 whenever pulldown is removed and no rate is given.
+
+* **The duration of a Matroska file was a little too long.** It added a video frame to whichever track ended last, so a file with TrueHD came out up to 40 ms longer than the same tracks muxed by MKVToolNix or ffmpeg. Each track is now measured by its own frames. An audio-only file, which came out one frame short, is right too.
+
+* **A TrueHD track rebuilt from a Matroska file did not match its source.** When the core of a TrueHD track came from inside a Matroska file, a few core frames were placed one step late. The rebuilt track matches the original byte for byte now. Both halves of the audio were always intact.
+
+* **Subtitles turned into pictures were split up and could land at the wrong time.** Each subtitle was cut into several pieces, and a piece could be written so far from its neighbours that its time came out wrong: a line due at 6 seconds appeared at 71. Each subtitle is one piece now, written at its own time.
+
+* **Ending a mux early with --cut-end stopped too soon when it had subtitles.** A subtitle ahead of the picture stopped the whole mux, so the end of the video and audio was lost. Subtitles no longer decide where the mux stops.
+
+* **A Dolby Vision or 3D video could lose its last frames without a word.** This happened when another track in the same mux delivered nothing. All frames are written now, and the usual report is printed.
+
+* **A video that opens partway through a group of pictures started before zero.** Its first few pictures were placed at negative times, and ffmpeg could not process the file at all. The file now starts at zero.
+
+* **The track list showed a negative duration for some broadcast recordings.** The length was read from two different clocks. It is read from one now.
+
+* **Two runs of the same Matroska mux could differ in size by a byte.** An identifier was written in a varying length. It always has the same length now.
+
+### New
+
+* **Opus in Matroska tells players how much to decode before a seek point.** MKVToolNix and ffmpeg both write this for Opus, and now tsMuxeR does too.
+
 ## tsMuxeR 2.18.16
 
 Sixteen changes, close behind 2.18.15: thirteen faults and three new things.
