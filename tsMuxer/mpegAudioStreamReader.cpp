@@ -39,10 +39,11 @@ int MpegAudioStreamReader::decodeFrame(uint8_t* buff, uint8_t* end, int& skipByt
 
 double MpegAudioStreamReader::getFrameDuration()
 {
-    double rez = (1.0 * INTERNAL_PTS_FREQ * m_samples) / m_sample_rate;
-    if (m_layer == 3 && m_nb_channels == 1)
-        rez /= 2;  // empirical correction for mono MP3 (layer 3)
-    return rez;
+    // There used to be an "empirical correction" here that halved mono Layer III. It was making up
+    // for 1152 samples being counted where MPEG-2 Layer III has 576, which happened to be right
+    // for MPEG-2 mono and made MPEG-1 mono run at double speed while MPEG-2 stereo ran at half.
+    // With the sample count right, nothing needs correcting.
+    return (1.0 * INTERNAL_PTS_FREQ * m_samples) / m_sample_rate;
 }
 
 const std::string MpegAudioStreamReader::getStreamInfo()

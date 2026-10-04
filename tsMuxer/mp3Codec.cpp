@@ -204,7 +204,8 @@ int MP3Codec::mp3DecodeFrame(uint8_t* buff, const uint8_t* end)
             break;
         default:
         case 3:
-            m_samples = 1152;
+            // 1152 samples in MPEG-1, but 576 in MPEG-2 and 2.5, whose frames are half as long
+            m_samples = lsf ? 576 : 1152;
             m_frame_size = (m_frame_size * 144000) / (m_sample_rate << lsf);
             m_frame_size += padding;
             break;

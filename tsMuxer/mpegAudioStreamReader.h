@@ -12,7 +12,7 @@ class MpegAudioStreamReader final : public SimplePacketizerReader, MP3Codec
     int getTSDescriptor(uint8_t* dstBuff, bool blurayMode, bool hdmvDescriptors) override;
     [[nodiscard]] int getLayer() const { return m_layer; }
     int getFreq() override { return m_sample_rate; }
-    uint8_t getChannels() override { return 2; }
+    uint8_t getChannels() override { return static_cast<uint8_t>(m_nb_channels); }
     void applyDiscoveryData(const StreamDiscoveryData& data) override;
     void fillDiscoveryData(StreamDiscoveryData& data) override;
 

@@ -28,6 +28,7 @@ extern "C"
 #include "hevcStreamReader.h"
 #include "lpcmStreamReader.h"
 #include "matroskaParser.h"
+#include "mpegAudioStreamReader.h"
 #include "muxerManager.h"
 #include "nalUnits.h"
 #include "opusStreamReader.h"
@@ -1400,6 +1401,12 @@ void MatroskaMuxer::refreshTrackProperties()
             track.codecID = info.codecID;
             track.matroskaCodecID = codecNameToMatroskaID(info.programName, info.codecID);
         }
+        // MPEG audio is one reader for three layers, and Matroska names each: an MP2 track was
+        // declared A_MPEG/L3. The layer is known once a frame has been read.
+        if (const auto mpa = dynamic_cast<MpegAudioStreamReader*>(track.codecReader); mpa && mpa->getLayer() >= 1)
+            track.matroskaCodecID = mpa->getLayer() == 1   ? "A_MPEG/L1"
+                                    : mpa->getLayer() == 2 ? "A_MPEG/L2"
+                                                           : MATROSKA_CODEC_ID_AUDIO_MPEG_L3;
 
         if (track.trackType == 1)  // video
         {
