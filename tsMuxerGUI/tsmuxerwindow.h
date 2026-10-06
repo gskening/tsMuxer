@@ -172,6 +172,9 @@ class TsMuxerWindow : public QWidget
     void applyOutputMode(bool resetAudioPes = true);
     // The mux button and the name label say what the chosen output does; kept through a language change
     void updateOutputModeTexts();
+    // An SRT track is copied as text only into Matroska or by a demux, and only when asked for
+    [[nodiscard]] bool keepTextApplies() const;
+    void updateKeepTextControls();
     void delTracksByFileName(const QString& fileName);
     void deleteTrack(int idx);
     void updateNum();

@@ -2100,6 +2100,16 @@
          <number>5</number>
         </property>
         <item>
+         <widget class="QCheckBox" name="keepTextCheckBox">
+          <property name="toolTip">
+           <string>Copy each SRT subtitle as text, with its tags and times, instead of drawing it into pictures. Matroska keeps it as a text track and Demux writes an SRT file. The other outputs cannot carry text subtitles and always draw them. The font and position settings below do not apply to text.</string>
+          </property>
+          <property name="text">
+           <string>Keep SRT subtitles as text (Matroska and Demux)</string>
+          </property>
+         </widget>
+        </item>
+        <item>
          <widget class="QGroupBox" name="groupBox_8">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Preferred" vsizetype="Fixed">

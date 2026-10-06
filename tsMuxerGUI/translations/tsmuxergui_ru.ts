@@ -4238,6 +4238,16 @@ Build the ISO anyway?</source>
         <source>Which form a language read from a disc or a container is shown in. Twenty languages have two codes in ISO 639-2: Greek is ell or gre, German deu or ger. Discs mostly carry the first kind and eac3to reports the second, so this chooses which you see. It also decides what a mux writes, because the meta file is built from what is shown. A language you type into a file name is left exactly as you typed it. The setting is remembered.</source>
         <translation>В каком виде показывается язык, прочитанный с диска или из контейнера. У двадцати языков в ISO 639-2 два кода: греческий это ell или gre, немецкий deu или ger. Диски чаще всего несут первый вид, а eac3to сообщает второй, и здесь выбирается, что вы видите. Это же определяет и то, что запишет мультиплексирование, потому что meta-файл строится из показанного. Язык, который вы вписали в имя файла, остаётся ровно таким. Настройка запоминается.</translation>
     </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2108"/>
+        <source>Keep SRT subtitles as text (Matroska and Demux)</source>
+        <translation>Сохранять субтитры SRT как текст (Matroska и Демукс)</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2105"/>
+        <source>Copy each SRT subtitle as text, with its tags and times, instead of drawing it into pictures. Matroska keeps it as a text track and Demux writes an SRT file. The other outputs cannot carry text subtitles and always draw them. The font and position settings below do not apply to text.</source>
+        <translation>Копировать каждый субтитр SRT как текст, с его тегами и временем, вместо отрисовки в изображения. Matroska сохраняет его как текстовую дорожку, а Демукс записывает файл SRT. Остальные выходные форматы не могут содержать текстовые субтитры и всегда отрисовывают их. Настройки шрифта и положения ниже к тексту не применяются.</translation>
+    </message>
 </context>
 <context>
     <name>muxForm</name>

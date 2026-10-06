@@ -4237,6 +4237,16 @@ Build the ISO anyway?</source>
         <source>Which form a language read from a disc or a container is shown in. Twenty languages have two codes in ISO 639-2: Greek is ell or gre, German deu or ger. Discs mostly carry the first kind and eac3to reports the second, so this chooses which you see. It also decides what a mux writes, because the meta file is built from what is shown. A language you type into a file name is left exactly as you typed it. The setting is remembered.</source>
         <translation>ディスクやコンテナーから読み取った言語をどの形式で表示するかです。ISO 639-2 では 20 の言語にコードが 2 つあります。ギリシャ語は ell または gre、ドイツ語は deu または ger です。ディスクの多くは前者を持ち、eac3to は後者を報告するため、どちらを見るかをここで選びます。meta ファイルは表示された内容から作られるので、多重化で書き込まれる値もこれで決まります。ファイル名に書いた言語はそのまま残ります。設定は記憶されます。</translation>
     </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2108"/>
+        <source>Keep SRT subtitles as text (Matroska and Demux)</source>
+        <translation>SRT 字幕をテキストのまま保持 (Matroska と Demux)</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2105"/>
+        <source>Copy each SRT subtitle as text, with its tags and times, instead of drawing it into pictures. Matroska keeps it as a text track and Demux writes an SRT file. The other outputs cannot carry text subtitles and always draw them. The font and position settings below do not apply to text.</source>
+        <translation>各 SRT 字幕を画像に描画せず、タグとタイミングを含めてテキストのままコピーします。Matroska ではテキストトラックとして保持され、Demux では SRT ファイルが書き出されます。その他の出力はテキスト字幕を格納できないため、常に描画されます。下のフォントと位置の設定はテキストには適用されません。</translation>
+    </message>
 </context>
 <context>
     <name>muxForm</name>

@@ -740,6 +740,12 @@ TsMuxerWindow::TsMuxerWindow()
     connect(ui->comboBoxAnimation, comboBoxIndexChanged, this, &TsMuxerWindow::onSavedParamChanged);
     connect(ui->lineSpacing, doubleSpinBoxValueChanged, this, &TsMuxerWindow::onSavedParamChanged);
     connect(ui->spinEditOffset, spinBoxValueChanged, this, &TsMuxerWindow::onSavedParamChanged);
+    connect(ui->keepTextCheckBox, &QCheckBox::toggled, this,
+            [this]
+            {
+                updateKeepTextControls();
+                onSavedParamChanged();
+            });
     connect(ui->radioButtonTS, &QAbstractButton::clicked, this, &TsMuxerWindow::RadioButtonMuxClick);
     connect(ui->radioButtonM2TS, &QAbstractButton::clicked, this, &TsMuxerWindow::RadioButtonMuxClick);
     connect(ui->radioButtonMKV, &QAbstractButton::clicked, this, &TsMuxerWindow::RadioButtonMuxClick);
@@ -3797,6 +3803,10 @@ void TsMuxerWindow::setRendererAnimationTime(double value)
 
 QString TsMuxerWindow::getSrtParams()
 {
+    // Kept as text, each subtitle is copied with its own text, tags and times: nothing that drawing
+    // needs applies, and the muxer asks for none of it
+    if (keepTextApplies())
+        return ",keep-text";
     auto& font = fontSettingsModel->font();
     auto rez = QString(",font-name=\"%1\",font-size=%2,font-color=0x%3")
                    .arg(font.family())
@@ -4817,6 +4827,24 @@ void TsMuxerWindow::applyOutputMode(const bool resetAudioPes)
         ui->w64CheckBox->setChecked(false);
     if (const QtvCodecInfo* info = getCurrentCodec())
         ui->w64CheckBox->setEnabled(info->programName == QLatin1String("A_LPCM") && ui->radioButtonDemux->isChecked());
+    updateKeepTextControls();
+}
+
+bool TsMuxerWindow::keepTextApplies() const
+{
+    return ui->keepTextCheckBox->isChecked() && (ui->radioButtonMKV->isChecked() || ui->radioButtonDemux->isChecked());
+}
+
+// The tick is a preference that is remembered, so it stays while an output that cannot carry text is
+// chosen; the box is greyed then, because the tick reaches nothing. While it applies, the settings that
+// only drawing uses are greyed instead, so the window does not offer what cannot happen.
+void TsMuxerWindow::updateKeepTextControls()
+{
+    ui->keepTextCheckBox->setEnabled(ui->radioButtonMKV->isChecked() || ui->radioButtonDemux->isChecked());
+    const bool asText = keepTextApplies();
+    ui->groupBox_8->setEnabled(!asText);
+    ui->groupBox_9->setEnabled(!asText);
+    ui->groupBox_10->setEnabled(!asText);
 }
 
 void TsMuxerWindow::RadioButtonMuxClick()
@@ -5464,6 +5492,7 @@ void TsMuxerWindow::writeSettings()
     settings->setValue("fontLineSpacing", ui->lineSpacing->value());
     settings->setValue("offset", ui->spinEditOffset->value());
     settings->setValue("fadeTime", getRendererAnimationTime());
+    settings->setValue("keepText", ui->keepTextCheckBox->isChecked());
     settings->endGroup();
 
     settings->beginGroup("pip");
@@ -5495,6 +5524,7 @@ bool TsMuxerWindow::readSettings()
     ui->lineSpacing->setValue(settings->value("fontLineSpacing").toDouble());
     setRendererAnimationTime(settings->value("fadeTime").toDouble());
     ui->spinEditOffset->setValue(settings->value("offset").toInt());
+    ui->keepTextCheckBox->setChecked(settings->value("keepText").toBool());
     settings->endGroup();
 
     settings->beginGroup("pip");

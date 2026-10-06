@@ -4238,6 +4238,16 @@ Mantener la imagen en torno a 66 GB (las dos primeras capas) mejora las probabil
         <source>Which form a language read from a disc or a container is shown in. Twenty languages have two codes in ISO 639-2: Greek is ell or gre, German deu or ger. Discs mostly carry the first kind and eac3to reports the second, so this chooses which you see. It also decides what a mux writes, because the meta file is built from what is shown. A language you type into a file name is left exactly as you typed it. The setting is remembered.</source>
         <translation>En qué forma se muestra un idioma leído de un disco o de un contenedor. Veinte idiomas tienen dos códigos en ISO 639-2: el griego es ell o gre, el alemán deu o ger. Los discos suelen llevar la primera forma y eac3to informa de la segunda, así que esto elige cuál ves. También decide lo que escribe una multiplexación, porque el archivo meta se construye a partir de lo mostrado. Un idioma que escribas en un nombre de archivo se deja tal cual. El ajuste se recuerda.</translation>
     </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2108"/>
+        <source>Keep SRT subtitles as text (Matroska and Demux)</source>
+        <translation>Mantener los subtítulos SRT como texto (Matroska y Desmultiplexar)</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2105"/>
+        <source>Copy each SRT subtitle as text, with its tags and times, instead of drawing it into pictures. Matroska keeps it as a text track and Demux writes an SRT file. The other outputs cannot carry text subtitles and always draw them. The font and position settings below do not apply to text.</source>
+        <translation>Copia cada subtítulo SRT como texto, con sus etiquetas y tiempos, en lugar de dibujarlo en imágenes. Matroska lo guarda como pista de texto y Desmultiplexar escribe un archivo SRT. Las demás salidas no pueden llevar subtítulos de texto y siempre los dibujan. Los ajustes de fuente y posición de abajo no se aplican al texto.</translation>
+    </message>
 </context>
 <context>
     <name>muxForm</name>
