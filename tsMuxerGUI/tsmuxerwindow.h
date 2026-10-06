@@ -151,6 +151,7 @@ class TsMuxerWindow : public QWidget
     QString getFileList();
     QString getSrtParams();
     int findLangByCode(const QString& code);
+    QString langForTrack(const QComboBox* box, const QString& current);
     void setComboBoxText(QComboBox* comboBox, const QString& text);
     QtvCodecInfo* getCodecInfo(int idx);
     // Show the Dolby Vision profile row only for Matroska output of a dual layer source.

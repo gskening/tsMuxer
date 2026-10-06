@@ -106,6 +106,43 @@ QString getExistingDialogDir(const QString& path)
     return parent.absolutePath();
 }
 
+// ISO 639-2 writes twenty languages two ways, a bibliographic code and a terminological one: German
+// is "ger" and "deu". The language list of this window holds the terminological codes only, while
+// a track can carry either, depending on its source and on the language code form chosen on the
+// General tab. This is the same table the muxer uses (metaDemuxer.cpp); the two must change
+// together. The four pairs marked false are withdrawn: their bibliographic codes are still
+// understood when they arrive, but never produced.
+struct LangCodePair
+{
+    const char* bibliographic;
+    const char* terminological;
+    bool current;
+};
+
+constexpr LangCodePair LANG_CODE_PAIRS[] = {
+    {"alb", "sqi", true},  {"arm", "hye", true},  {"baq", "eus", true},  {"bur", "mya", true}, {"cze", "ces", true},
+    {"chi", "zho", true},  {"dut", "nld", true},  {"ger", "deu", true},  {"gre", "ell", true}, {"fre", "fra", true},
+    {"geo", "kat", true},  {"ice", "isl", true},  {"jaw", "jav", false}, {"mac", "mkd", true}, {"mao", "mri", true},
+    {"may", "msa", true},  {"mol", "ron", false}, {"per", "fas", true},  {"rum", "ron", true}, {"scc", "srp", false},
+    {"scr", "hrv", false}, {"slo", "slk", true},  {"tib", "bod", true},  {"wel", "cym", true},
+};
+
+QString toTerminologicalLang(const QString& code)
+{
+    for (const auto& pair : LANG_CODE_PAIRS)
+        if (code == QLatin1String(pair.bibliographic))
+            return QLatin1String(pair.terminological);
+    return code;
+}
+
+QString toBibliographicLang(const QString& code)
+{
+    for (const auto& pair : LANG_CODE_PAIRS)
+        if (pair.current && code == QLatin1String(pair.terminological))
+            return QLatin1String(pair.bibliographic);
+    return code;
+}
+
 using FileFilterVec = std::vector<std::pair<QString, std::vector<const char*>>>;
 
 QString makeFileFilter(const FileFilterVec& filters)
@@ -2316,16 +2353,37 @@ void TsMuxerWindow::onTsMuxerCodecInfoReceived()
 
 int TsMuxerWindow::findLangByCode(const QString& code)
 {
-    QString addr;
-    for (int i = 0; i < ui->langComboBox->count(); ++i)
+    // The list holds terminological codes, so a track tagged "ger" found no row and the box showed
+    // "und" for it. The bibliographic code is looked up as the language it stands for. A code that
+    // is in no row at all still shows as row 0, "und".
+    const QString wanted[] = {code, toTerminologicalLang(code)};
+    for (const QString& w : wanted)
     {
-        addr = ui->langComboBox->itemData(i).toString();
-        if (!addr.isEmpty() && code == addr)
+        for (int i = 0; i < ui->langComboBox->count(); ++i)
         {
-            return i;
+            const QString addr = ui->langComboBox->itemData(i).toString();
+            if (!addr.isEmpty() && w == addr)
+                return i;
         }
     }
     return 0;
+}
+
+QString TsMuxerWindow::langForTrack(const QComboBox* box, const QString& current)
+{
+    // Every change of any option on a track used to write the language box back into the track.
+    // When the box could not show the track's code, which it could not for a bibliographic code
+    // such as "ger" or for any code missing from the list, it showed "und", and ticking an unrelated
+    // box such as Bind to video FPS then turned the track's language into "und" in the meta, and so
+    // on the disc. The track keeps its own code as long as the box still shows the language that
+    // code stands for; only a language chosen in the box replaces it.
+    if (box->currentIndex() == findLangByCode(current))
+        return current;
+    const QString chosen = box->itemData(box->currentIndex()).toString();
+    // A language picked by hand is written in the form chosen on the General tab.
+    if (ui->langCodesComboBox->currentData().toString() == QLatin1String("bibliographic"))
+        return toBibliographicLang(chosen);
+    return chosen;
 }
 
 QtvCodecInfo* TsMuxerWindow::getCodecInfo(int idx)
@@ -2352,11 +2410,7 @@ void TsMuxerWindow::onVideoComboBoxChanged(int)
     codecInfo->fpsText = ui->comboBoxFPS->itemText(ui->comboBoxFPS->currentIndex());
     codecInfo->levelText = ui->comboBoxLevel->itemText(ui->comboBoxLevel->currentIndex());
     codecInfo->arText = ui->comboBoxAR->currentData().toString();
-    QString langAddr = ui->videoLangComboBox->itemData(ui->videoLangComboBox->currentIndex()).toString();
-    if (!langAddr.isEmpty())
-        codecInfo->lang = langAddr;
-    else
-        codecInfo->lang.clear();
+    codecInfo->lang = langForTrack(ui->videoLangComboBox, codecInfo->lang);
     ui->trackLV->item(ui->trackLV->currentRow(), 3)->setText(codecInfo->lang);
     updateMetaLines();
 }
@@ -2627,15 +2681,7 @@ void TsMuxerWindow::onAudioSubtitlesParamsChanged()
         loser->blockSignals(blocked);
     }
     codecInfo->offsetId = ui->offsetsComboBox->currentIndex() - 1;
-    QString addr = ui->langComboBox->itemData(ui->langComboBox->currentIndex()).toString();
-    if (!addr.isEmpty())
-    {
-        codecInfo->lang = addr;
-    }
-    else
-    {
-        codecInfo->lang.clear();
-    }
+    codecInfo->lang = langForTrack(ui->langComboBox, codecInfo->lang);
 
     // TrueHD + AC-3 merge (CLI meta parameters on A_MLP only)
     if (codecInfo->programName == "A_MLP")
