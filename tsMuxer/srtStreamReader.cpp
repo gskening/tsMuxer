@@ -425,6 +425,16 @@ void SRTStreamReader::addCue(const std::string& text, const double inTime, const
     // one shows whether they overlap costs nothing. From a container the next cue may be minutes
     // away in the source, and holding the cue would deliver it late: there each cue is drawn at
     // once, as before.
+    // A timing line without an end: the subtitle stays until the next one replaces it, so it is
+    // drawn without the composition that would clear it. The end given to the drawing only bounds
+    // the fade in.
+    if (m_untilNext)
+    {
+        flushCueGroup();
+        if (hasVisibleText(text))
+            m_toDraw.push_back(Piece{text, inTime, inTime + 3600.0, false});
+        return;
+    }
     const Cue cue{text, inTime, outTime, m_srtRender->alignToGrid(inTime), m_srtRender->alignToGrid(outTime)};
     // Overlaps are judged on the frame grid, where the cues are drawn: two cues that touch within
     // one frame, which converted files are full of, are not an overlap. A cue with no text or no
@@ -612,6 +622,7 @@ bool SRTStreamReader::parseTime(const string& text)
 
             m_inTime = timeToFloat(first);
             m_outTime = timeToFloat(second);
+            m_untilNext = second.empty();
             return true;
         }
     }

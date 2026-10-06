@@ -536,7 +536,12 @@ void ParsedSRTTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int siz
     prefix += "\n";
     prefix += floatToTime(static_cast<double>(pkt->pts) / INTERNAL_PTS_FREQ, ',');
     prefix += " --> ";
-    prefix += floatToTime(static_cast<double>(pkt->pts + pkt->duration) / INTERNAL_PTS_FREQ, ',');
+    // A SimpleBlock carries no duration, and a track without a DefaultDuration then shows each
+    // block until the next one (RFC 9559). The end used to be written from the "no timestamp"
+    // value, a time hours away. No end is written instead, which the SRT reader takes as until the
+    // next subtitle.
+    if (pkt->duration != AV_NOPTS_VALUE_INTERNAL)
+        prefix += floatToTime(static_cast<double>(pkt->pts + pkt->duration) / INTERNAL_PTS_FREQ, ',');
     prefix += '\n';
     const std::string postfix = "\n\n";
     pkt->size = static_cast<int>(size + prefix.length() + postfix.length());

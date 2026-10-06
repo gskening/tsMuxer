@@ -57,6 +57,7 @@ class SRTStreamReader final : public AbstractStreamReader
     UtfConverter::SourceFormat m_srcFormat;
     double m_inTime;
     double m_outTime;
+    bool m_untilNext = false;  // the timing line has no end: shown until the next subtitle
     int m_processedSize;
     int32_t m_charSize;
     AbstractStreamReader* m_dstSubCodec;
