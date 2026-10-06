@@ -579,183 +579,148 @@ class MovParsedSRTTrackData final : public ParsedTrackPrivData
         sttsPos = -1;
     }
 
-    void extractData(AVPacket* pkt, uint8_t* buff, int size) override
+    void extractData(AVPacket* pkt, uint8_t* buff, const int size) override
     {
-        uint8_t* end = buff + size;
-        std::string prefix;
-        std::string suffix;
-        std::string subtitleText;
-        std::vector<pair<int, string>> tags;
-        if (m_packetCnt == 0)
-            prefix = "\xEF\xBB\xBF";  // UTF-8 header
-        int64_t startTime = m_timeOffset;
-        int64_t endTime = startTime + getSttsVal();
-        prefix += int32ToStr(++m_packetCnt);
-        prefix += "\n";
-        prefix += floatToTime(static_cast<double>(startTime) / 1e3, ',');
-        prefix += " --> ";
-        prefix += floatToTime(static_cast<double>(endTime) / 1e3, ',');
-        prefix += '\n';
-        uint8_t* dst = pkt->data;
-        memcpy(dst, prefix.c_str(), prefix.length());
-        dst += prefix.length();
-        uint32_t unitSize = 0;
-
-        while (unitSize == 0)
-        {
-            unitSize = (buff[0] << 8) | buff[1];
-            buff += 2;
-        }
-        subtitleText = std::string(reinterpret_cast<char*>(buff), unitSize);
-        buff += unitSize;
-
-        while (buff < end)
-        {
-            int64_t modifierLen = (buff[0] << 24) | (buff[1] << 16) | (buff[2] << 8) | buff[3];
-            uint32_t modifierType = (buff[4] << 24) | (buff[5] << 16) | (buff[6] << 8) | buff[7];
-            buff += 8;
-            modifierLen -= 8;
-            if (modifierLen == 1)  // 64-bit length
-            {
-                modifierLen = 0;
-                for (int i = 0; i < 8; i++)
-                {
-                    modifierLen <<= 8;
-                    modifierLen |= *buff++;
-                }
-                modifierLen -= 8;
-            }
-            if (modifierType == 0x7374796C)  // 'styl' box
-            {
-                auto entry_count = static_cast<uint16_t>(buff[0] << 8 | buff[1]);
-                buff += 2;
-                for (size_t i = 0; i < entry_count; i++)
-                {
-                    prefix = "";
-                    suffix = "";
-                    auto startChar = static_cast<uint16_t>(buff[0] << 8 | buff[1]);
-                    auto endChar = static_cast<uint16_t>(buff[2] << 8 | buff[3]);
-                    buff += 6;  // startChar, endChar, font_ID
-                    if (startChar < endChar)
-                    {
-                        if (*buff & 1)
-                        {
-                            prefix += "<b>";
-                            suffix.insert(0, "</b>");
-                        }
-                        if (*buff & 2)
-                        {
-                            prefix += "<i>";
-                            suffix.insert(0, "</i>");
-                        }
-                        if (*buff & 4)
-                        {
-                            prefix += "<u>";
-                            suffix.insert(0, "</u>");
-                        }
-                        tags.insert(tags.begin(), std::make_pair(startChar, prefix));
-                        tags.emplace_back(endChar, suffix);
-                    }
-                    buff += 6;  // font-size, text-color-rgba[4]
-                }
-            }
-            else
-                buff += modifierLen;
-        }
-        if (!tags.empty())
-        {
-            sort(tags.begin(), tags.end(), greater<>());
-            for (auto [fst, snd] : tags) subtitleText.insert(fst, snd);
-        }
-        memcpy(dst, subtitleText.c_str(), subtitleText.length());
-        dst += subtitleText.length();
-        *dst++ = '\n';
-        *dst = '\n';
-        m_timeOffset = endTime;
+        const std::string cues = renderChunk(buff, static_cast<uint32_t>(size), true);
+        memcpy(pkt->data, cues.data(), cues.size());
     }
 
     unsigned newBufferSize(uint8_t* buff, const unsigned size) override
     {
-        const int64_t stored_sttsCnt = sttsCnt;
-        const int64_t stored_sttsPos = sttsPos;
-        const uint8_t* end = buff + size;
-        std::string prefix;
-        if (m_packetCnt == 0)
-            prefix = "\xEF\xBB\xBF";  // UTF-8 header
-        const int64_t startTime = m_timeOffset;
-        const int64_t endTime = startTime + getSttsVal();
-        if (size <= 2)
-        {
-            m_timeOffset = endTime;
-            return 0;
-        }
-        prefix += int32ToStr(m_packetCnt + 1);
-        prefix += "\n";
-        prefix += floatToTime(static_cast<double>(startTime) / 1e3, ',');
-        prefix += " --> ";
-        prefix += floatToTime(static_cast<double>(endTime) / 1e3, ',');
-        prefix += '\n';
-        int textLen = 0, unitSize = 0;
+        const std::string cues = renderChunk(buff, size, false);
+        // A chunk of samples without text produces nothing, and then extractData is not called for
+        // it: its samples are consumed here, or every later chunk is read with stale sizes and times
+        if (cues.empty())
+            renderChunk(buff, size, true);
+        return static_cast<unsigned>(cues.size());
+    }
 
-        try
+   private:
+    // The samples of one chunk, as SRT cues. A chunk can hold several samples, among them samples
+    // without text that only mark time, and each sample has its own duration in stts. The whole
+    // chunk used to be taken as ONE sample: the text of the first sample with text got the times of
+    // the empty sample before it, the samples after it were lost, and their bytes were read as a
+    // style box, whose length could send the reader backwards and loop for ever. The sample sizes
+    // come from stsz, as for the audio above. With commit false nothing is consumed, so the size
+    // pass and the copy pass see the same samples.
+    std::string renderChunk(const uint8_t* buff, const uint32_t size, const bool commit)
+    {
+        const int64_t savedSttsPos = sttsPos;
+        const int64_t savedSttsCnt = sttsCnt;
+        size_t indexCur = m_sc->m_indexCur;
+        int64_t timeOffset = m_timeOffset;
+        int counter = m_packetCnt;
+        std::string out;
+        uint32_t used = 0;
+        while (used < size)
         {
-            while (unitSize == 0)
+            uint32_t sampleSize = size - used;  // without a size table, what is left, as before
+            if (m_sc->sample_size)
+                sampleSize = m_sc->sample_size;
+            else if (indexCur < m_sc->m_index.size())
+                sampleSize = m_sc->m_index[indexCur++];
+            sampleSize = (std::min)(sampleSize, size - used);
+            const int64_t startTime = timeOffset;
+            const int64_t endTime = startTime + getSttsVal();
+            std::string cue = cueFor(buff + used, buff + used + sampleSize, startTime, endTime, counter + 1);
+            if (!cue.empty())
             {
-                unitSize = (buff[0] << 8) | buff[1];
-                buff += 2;
+                if (counter == 0)
+                    out += "\xEF\xBB\xBF";  // UTF-8 header
+                out += cue;
+                ++counter;
             }
-            textLen = unitSize;
-            buff += unitSize;
-
-            while (buff < end)
-            {
-                int64_t modifierLen = buff[0] << 24 | buff[1] << 16 | buff[2] << 8 | buff[3];
-                const uint32_t modifierType = buff[4] << 24 | buff[5] << 16 | buff[6] << 8 | buff[7];
-                buff += 8;
-                modifierLen -= 8;
-                if (modifierLen == 1)  // 64-bit length
-                {
-                    modifierLen = 0;
-                    for (int i = 0; i < 8; i++)
-                    {
-                        modifierLen <<= 8;
-                        modifierLen |= *buff++;
-                    }
-                    modifierLen -= 8;
-                }
-                if (modifierType == 0x7374796C)  // 'styl' box
-                {
-                    const auto entry_count = static_cast<uint16_t>(buff[0] << 8 | buff[1]);
-                    buff += 2;
-                    for (size_t i = 0; i < entry_count; i++)
-                    {
-                        const auto startChar = static_cast<uint16_t>(buff[0] << 8 | buff[1]);
-                        const auto endChar = static_cast<uint16_t>(buff[2] << 8 | buff[3]);
-                        buff += 6;                // startChar, endChar, font-ID
-                        if (startChar < endChar)  // face style flags
-                        {
-                            if (*buff & 1)  // bold
-                                textLen += 7;
-                            if (*buff & 2)  // italics
-                                textLen += 7;
-                            if (*buff & 4)  // underline
-                                textLen += 7;
-                        }
-                        buff += 6;  // font-size, text-color-rgba[4]
-                    }
-                }
-                else
-                    buff += modifierLen;
-            }
+            timeOffset = endTime;
+            used += sampleSize;
+            if (sampleSize == 0 && m_sc->sample_size == 0 && indexCur >= m_sc->m_index.size())
+                break;  // a zero size with no table left cannot advance
         }
-        catch (BitStreamException&)
+        if (commit)
         {
-            LTRACE(LT_ERROR, 2, "MP4/MOV error: Invalid SRT frame at position " << m_demuxer->getProcessedBytes());
+            m_sc->m_indexCur = indexCur;
+            m_timeOffset = timeOffset;
+            m_packetCnt = counter;
         }
+        else
+        {
+            sttsPos = savedSttsPos;
+            sttsCnt = savedSttsCnt;
+        }
+        return out;
+    }
 
-        sttsCnt = stored_sttsCnt;
-        sttsPos = stored_sttsPos;
-        return static_cast<int>(prefix.length() + textLen + 2);
+    // One sample as an SRT cue with the styles it carries, or nothing for a sample without text
+    static std::string cueFor(const uint8_t* buff, const uint8_t* end, const int64_t startTime, const int64_t endTime,
+                              const int counter)
+    {
+        if (end - buff < 2)
+            return {};
+        const auto textLen = static_cast<size_t>(buff[0] << 8 | buff[1]);
+        buff += 2;
+        if (textLen == 0 || textLen > static_cast<size_t>(end - buff))
+            return {};
+        std::string text(reinterpret_cast<const char*>(buff), textLen);
+        buff += textLen;
+        std::vector<pair<int, string>> tags;
+        while (end - buff >= 8)
+        {
+            int64_t boxLen = static_cast<int64_t>(buff[0]) << 24 | buff[1] << 16 | buff[2] << 8 | buff[3];
+            const uint32_t boxType = static_cast<uint32_t>(buff[4]) << 24 | buff[5] << 16 | buff[6] << 8 | buff[7];
+            const uint8_t* body = buff + 8;
+            if (boxLen == 1)  // 64-bit length
+            {
+                if (end - buff < 16)
+                    break;
+                boxLen = 0;
+                for (int i = 0; i < 8; i++) boxLen = boxLen << 8 | buff[8 + i];
+                body = buff + 16;
+            }
+            // A box shorter than its own header, or longer than what is left, ends the reading
+            if (boxLen < body - buff || boxLen > end - buff)
+                break;
+            const uint8_t* boxEnd = buff + boxLen;
+            if (boxType == 0x7374796C && boxEnd - body >= 2)  // 'styl' box
+            {
+                const auto entryCount = static_cast<uint16_t>(body[0] << 8 | body[1]);
+                const uint8_t* rec = body + 2;
+                // startChar, endChar, font-ID, face style flags, font-size, text-color-rgba[4]
+                for (uint16_t i = 0; i < entryCount && boxEnd - rec >= 12; ++i, rec += 12)
+                {
+                    const auto startChar = static_cast<uint16_t>(rec[0] << 8 | rec[1]);
+                    const auto endChar = static_cast<uint16_t>(rec[2] << 8 | rec[3]);
+                    const uint8_t face = rec[6];
+                    if (startChar >= endChar)
+                        continue;
+                    std::string open;
+                    std::string close;
+                    if (face & 1)
+                    {
+                        open += "<b>";
+                        close.insert(0, "</b>");
+                    }
+                    if (face & 2)
+                    {
+                        open += "<i>";
+                        close.insert(0, "</i>");
+                    }
+                    if (face & 4)
+                    {
+                        open += "<u>";
+                        close.insert(0, "</u>");
+                    }
+                    tags.insert(tags.begin(), std::make_pair(startChar, open));
+                    tags.emplace_back(endChar, close);
+                }
+            }
+            buff = boxEnd;
+        }
+        if (!tags.empty())
+        {
+            sort(tags.begin(), tags.end(), greater<>());
+            for (const auto& [pos, tag] : tags) text.insert((std::min)(static_cast<size_t>(pos), text.size()), tag);
+        }
+        return int32ToStr(counter) + "\n" + floatToTime(static_cast<double>(startTime) / 1e3, ',') + " --> " +
+               floatToTime(static_cast<double>(endTime) / 1e3, ',') + "\n" + text + "\n\n";
     }
 
    private:
