@@ -877,6 +877,49 @@ uint8_t* SRTStreamReader::drawNext(uint32_t& renderedLen)
 // Whether the blank line at the front ends the subtitle being read: 1 when what follows the blank
 // lines is a timing line, or a counter followed by one, or the end of the file; 0 when it is more
 // text of the same subtitle; -1 when the lines that decide it have not arrived yet.
+// Whether the text is a time as SRT writes it: digits, up to two colons, and an optional fraction after
+// a comma or a point, as in 00:01:02,500, 1:02.5 or 62. Spaces around it are allowed.
+static bool isSrtTime(const std::string& text)
+{
+    size_t i = text.find_first_not_of(" \t");
+    const size_t end = text.find_last_not_of(" \t");
+    if (i == std::string::npos)
+        return false;
+    int colons = 0;
+    bool fraction = false;
+    bool digit = false;
+    for (; i <= end; ++i)
+    {
+        const char c = text[i];
+        if (c >= '0' && c <= '9')
+            digit = true;
+        else if (c == ':' && !fraction && digit && ++colons <= 2)
+            digit = false;
+        else if ((c == ',' || c == '.') && !fraction && digit)
+        {
+            fraction = true;
+            digit = false;
+        }
+        else
+            return false;
+    }
+    return digit || fraction;
+}
+
+// A timing line: a time, the arrow, and a time or nothing as the first word after it. Display
+// coordinates may follow the end time. A line of dialogue that holds an arrow is no timing line.
+static bool isTimingLine(const std::string& line)
+{
+    const size_t arrow = line.find("-->");
+    if (arrow == std::string::npos || !isSrtTime(line.substr(0, arrow)))
+        return false;
+    const std::string rest = line.substr(arrow + 3);
+    const size_t first = rest.find_first_not_of(" \t");
+    if (first == std::string::npos)
+        return true;  // no end: shown until the next subtitle
+    return isSrtTime(rest.substr(first, rest.find_first_of(" \t", first) - first));
+}
+
 int SRTStreamReader::blankLineEndsCue() const
 {
     size_t i = 0;
@@ -894,7 +937,7 @@ int SRTStreamReader::blankLineEndsCue() const
     for (; i < m_sourceText.size(); ++i)
     {
         const std::string& next = m_sourceText[i];
-        if (next.find("-->") != std::string::npos)
+        if (isTimingLine(next))
             return 1;
         const bool counterOrBlank =
             std::all_of(next.begin(), next.end(), [](const char c) { return (c >= '0' && c <= '9') || c == ' '; });
@@ -906,6 +949,8 @@ int SRTStreamReader::blankLineEndsCue() const
 
 bool SRTStreamReader::parseTime(const string& text)
 {
+    if (!isTimingLine(text))
+        return false;
     // length() - 2 is unsigned, so a line shorter than the arrow it is looking for wrapped the
     // bound to SIZE_MAX and the loop walked off the end of the string. A blank line where a
     // timing line belongs is exactly that case, and it is what a damaged subtitle file gives.

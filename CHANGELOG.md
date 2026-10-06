@@ -1,6 +1,6 @@
 ## tsMuxeR 2.19.0
 
-Thirty-six changes: thirty-three fixes and three additions. Most of them are to Matroska output and to subtitles.
+Thirty-seven changes: thirty-four fixes and three additions. Most of them are to Matroska output and to subtitles.
 
 **Matroska output is still young.** tsMuxeR has only been able to write MKV files since 2.7.2, earlier this year, and a new feature needs time and real use before it is mature. Several of these fixes started with your reports, and looking more closely at the files tsMuxeR writes turned up the rest. Some go back to when MKV output was first added.
 
@@ -39,6 +39,8 @@ More fixes like these will follow, because not everything can be found at once. 
 * **A stray line in an SRT file stopped the mux.** A title above the first subtitle, a counter written twice, or a blank line between a counter and its timing line ended the whole mux. Such a line is now skipped, with a warning when it holds text, and every subtitle comes out. A file in which no subtitle can be read at all still stops, and says which line it could not read.
 
 * **An empty line inside an SRT subtitle stopped the mux.** SRT has no way to write an empty line inside a subtitle, but many files contain one. Such a line is now kept as part of the subtitle, and the mux goes on.
+
+* **A line of dialogue with an arrow in it could break a subtitle apart.** Any line holding "-->" was taken for a timing line, so a line such as "Go --> there" after an empty line ended its subtitle and was lost. Only a line with real times around the arrow counts as a timing line now.
 
 * **Subtitles that overlap in an SRT file were drawn out of order.** The end of the first one cleared the second while it was still due, and the pictures could go back in time. Subtitles that overlap are now shown together, the earlier one on top, in time order. At most four are shown at once, with a warning when a file has more.
 
