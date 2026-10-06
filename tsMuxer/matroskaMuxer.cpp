@@ -1892,14 +1892,42 @@ void MatroskaMuxer::replayBufferedPackets()
     // Determine the minimum PTS across all buffered packets so that no track
     // produces negative relative timestamps. A VC-1 track is stamped with its DTS, which can lie
     // before every PTS, so that counts as well.
-    int64_t minPts = m_preHeaderPackets[0].pts;
+    //
+    // A PGS track is written as one block per display set, at the time of its composition segment.
+    // The window, palette and object segments of a set carry EARLIER times, because a decoder has
+    // to receive them before the set is shown, and counting them moved the whole file: a subtitle
+    // due at 0 ms started every track 68 ms late. So only the composition segments count. A segment
+    // longer than a packet arrives in pieces, and a piece can begin with any byte, so the segment
+    // boundaries are followed per track rather than trusting the first byte of each packet.
+    std::map<int, size_t> pgsBytesLeft;
+    bool haveMin = false;
+    int64_t minPts = 0;
     for (const auto& pkt : m_preHeaderPackets)
     {
-        minPts = std::min(minPts, pkt.pts);
         const auto it = m_tracks.find(pkt.stream_index);
+        if (it != m_tracks.end() && it->second.codecID == CODEC_S_PGS)
+        {
+            size_t& left = pgsBytesLeft[pkt.stream_index];
+            const size_t size = pkt.data.size();
+            if (left > 0)
+            {
+                left -= (std::min)(left, size);
+                continue;
+            }
+            if (size < 3)
+                continue;
+            const size_t segment = 3 + (static_cast<size_t>(pkt.data[1]) << 8 | pkt.data[2]);
+            left = segment > size ? segment - size : 0;
+            if (pkt.data[0] != PGS_SEGMENT_PCS)
+                continue;
+        }
+        minPts = haveMin ? (std::min)(minPts, pkt.pts) : pkt.pts;
+        haveMin = true;
         if (it != m_tracks.end() && it->second.codecID == CODEC_V_VC1)
-            minPts = std::min(minPts, pkt.dts);
+            minPts = (std::min)(minPts, pkt.dts);
     }
+    if (!haveMin)
+        minPts = m_preHeaderPackets[0].pts;
 
     m_firstTimecode = minPts;
     m_firstTimecodeSet = true;
