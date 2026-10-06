@@ -89,7 +89,21 @@ QString getExistingDialogDir(const QString& path)
     if (dir.exists())
         return dir.absolutePath();
 
-    return QDir::homePath();
+    // The path is usually a file that does not exist yet: the output about to be written. That
+    // used to send the dialog to the home folder every time, however long the output name had been
+    // pointing somewhere else, and on Windows the dialog then also showed the home folder's view
+    // settings rather than those of the folder the user works in. The nearest folder that does
+    // exist is where the user meant to be. A relative name such as the default output name has no
+    // folder of its own, so it still starts in the home folder.
+    if (fileInfo.isRelative())
+        return QDir::homePath();
+    QDir parent(fileInfo.absolutePath());
+    while (!parent.exists())
+    {
+        if (!parent.cdUp())
+            return QDir::homePath();
+    }
+    return parent.absolutePath();
 }
 
 using FileFilterVec = std::vector<std::pair<QString, std::vector<const char*>>>;
@@ -4793,18 +4807,25 @@ void TsMuxerWindow::outFileNameChanged()
     outFileNameDisableChange = true;
     QFileInfo fi(unquoteStr(ui->outFileName->text().trimmed()));
     QString ext = fi.suffix().toUpper();
+    if (ext.endsWith(QLatin1Char('\"')))
+        ext.chop(1);
 
     bool isISOMode = ui->radioButtonBluRayISO->isChecked();
 
-    if (ext == "M2TS" || ext == "M2TS\"")
+    // Only a name that ends in an output's own extension chooses that output. Anything else used to
+    // mean Transport Stream, so a name without an extension silently turned an ISO, Matroska or
+    // M2TS output into a TS: a name typed into a file dialog that does not add the extension itself,
+    // as on Linux, a name with a dot of its own such as "My.Movie.2020", and every name while it was
+    // still being typed ("movie.i" is not yet "movie.iso"). The output now stays as it was until the
+    // name says otherwise. A name an ISO or M2TS output cannot use is still caught when muxing
+    // starts, with a message that names the extension it needs.
+    if (ext == "M2TS")
         ui->radioButtonM2TS->setChecked(true);
-    else if (ext == "MKV" || ext == "MKV\"" || ext == "MKA" || ext == "MKA\"")
+    else if (ext == "MKV" || ext == "MKA")
         ui->radioButtonMKV->setChecked(true);
-    else if (ext == "ISO" || ext == "ISO\"")
-    {
+    else if (ext == "ISO")
         ui->radioButtonBluRayISO->setChecked(true);
-    }
-    else
+    else if (ext == "TS")
         ui->radioButtonTS->setChecked(true);
 
     bool isISOModeNew = ui->radioButtonBluRayISO->isChecked();
@@ -4849,14 +4870,33 @@ void TsMuxerWindow::saveFileDialog()
         auto* dialog = new QFileDialog(this, tr("Select file for muxing"), startDir, currentSaveDialogFilter());
         dialog->setAcceptMode(QFileDialog::AcceptSave);
         dialog->setFileMode(QFileDialog::AnyFile);
+        // The extension of the output that is selected, the same choice currentSaveDialogFilter makes.
+        // The Windows dialog adds it to a typed name by itself; the dialog Qt draws on other systems
+        // only does so when it is told, and returns "movie" for "movie". The window then read the name
+        // without an extension as a Transport Stream and switched the output to TS.
+        const QString outputExt = ui->radioButtonMKV->isChecked()         ? QStringLiteral("mkv")
+                                  : ui->radioButtonBluRayISO->isChecked() ? QStringLiteral("iso")
+                                  : ui->radioButtonTS->isChecked()        ? QStringLiteral("ts")
+                                                                          : QStringLiteral("m2ts");
+        dialog->setDefaultSuffix(outputExt);
         dialog->setAttribute(Qt::WA_DeleteOnClose);
         m_fileDialogOpen = true;
         connect(dialog, &QFileDialog::finished, this, [this](int) { m_fileDialogOpen = false; });
         connect(dialog, &QFileDialog::fileSelected, this,
-                [this](const QString& fileName)
+                [this, outputExt](const QString& selected)
                 {
-                    if (fileName.isEmpty())
+                    if (selected.isEmpty())
                         return;
+                    // A default suffix is only added to a name with no dot at all, so "My.Movie.2020"
+                    // still came back without one. A name that does not end in an output's own
+                    // extension gets the selected output's, so the output stays what was chosen. A
+                    // name ending in another output's extension is left alone: it names the output wanted.
+                    QString fileName = selected;
+                    static const QStringList outputExts = {QStringLiteral("ts"), QStringLiteral("m2ts"),
+                                                           QStringLiteral("mkv"), QStringLiteral("mka"),
+                                                           QStringLiteral("iso")};
+                    if (!outputExts.contains(QFileInfo(fileName).suffix(), Qt::CaseInsensitive))
+                        fileName += (fileName.endsWith(QLatin1Char('.')) ? QString() : QStringLiteral(".")) + outputExt;
                     auto native = QDir::toNativeSeparators(fileName);
                     ui->outFileName->setText(native);
                     lastOutputDir = QFileInfo(native).absolutePath();
