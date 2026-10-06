@@ -169,7 +169,8 @@ int SRTStreamReader::parseText(uint8_t* dataStart, const size_t len)
                     (m_charSize == 4 && reinterpret_cast<uint32_t*>(cur)[-1] == m_long_R))
                     x = m_charSize;
 
-            m_sourceText.emplace(UtfConverter::toUtf8(lastProcessedLine, cur - lastProcessedLine - x, m_srcFormat));
+            m_sourceText.emplace_back(
+                UtfConverter::toUtf8(lastProcessedLine, cur - lastProcessedLine - x, m_srcFormat));
             std::string& tmp = m_sourceText.back();
             if (strOnlySpace(tmp))
                 tmp.clear();
@@ -226,7 +227,7 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
     {
         while (!m_sourceText.empty() && m_sourceText.front().empty())
         {
-            m_sourceText.pop();  // delete empty lines before message
+            m_sourceText.pop_front();  // delete empty lines before message
             m_processedSize += m_origSize.front();
             m_origSize.pop();
         }
@@ -244,7 +245,7 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
         }
         if (isNUmber)
         {
-            m_sourceText.pop();
+            m_sourceText.pop_front();
             m_processedSize += m_origSize.front();
             m_origSize.pop();
             if (m_sourceText.empty())
@@ -272,21 +273,42 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
             THROW(ERR_COMMON, what.str())
         }
         m_state = ParseState::PARSE_TEXT;
-        m_sourceText.pop();
+        m_sourceText.pop_front();
         m_processedSize += m_origSize.front();
         m_origSize.pop();
         if (m_sourceText.empty())
             return nullptr;
     }
 
-    while (!m_sourceText.empty() && !m_sourceText.front().empty())
+    for (;;)
     {
-        if (!m_renderedText.empty())
+        while (!m_sourceText.empty() && !m_sourceText.front().empty())
+        {
+            if (!m_renderedText.empty())
+                m_renderedText += '\n';
+            m_renderedText += m_sourceText.front();
+            m_sourceText.pop_front();
+            m_processedSize += m_origSize.front();
+            m_origSize.pop();
+        }
+        if (m_sourceText.empty())
+            break;
+        // A blank line. SRT has no way to write an empty line inside a subtitle, and files that
+        // contain one anyway are common: what follows it is then neither a counter nor a timing
+        // line. That used to end the whole mux with a parse error. The blank line ends the
+        // subtitle only when a new one follows it; otherwise it belongs to the text.
+        const int ends = blankLineEndsCue();
+        if (ends < 0)
+            return nullptr;  // the next lines have not arrived yet
+        if (ends > 0)
+            break;
+        while (!m_sourceText.empty() && m_sourceText.front().empty())
+        {
             m_renderedText += '\n';
-        m_renderedText += m_sourceText.front();
-        m_sourceText.pop();
-        m_processedSize += m_origSize.front();
-        m_origSize.pop();
+            m_sourceText.pop_front();
+            m_processedSize += m_origSize.front();
+            m_origSize.pop();
+        }
     }
 
     if (m_sourceText.empty())
@@ -301,13 +323,34 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
         }
         return rez;
     }
-    m_sourceText.pop();  // delete empty line (messages separator)
+    m_sourceText.pop_front();  // delete empty line (messages separator)
     m_processedSize += m_origSize.front();
     m_origSize.pop();
     rez = m_srtRender->doConvert(m_renderedText, m_animation, m_inTime, m_outTime, renderedLen);
     m_state = ParseState::PARSE_FIRST_LINE;
     m_renderedText.clear();
     return rez;
+}
+
+// Whether the blank line at the front ends the subtitle being read: 1 when what follows the blank
+// lines is a timing line, or a counter followed by one, or the end of the file; 0 when it is more
+// text of the same subtitle; -1 when the lines that decide it have not arrived yet.
+int SRTStreamReader::blankLineEndsCue() const
+{
+    size_t i = 0;
+    while (i < m_sourceText.size() && m_sourceText[i].empty()) ++i;
+    if (i == m_sourceText.size())
+        return m_lastBlock ? 1 : -1;
+    const std::string& next = m_sourceText[i];
+    if (next.find("-->") != std::string::npos)
+        return 1;
+    const bool isCounter =
+        std::all_of(next.begin(), next.end(), [](const char c) { return (c >= '0' && c <= '9') || c == ' '; });
+    if (!isCounter)
+        return 0;
+    if (i + 1 == m_sourceText.size())
+        return m_lastBlock ? 1 : -1;
+    return m_sourceText[i + 1].find("-->") != std::string::npos ? 1 : 0;
 }
 
 bool SRTStreamReader::parseTime(const string& text)

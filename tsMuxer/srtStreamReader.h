@@ -1,6 +1,7 @@
 #ifndef SRT_STREAM_READER_
 #define SRT_STREAM_READER_
 
+#include <deque>
 #include <queue>
 
 #include "abstractStreamReader.h"
@@ -63,7 +64,7 @@ class SRTStreamReader final : public AbstractStreamReader
     bool m_lastBlock;
     int parseText(uint8_t* dataStart, size_t len);
     std::vector<uint8_t> m_tmpBuffer;
-    std::queue<std::string> m_sourceText;
+    std::deque<std::string> m_sourceText;
     std::queue<int32_t> m_origSize;
     // Lines handed to the queue since the file was opened. The line at the front of the queue is
     // therefore m_linesRead - m_sourceText.size() + 1, which is what a parse error should name.
@@ -88,6 +89,7 @@ class SRTStreamReader final : public AbstractStreamReader
     static std::string detectUTF8Lang(uint8_t* buffer, int len);
     bool detectSrcFormat(const uint8_t* dataStart, size_t len, int& prefixLen);
     static bool strOnlySpace(const std::string& str);
+    int blankLineEndsCue() const;
 };
 
 #endif
