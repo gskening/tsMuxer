@@ -339,8 +339,13 @@ int SRTStreamReader::blankLineEndsCue() const
 {
     size_t i = 0;
     while (i < m_sourceText.size() && m_sourceText[i].empty()) ++i;
+    // From a container each cue arrives whole, as one block of its own that ends with its blank line,
+    // and the next cue comes only with the next block, which may be minutes away in the source.
+    // Waiting for it delivered every cue late, and the last one never, because a track inside a
+    // container is not always told when its data has ended. So there, a blank line with nothing
+    // after it ends the cue. An empty line inside a cue still has its cue's later lines behind it.
     if (i == m_sourceText.size())
-        return m_lastBlock ? 1 : -1;
+        return m_lastBlock || m_containerType != ContainerType::ctNone ? 1 : -1;
     const std::string& next = m_sourceText[i];
     if (next.find("-->") != std::string::npos)
         return 1;
