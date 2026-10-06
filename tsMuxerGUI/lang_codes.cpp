@@ -53,9 +53,12 @@ QVariant LangCodesModel::data(const QModelIndex& index, int role) const
 
 Qt::ItemFlags LangCodesModel::flags(const QModelIndex& index) const
 {
-    return (index.row() == COMMON_ROW_IDX || index.row() == ALL_ROW_IDX)
-               ? Qt::ItemIsEnabled /* make them unselectable */
-               : QAbstractListModel::flags(index);
+    // The two heading rows are not languages. Taking away only "selectable" did not keep them out:
+    // a combo box skips rows that are disabled, not rows that are unselectable, so the arrow keys
+    // and the mouse wheel stopped on a heading, and the track was left with no language at all,
+    // which then dropped lang= from the meta. Disabled, they are passed over and show greyed out.
+    return (index.row() == COMMON_ROW_IDX || index.row() == ALL_ROW_IDX) ? Qt::NoItemFlags
+                                                                         : QAbstractListModel::flags(index);
 }
 
 void LangCodesModel::onLanguageChanged()
