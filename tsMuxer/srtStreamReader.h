@@ -80,9 +80,15 @@ class SRTStreamReader final : public AbstractStreamReader
     };
     std::deque<TextCue> m_textCues;
     std::vector<uint8_t> m_textPacket;
-    int m_lengthlessCues = 0;   // kept as text: subtitles left out because they have no length
-    int m_invalidUtf8Cues = 0;  // kept as text: subtitles whose bytes were not all valid UTF-8
-    int m_srtRecords = 0;       // demux: SRT records written so far, which numbers the next
+    int m_lengthlessCues = 0;    // kept as text: subtitles left out because they have no length
+    int m_invalidUtf8Cues = 0;   // kept as text: subtitles whose bytes were not all valid UTF-8
+    int m_srtRecords = 0;        // demux: SRT records written so far, which numbers the next
+    int64_t m_cuesRead = 0;      // subtitles read from the file
+    int64_t m_skippedLines = 0;  // lines of text that are not part of any subtitle, passed over
+    int64_t m_firstSkippedLine = 0;
+    std::string m_firstSkippedText;
+    void skipNonCueLine();
+    void reportSkippedLines();
     bool m_openEndWarned = false;
     int readTextPacket(AVPacket& avPacket);
     void startTextPacket(AVPacket& avPacket);

@@ -1,6 +1,6 @@
 ## tsMuxeR 2.19.0
 
-Thirty-five changes: thirty-two fixes and three additions. Most of them are to Matroska output and to subtitles.
+Thirty-six changes: thirty-three fixes and three additions. Most of them are to Matroska output and to subtitles.
 
 **Matroska output is still young.** tsMuxeR has only been able to write MKV files since 2.7.2, earlier this year, and a new feature needs time and real use before it is mature. Several of these fixes started with your reports, and looking more closely at the files tsMuxeR writes turned up the rest. Some go back to when MKV output was first added.
 
@@ -35,6 +35,8 @@ More fixes like these will follow, because not everything can be found at once. 
 * **Ending a mux early with --cut-end stopped too soon when it had subtitles.** A subtitle ahead of the picture stopped the whole mux, so the end of the video and audio was lost. Subtitles no longer decide where the mux stops.
 
 * **An SRT file could lose its last subtitle, and a large one could lose lines.** The last subtitle was dropped when the file did not end with an empty line. In a file over 2 MB, lines at certain points of the file came out garbled, so a subtitle could show at the wrong time. Both are fixed.
+
+* **A stray line in an SRT file stopped the mux.** A title above the first subtitle, a counter written twice, or a blank line between a counter and its timing line ended the whole mux. Such a line is now skipped, with a warning when it holds text, and every subtitle comes out. A file in which no subtitle can be read at all still stops, and says which line it could not read.
 
 * **An empty line inside an SRT subtitle stopped the mux.** SRT has no way to write an empty line inside a subtitle, but many files contain one. Such a line is now kept as part of the subtitle, and the mux goes on.
 

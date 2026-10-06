@@ -195,6 +195,7 @@ bool SRTStreamReader::strOnlySpace(const std::string& str)
 
 int SRTStreamReader::flushPacket(AVPacket& avPacket)
 {
+    reportSkippedLines();
     if (!m_keepText)
         return m_dstSubCodec->flushPacket(avPacket);
     startTextPacket(avPacket);
@@ -491,6 +492,58 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
     }
 }
 
+// The line at the front is not a timing line. A blank line or a number, a counter written twice or
+// standing apart from its timing line, says nothing; other text is named, the first five times.
+void SRTStreamReader::skipNonCueLine()
+{
+    const std::string& line = m_sourceText.front();
+    if (!std::all_of(line.begin(), line.end(), [](const char c) { return (c >= '0' && c <= '9') || c == ' '; }))
+    {
+        const int64_t lineNumber = m_linesRead - static_cast<int64_t>(m_sourceText.size()) + 1;
+        if (m_skippedLines == 0)
+        {
+            m_firstSkippedLine = lineNumber;
+            m_firstSkippedText = line;
+        }
+        if (m_skippedLines++ < 5)
+        {
+            std::ostringstream what;
+            what << "Warning: track " << m_streamIndex;
+            if (!m_streamName.empty())
+                what << " (" << m_streamName << ")";
+            what << ", line " << lineNumber << ": \"" << line << "\" is not part of a subtitle and is skipped.";
+            LTRACE(LT_WARN, 2, what.str());
+        }
+    }
+    m_sourceText.pop_front();
+    m_processedSize += m_origSize.front();
+    m_origSize.pop();
+}
+
+// At the end of the track. Lines passed over in a file that gave subtitles are a warning; in a file that
+// gave none at all they are the reason, and that is an error, as it always was: an empty track that
+// reports success would be worse than the stop.
+void SRTStreamReader::reportSkippedLines()
+{
+    if (m_skippedLines == 0)
+        return;
+    if (m_cuesRead == 0)
+    {
+        std::ostringstream what;
+        what << "No subtitle could be read from track " << m_streamIndex;
+        if (!m_streamName.empty())
+            what << " (" << m_streamName << ")";
+        what << ". The first line that is not part of a subtitle is line " << m_firstSkippedLine << ", \""
+             << m_firstSkippedText << "\". A subtitle starts with a timing line like 00:00:20,000 --> 00:00:24,400";
+        THROW(ERR_COMMON, what.str())
+    }
+    if (m_skippedLines > 5)
+        LTRACE(LT_WARN, 2,
+               "Warning: track " << m_streamIndex << ": " << m_skippedLines
+                                 << " lines in all that are not part of any subtitle were skipped.");
+    m_skippedLines = 0;
+}
+
 // Parses one cue and hands it to addCue. Returns false when the next cue is not complete yet.
 bool SRTStreamReader::readNextCue()
 {
@@ -539,24 +592,13 @@ bool SRTStreamReader::readNextCue()
     }
     if (m_state == ParseState::PARSE_TIME)
     {
-        if (!parseTime(m_sourceText.front()))
-        {
-            // Say WHICH track and WHICH file, and where in it. A demux of thirty two subtitle
-            // tracks used to end with nothing but the offending text, and when that text is a
-            // blank line the message quoted an empty string and named nothing at all.
-            const int64_t lineNumber = m_linesRead - static_cast<int64_t>(m_sourceText.size()) + 1;
-            std::ostringstream what;
-            what << "Invalid SRT format in track " << m_streamIndex;
-            if (!m_streamName.empty())
-                what << " (" << m_streamName << ")";
-            what << ", line " << lineNumber << ": expected a timing line and found ";
-            if (m_sourceText.front().empty())
-                what << "a blank one.";
-            else
-                what << "\"" << m_sourceText.front().c_str() << "\".";
-            what << " A timing line looks like 00:00:20,000 --> 00:00:24,400";
-            THROW(ERR_COMMON, what.str())
-        }
+        // A line where a timing line belongs that is not one used to end the whole mux. Files carry such
+        // lines often enough: a counter written twice, a blank line between the counter and its timing
+        // line, a title or a note above the first subtitle. A blank line or a number is passed over;
+        // any other text is passed over and named in a warning, so nothing is lost in silence.
+        while (!m_sourceText.empty() && !parseTime(m_sourceText.front())) skipNonCueLine();
+        if (m_sourceText.empty())
+            return false;
         m_state = ParseState::PARSE_TEXT;
         m_sourceText.pop_front();
         m_processedSize += m_origSize.front();
@@ -673,6 +715,7 @@ static bool hasVisibleText(const std::string& text)
 
 void SRTStreamReader::addCue(const std::string& text, const double inTime, const double outTime)
 {
+    ++m_cuesRead;
     // Kept as text, each subtitle goes out as it was written, overlaps and all: Matroska carries
     // subtitles that overlap as they are, so nothing is grouped or drawn. A subtitle with no text
     // at all has nothing to carry.
@@ -845,16 +888,20 @@ int SRTStreamReader::blankLineEndsCue() const
     // after it ends the cue. An empty line inside a cue still has its cue's later lines behind it.
     if (i == m_sourceText.size())
         return m_lastBlock || m_containerType != ContainerType::ctNone ? 1 : -1;
-    const std::string& next = m_sourceText[i];
-    if (next.find("-->") != std::string::npos)
-        return 1;
-    const bool isCounter =
-        std::all_of(next.begin(), next.end(), [](const char c) { return (c >= '0' && c <= '9') || c == ' '; });
-    if (!isCounter)
-        return 0;
-    if (i + 1 == m_sourceText.size())
-        return m_lastBlock ? 1 : -1;
-    return m_sourceText[i + 1].find("-->") != std::string::npos ? 1 : 0;
+    // A counter can stand apart from its timing line, written twice or with a blank line after it, so the
+    // counters and blank lines that follow are looked past: a timing line behind them ends the subtitle,
+    // any other text means the blank line belongs to it.
+    for (; i < m_sourceText.size(); ++i)
+    {
+        const std::string& next = m_sourceText[i];
+        if (next.find("-->") != std::string::npos)
+            return 1;
+        const bool counterOrBlank =
+            std::all_of(next.begin(), next.end(), [](const char c) { return (c >= '0' && c <= '9') || c == ' '; });
+        if (!counterOrBlank)
+            return 0;
+    }
+    return m_lastBlock ? 1 : -1;
 }
 
 bool SRTStreamReader::parseTime(const string& text)
