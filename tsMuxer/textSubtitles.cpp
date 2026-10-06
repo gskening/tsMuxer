@@ -107,8 +107,13 @@ void TextToPGSConverter::setVideoInfo(const uint16_t width, const uint16_t heigh
 
 double TextToPGSConverter::alignToGrid(const double value) const
 {
-    // how many frames have passed until this moment in time (rounded)
-    const double frameCnt = round(value * m_videoFps);
+    // How many frames have passed until this moment in time, rounded to the nearest frame, a time
+    // exactly half way going to the later one. A subtitle time is a whole number of milliseconds
+    // and cannot be held exactly in a double: 2.26 s is stored a hair below 2.26, so at 25 fps the
+    // exact half way point 56.5 came out as 56.4999... and went to the EARLIER frame. The millionth
+    // of a frame added here only decides such ties. It never moves any other millisecond time:
+    // at the NTSC rates their fractions stay at least 1/2002 of a frame away from a half.
+    const double frameCnt = round(value * m_videoFps + 1e-6);
     return frameCnt / m_videoFps;
 }
 
