@@ -4772,10 +4772,8 @@ void TsMuxerWindow::updateDvProfileVisible()
     // its height from the combo.
 }
 
-void TsMuxerWindow::RadioButtonMuxClick()
+void TsMuxerWindow::applyOutputMode()
 {
-    if (outFileNameDisableChange)
-        return;
     if (ui->radioButtonDemux->isChecked())
         ui->buttonMux->setText(tr("Start demuxing"));
     else
@@ -4802,6 +4800,13 @@ void TsMuxerWindow::RadioButtonMuxClick()
         ui->w64CheckBox->setChecked(false);
     if (const QtvCodecInfo* info = getCurrentCodec())
         ui->w64CheckBox->setEnabled(info->programName == QLatin1String("A_LPCM") && ui->radioButtonDemux->isChecked());
+}
+
+void TsMuxerWindow::RadioButtonMuxClick()
+{
+    if (outFileNameDisableChange)
+        return;
+    applyOutputMode();
     outFileNameDisableChange = true;
     if (ui->radioButtonBluRay->isChecked() || ui->radioButtonDemux->isChecked() || ui->radioButtonAVCHD->isChecked())
     {
@@ -4856,7 +4861,7 @@ void TsMuxerWindow::outFileNameChanged()
     if (ext.endsWith(QLatin1Char('\"')))
         ext.chop(1);
 
-    bool isISOMode = ui->radioButtonBluRayISO->isChecked();
+    const auto modeBefore = currentOutputMode();
 
     // Only a name that ends in an output's own extension chooses that output. Anything else used to
     // mean Transport Stream, so a name without an extension silently turned an ISO, Matroska or
@@ -4874,12 +4879,19 @@ void TsMuxerWindow::outFileNameChanged()
     else if (ext == "TS")
         ui->radioButtonTS->setChecked(true);
 
-    bool isISOModeNew = ui->radioButtonBluRayISO->isChecked();
-
     ui->DiskLabel->setVisible(ui->radioButtonBluRayISO->isChecked());
     ui->DiskLabelEdit->setVisible(ui->radioButtonBluRayISO->isChecked());
-    if (isISOMode != isISOModeNew)
+    // A name whose extension chooses another output changes everything the output decides, exactly
+    // as a click on that output's button does. Only the switch to or from ISO used to rebuild the
+    // meta, so a name ending in .mkv typed while TS was chosen left the meta as it was for TS: a
+    // FLAC track stayed commented out and the MKV was muxed without it, and .ts typed over .mkv kept
+    // the FLAC track for an output that cannot carry it. The meta is what gets muxed.
+    if (modeBefore != currentOutputMode())
+    {
+        applyOutputMode();
+        colorizeAllRows();
         updateMetaLines();
+    }
     outFileNameDisableChange = false;
 }
 

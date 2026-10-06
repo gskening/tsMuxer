@@ -166,6 +166,9 @@ class TsMuxerWindow : public QWidget
     [[nodiscard]] bool outputCanSplit() const;
     // Grey the Blu-ray tab's controls that the chosen output does not use.
     void updateBluRayTabEnabled();
+    // Everything that follows from the chosen output except its name. A click on an output button
+    // and a typed name whose extension chooses the output both come through here.
+    void applyOutputMode();
     void delTracksByFileName(const QString& fileName);
     void deleteTrack(int idx);
     void updateNum();
