@@ -53,7 +53,9 @@ class TextToPGSConverter  //: public TextSubtitlesRenderWin32
     void enlargeCrop(uint16_t width, uint16_t height, uint16_t* newWidth, uint16_t* newHeight) const;
     void setBottomOffset(const int offset) { m_bottomOffset = offset; }
     uint8_t* doConvert(const std::string& text, const TextAnimation& animation, double inTimeSec, double outTimeSec,
-                       uint32_t& dstBufSize);
+                       uint32_t& dstBufSize, bool hide = true);
+    // A display set that only clears the screen, at atTimeSec, in the window of the last text drawn
+    uint8_t* doClear(double atTimeSec, uint32_t& dstBufSize);
     TextSubtitlesRender* m_textRender;
     static YUVQuad RGBAToYUVA(uint32_t data);
     static RGBQUAD YUVAToRGBA(const YUVQuad& yuv);
@@ -62,6 +64,10 @@ class TextToPGSConverter  //: public TextSubtitlesRenderWin32
     int m_rleLen;
     int m_bottomOffset;
     uint16_t m_composition_number;
+    // The window of the last text drawn, for a clear that follows it as a display set of its own
+    uint16_t m_lastWindowTop = 0;
+    uint16_t m_lastWindowHeight = 0;
+    double m_lastWindowsTransferTime = 0;
     uint16_t m_videoWidth;
     uint16_t m_videoHeight;
     double m_videoFps;

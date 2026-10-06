@@ -331,8 +331,24 @@ float toCurve(const float value)
     return result;
 }
 
+uint8_t* TextToPGSConverter::doClear(const double atTimeSec, uint32_t& dstBufSize)
+{
+    // The same three segments that end a text in doConvert, for a text whose end could not be
+    // written with it because the composition meant to replace it turned out to draw nothing
+    const double outTimePTS = alignToGrid(atTimeSec) * 90000.0;
+    uint8_t* curPos = m_pgsBuffer;
+    palette_update_flag = false;
+    const int64_t pts = llround(outTimePTS);
+    const int64_t dts = llround(outTimePTS - m_lastWindowsTransferTime);
+    curPos += composePresentationSegment(curPos, CompositionMode::Finish, pts, dts - 90, m_lastWindowTop, true, false);
+    curPos += composeWindowDefinition(curPos, dts, dts - 90, m_lastWindowTop, m_lastWindowHeight);
+    curPos += composeEnd(curPos, pts - 90, pts - 90);
+    dstBufSize = static_cast<uint32_t>(curPos - m_pgsBuffer);
+    return m_pgsBuffer;
+}
+
 uint8_t* TextToPGSConverter::doConvert(const std::string& text, const TextAnimation& animation, double inTimeSec,
-                                       double outTimeSec, uint32_t& dstBufSize)
+                                       double outTimeSec, uint32_t& dstBufSize, const bool hide)
 {
     const bool forced = m_textRender->rasterText(text);
     inTimeSec = alignToGrid(inTimeSec);
@@ -374,6 +390,9 @@ uint8_t* TextToPGSConverter::doConvert(const std::string& text, const TextAnimat
 
     const double PLANEINITIALIZATIONTIME = 90000.0 * (m_videoWidth * m_videoHeight) / PIXEL_COMPOSITION_RATE + 0.999;
     const double PRESENTATION_DTS_DELTA = PLANEINITIALIZATIONTIME + windowsTransferTime;
+    m_lastWindowTop = objectWindowTop;
+    m_lastWindowHeight = objectWindowHeight;
+    m_lastWindowsTransferTime = windowsTransferTime;
 
     // 1. show text
     uint8_t* curPos = m_pgsBuffer;
@@ -411,10 +430,11 @@ uint8_t* TextToPGSConverter::doConvert(const std::string& text, const TextAnimat
         opacity += opacityInDelta;
     }
 
-    // 2.2 fade out palette
+    // 2.2 fade out palette, only where the text then leaves the screen: text that is replaced at
+    //     outTimeSec by the next composition must stay fully visible until then
     updateTime = alignToGrid(FFMAX(updateTime, outTimePTS - (fadeOutFrames - 1) * fpsPts));
     opacity = 1.0f - opacityOutDelta;
-    while (updateTime < outTimePTS - FLOAT_EPS)
+    while (hide && updateTime < outTimePTS - FLOAT_EPS)
     {
         palette_update_flag = true;
         m_paletteVersion++;
@@ -428,13 +448,18 @@ uint8_t* TextToPGSConverter::doConvert(const std::string& text, const TextAnimat
         opacity -= opacityOutDelta;
     }
 
-    // 3. hide text
+    // 3. hide text, unless the caller replaces it at outTimeSec with a new composition: then the
+    //    screen goes straight from this text to the next, with nothing empty in between
     palette_update_flag = false;
-    pts = llround(outTimePTS);
-    dts = llround(outTimePTS - windowsTransferTime);
-    curPos += composePresentationSegment(curPos, CompositionMode::Finish, pts, dts - 90, objectWindowTop, true, false);
-    curPos += composeWindowDefinition(curPos, dts, dts - 90, objectWindowTop, objectWindowHeight);
-    curPos += composeEnd(curPos, pts - 90, pts - 90);
+    if (hide)
+    {
+        pts = llround(outTimePTS);
+        dts = llround(outTimePTS - windowsTransferTime);
+        curPos +=
+            composePresentationSegment(curPos, CompositionMode::Finish, pts, dts - 90, objectWindowTop, true, false);
+        curPos += composeWindowDefinition(curPos, dts, dts - 90, objectWindowTop, objectWindowHeight);
+        curPos += composeEnd(curPos, pts - 90, pts - 90);
+    }
 
     assert(curPos - m_pgsBuffer < PG_BUFFER_SIZE);
 

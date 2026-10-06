@@ -1,5 +1,9 @@
 #include "srtStreamReader.h"
 
+#include <algorithm>
+#include <cctype>
+#include <iterator>
+#include <set>
 #include <sstream>
 #include <string>
 
@@ -209,7 +213,31 @@ int SRTStreamReader::readPacket(AVPacket& avPacket)
 
 uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
 {
-    uint8_t* rez = nullptr;
+    // Keep reading cues until something can be drawn. Returning with complete cues still waiting
+    // would ask for more data, and at the end of the file there is none: they would be lost.
+    for (;;)
+    {
+        while (m_toDraw.empty())
+        {
+            if (!readNextCue())
+            {
+                // The file is finished, so whatever is held is complete
+                if (m_lastBlock && m_sourceText.empty())
+                    flushCueGroup();
+                break;
+            }
+        }
+        if (m_toDraw.empty())
+            return nullptr;
+        // A piece that draws nothing, such as a cue of tags only, is passed over
+        if (uint8_t* rez = drawNext(renderedLen))
+            return rez;
+    }
+}
+
+// Parses one cue and hands it to addCue. Returns false when the next cue is not complete yet.
+bool SRTStreamReader::readNextCue()
+{
     if (m_sourceText.empty())
     {
         // The end of the file usually arrives as a call of its own, after the last lines. The last
@@ -218,10 +246,11 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
         if (m_lastBlock && m_state == ParseState::PARSE_TEXT && !m_renderedText.empty())
         {
             m_state = ParseState::PARSE_FIRST_LINE;
-            rez = m_srtRender->doConvert(m_renderedText, m_animation, m_inTime, m_outTime, renderedLen);
+            addCue(m_renderedText, m_inTime, m_outTime);
             m_renderedText.clear();
+            return true;
         }
-        return rez;
+        return false;
     }
     if (m_state == ParseState::PARSE_FIRST_LINE)
     {
@@ -232,7 +261,7 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
             m_origSize.pop();
         }
         if (m_sourceText.empty())
-            return nullptr;
+            return false;
         m_state = ParseState::PARSE_TIME;
         bool isNUmber = true;
         {
@@ -249,7 +278,7 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
             m_processedSize += m_origSize.front();
             m_origSize.pop();
             if (m_sourceText.empty())
-                return nullptr;
+                return false;
         }
     }
     if (m_state == ParseState::PARSE_TIME)
@@ -277,7 +306,7 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
         m_processedSize += m_origSize.front();
         m_origSize.pop();
         if (m_sourceText.empty())
-            return nullptr;
+            return false;
     }
 
     for (;;)
@@ -299,7 +328,7 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
         // subtitle only when a new one follows it; otherwise it belongs to the text.
         const int ends = blankLineEndsCue();
         if (ends < 0)
-            return nullptr;  // the next lines have not arrived yet
+            return false;  // the next lines have not arrived yet
         if (ends > 0)
             break;
         while (!m_sourceText.empty() && m_sourceText.front().empty())
@@ -318,18 +347,213 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
             // The last subtitle of a file with no blank line after it. Its text used to be cleared
             // before it was drawn, so it was drawn empty and never appeared.
             m_state = ParseState::PARSE_FIRST_LINE;
-            rez = m_srtRender->doConvert(m_renderedText, m_animation, m_inTime, m_outTime, renderedLen);
+            addCue(m_renderedText, m_inTime, m_outTime);
             m_renderedText.clear();
+            return true;
         }
-        return rez;
+        return false;
     }
     m_sourceText.pop_front();  // delete empty line (messages separator)
     m_processedSize += m_origSize.front();
     m_origSize.pop();
-    rez = m_srtRender->doConvert(m_renderedText, m_animation, m_inTime, m_outTime, renderedLen);
+    addCue(m_renderedText, m_inTime, m_outTime);
     m_state = ParseState::PARSE_FIRST_LINE;
     m_renderedText.clear();
-    return rez;
+    return true;
+}
+
+// Closing tags for the style tags a cue leaves open, so that a cue drawn below it in the same
+// picture does not inherit its italic, bold or colour. Only used when cues are stacked.
+static std::string closeOpenTags(const std::string& text)
+{
+    static const char* const KNOWN[] = {"i", "italic", "b", "bold", "u", "underline", "strike", "f", "force", "font"};
+    std::vector<std::string> open;
+    size_t pos = 0;
+    while ((pos = text.find('<', pos)) != std::string::npos)
+    {
+        const size_t end = text.find('>', pos);
+        if (end == std::string::npos)
+            break;
+        std::string tag = text.substr(pos + 1, end - pos - 1);
+        pos = end + 1;
+        const bool closing = !tag.empty() && tag[0] == '/';
+        if (closing)
+            tag.erase(0, 1);
+        tag = tag.substr(0, tag.find_first_of(" \t="));
+        for (char& c : tag) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        if (std::find(std::begin(KNOWN), std::end(KNOWN), tag) == std::end(KNOWN))
+            continue;
+        if (!closing)
+            open.push_back(tag);
+        else if (const auto it = std::find(open.rbegin(), open.rend(), tag); it != open.rend())
+            open.erase(std::next(it).base());
+    }
+    std::string closers;
+    for (auto it = open.rbegin(); it != open.rend(); ++it) closers += "</" + *it + ">";
+    return closers;
+}
+
+// Whether the text has anything to show once its tags are taken out. A cue such as "<i></i>" or one
+// of spaces draws nothing; in a group it would only add an empty line that pushes the others up.
+static bool hasVisibleText(const std::string& text)
+{
+    bool inTag = false;
+    for (size_t i = 0; i < text.size(); ++i)
+    {
+        const auto c = static_cast<unsigned char>(text[i]);
+        if (c == '<')
+            inTag = true;
+        else if (c == '>' && inTag)
+            inTag = false;
+        else if (inTag || c == ' ' || c == '\t' || c == '\r' || c == '\n')
+            continue;
+        else if (c == 0xC2 && i + 1 < text.size() && static_cast<unsigned char>(text[i + 1]) == 0xA0)
+            ++i;  // a no-break space
+        else
+            return true;
+    }
+    return false;
+}
+
+void SRTStreamReader::addCue(const std::string& text, const double inTime, const double outTime)
+{
+    // Each cue used to be drawn as a picture of its own that cleared the screen at its end. Two cues
+    // that overlap then wrote their pictures out of time order, and the first one's end cleared
+    // the second while it was still due.
+    //
+    // Only a subtitle FILE is grouped. It is read ahead on its own, so holding a cue until the next
+    // one shows whether they overlap costs nothing. From a container the next cue may be minutes
+    // away in the source, and holding the cue would deliver it late: there each cue is drawn at
+    // once, as before.
+    const Cue cue{text, inTime, outTime, m_srtRender->alignToGrid(inTime), m_srtRender->alignToGrid(outTime)};
+    // Overlaps are judged on the frame grid, where the cues are drawn: two cues that touch within
+    // one frame, which converted files are full of, are not an overlap. A cue with no text or no
+    // length on the grid takes no part in a group.
+    const bool drawable = hasVisibleText(text) && cue.outFrame > cue.inFrame;
+    const bool joins =
+        m_containerType == ContainerType::ctNone && !m_cueGroup.empty() && drawable && cue.inFrame < m_cueGroupEnd;
+    if (!joins)
+    {
+        if (!m_cueGroup.empty() && cue.inFrame < m_cueGroupEnd)
+            return;  // no text or no length, inside a group: nothing to add to it
+        flushCueGroup();
+    }
+    m_cueGroupEnd = m_cueGroup.empty() ? cue.outFrame : (std::max)(m_cueGroupEnd, cue.outFrame);
+    m_cueGroup.push_back(cue);
+    if (m_containerType != ContainerType::ctNone || !drawable)
+        flushCueGroup();
+}
+
+void SRTStreamReader::flushCueGroup()
+{
+    if (m_cueGroup.size() == 1)
+    {
+        // A cue that overlaps nothing is drawn exactly as it always was, from its times as read
+        const Cue& c = m_cueGroup.front();
+        m_toDraw.push_back(Piece{c.text, c.inTime, c.outTime, true});
+    }
+    else if (m_cueGroup.size() > 1)
+    {
+        // A sweep over the starts and ends. Up to MAX_STACKED cues are shown at once, the ones that
+        // started last: a cue with a mistyped end time would otherwise stay on top of everything
+        // that follows it, and a damaged file could make one picture of thousands of lines.
+        constexpr size_t MAX_STACKED = 4;
+        const size_t firstPiece = m_toDraw.size();
+        std::vector<double> bounds;
+        for (const Cue& c : m_cueGroup)
+        {
+            bounds.push_back(c.inFrame);
+            bounds.push_back(c.outFrame);
+        }
+        std::sort(bounds.begin(), bounds.end());
+        bounds.erase(std::unique(bounds.begin(), bounds.end()), bounds.end());
+        std::vector<size_t> byStart(m_cueGroup.size());
+        std::vector<size_t> byEnd(m_cueGroup.size());
+        for (size_t i = 0; i < m_cueGroup.size(); ++i) byStart[i] = byEnd[i] = i;
+        std::stable_sort(byStart.begin(), byStart.end(), [this](const size_t a, const size_t b)
+                         { return m_cueGroup[a].inFrame < m_cueGroup[b].inFrame; });
+        std::stable_sort(byEnd.begin(), byEnd.end(), [this](const size_t a, const size_t b)
+                         { return m_cueGroup[a].outFrame < m_cueGroup[b].outFrame; });
+        std::set<std::pair<double, size_t>> active;  // ordered by start, then by place in the file
+        size_t nextStart = 0;
+        size_t nextEnd = 0;
+        bool capped = false;
+        for (size_t k = 0; k + 1 < bounds.size(); ++k)
+        {
+            const double t = bounds[k];
+            while (nextEnd < byEnd.size() && m_cueGroup[byEnd[nextEnd]].outFrame <= t)
+            {
+                active.erase({m_cueGroup[byEnd[nextEnd]].inFrame, byEnd[nextEnd]});
+                ++nextEnd;
+            }
+            while (nextStart < byStart.size() && m_cueGroup[byStart[nextStart]].inFrame <= t)
+            {
+                if (m_cueGroup[byStart[nextStart]].outFrame > t)
+                    active.insert({m_cueGroup[byStart[nextStart]].inFrame, byStart[nextStart]});
+                ++nextStart;
+            }
+            if (active.empty())
+                continue;
+            if (active.size() > MAX_STACKED && !capped)
+            {
+                capped = true;
+                LTRACE(LT_WARN, 2,
+                       "Warning: more than " << MAX_STACKED << " subtitles of track " << m_streamIndex << " overlap at "
+                                             << t << " s. Only the ones that started last are drawn while they do.");
+            }
+            auto first = active.begin();
+            if (active.size() > MAX_STACKED)
+                std::advance(first, active.size() - MAX_STACKED);
+            std::string text;
+            for (auto it = first; it != active.end(); ++it)
+            {
+                const std::string& part = m_cueGroup[it->second].text;
+                if (!text.empty())
+                    text += '\n';
+                text += part + closeOpenTags(part);
+            }
+            // A boundary that changes nothing visible, such as the end of a cue that was not shown
+            // because more recent ones filled the picture, extends the piece before it
+            if (m_toDraw.size() > firstPiece && m_toDraw.back().outTime == t && m_toDraw.back().text == text)
+            {
+                m_toDraw.back().outTime = bounds[k + 1];
+                continue;
+            }
+            m_toDraw.push_back(Piece{std::move(text), t, bounds[k + 1], false});
+        }
+        // The screen is cleared only where nothing follows a piece; elsewhere the next piece
+        // replaces it at the same moment
+        for (size_t i = firstPiece; i < m_toDraw.size(); ++i)
+            if (!m_toDraw[i].hide && (i + 1 == m_toDraw.size() || m_toDraw[i + 1].inTime != m_toDraw[i].outTime))
+                m_toDraw[i].hide = true;
+    }
+    m_cueGroup.clear();
+}
+
+uint8_t* SRTStreamReader::drawNext(uint32_t& renderedLen)
+{
+    Piece piece = std::move(m_toDraw.front());
+    m_toDraw.pop_front();
+    // Fades belong to the edges of what is on screen: none where a piece takes over from another
+    text_subtitles::TextAnimation animation = m_animation;
+    if (m_screenShown)
+        animation.fadeInDuration = 0;
+    if (!piece.hide)
+        animation.fadeOutDuration = 0;
+    if (uint8_t* rez =
+            m_srtRender->doConvert(piece.text, animation, piece.inTime, piece.outTime, renderedLen, piece.hide))
+    {
+        m_screenShown = !piece.hide;
+        return rez;
+    }
+    // This piece draws nothing. If the one before it is still on screen, it has to go now, or it
+    // would stay until whatever is drawn next.
+    if (m_screenShown)
+    {
+        m_screenShown = false;
+        return m_srtRender->doClear(piece.inTime, renderedLen);
+    }
+    return nullptr;
 }
 
 // Whether the blank line at the front ends the subtitle being read: 1 when what follows the blank

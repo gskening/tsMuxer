@@ -85,6 +85,34 @@ class SRTStreamReader final : public AbstractStreamReader
     };
     ParseState m_state;
     uint8_t* renderNextMessage(uint32_t& renderedLen);
+    bool readNextCue();
+    void addCue(const std::string& text, double inTime, double outTime);
+    void flushCueGroup();
+    uint8_t* drawNext(uint32_t& renderedLen);
+
+    // Subtitles read from a file that overlap in time are drawn together. A cue waits here until
+    // one starts at or after the end of all of them (cues are expected in start order), or the
+    // file ends; the group is then cut at every start and end into pieces of screen time, each
+    // drawn with every subtitle visible during it. Times are on the frame grid here, as drawn.
+    struct Cue
+    {
+        std::string text;
+        double inTime;  // as read, for a cue that is drawn on its own
+        double outTime;
+        double inFrame;  // on the frame grid
+        double outFrame;
+    };
+    struct Piece
+    {
+        std::string text;
+        double inTime;
+        double outTime;
+        bool hide;
+    };
+    std::vector<Cue> m_cueGroup;
+    double m_cueGroupEnd = 0;
+    std::deque<Piece> m_toDraw;
+    bool m_screenShown = false;  // a piece without its clear is on screen
     bool parseTime(const std::string& text);
     static std::string detectUTF8Lang(uint8_t* buffer, int len);
     bool detectSrcFormat(const uint8_t* dataStart, size_t len, int& prefixLen);
