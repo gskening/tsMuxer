@@ -679,9 +679,16 @@ int MatroskaDemuxer::matroska_parse_block(uint8_t* data, int size, const int64_t
                 // taken for a real timestamp at the very start of the stream. Anything ordering
                 // pictures by timestamp then sorts that picture to the front, silently. Carry the
                 // sentinel through instead so it can be recognised.
-                pkt->pts = timecode == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : timecode * INTERNAL_PTS_FREQ / 1000;
+                //
+                // Block times and durations are counted in the file's TimestampScale, in nanoseconds. It
+                // is a millisecond unless the file says otherwise, and was taken to be one always: a file
+                // written at 100 us had every subtitle ten times too late. Through nanoseconds the result
+                // for a millisecond is exactly what it was, and ten hours still fit in 64 bits.
+                const auto toInternal = [this](const int64_t t)
+                { return t * static_cast<int64_t>(time_scale) * (INTERNAL_PTS_FREQ / 1000000) / 1000; };
+                pkt->pts = timecode == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : toInternal(timecode);
                 pkt->pos = pos;
-                pkt->duration = duration == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : duration * INTERNAL_PTS_FREQ / 1000;
+                pkt->duration = duration == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : toInternal(duration);
 
                 pkt->stream_index = track + 1;  // tracks[track]->stream_index;
 
