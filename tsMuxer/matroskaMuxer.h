@@ -196,6 +196,9 @@ class MatroskaMuxer final : public AbstractMuxer
         int64_t nextMaxBlockPts;  // the largest below maxBlockPts
         bool hasMaxBlockPts;
         bool hasNextMaxBlockPts;
+        // A text subtitle has a length of its own: the latest end of one, for the Duration
+        int64_t maxTextEnd = 0;
+        bool hasTextEnd = false;
 
         MkvTrackInfo()
             : streamIndex(0),
@@ -403,6 +406,7 @@ class MatroskaMuxer final : public AbstractMuxer
         int64_t pts;
         int64_t dts;
         uint32_t flags;
+        int64_t duration = 0;
         std::vector<uint8_t> data;
     };
     std::vector<BufferedPacket> m_preHeaderPackets;
@@ -428,6 +432,17 @@ class MatroskaMuxer final : public AbstractMuxer
     // Emit one completed frame. Shared by the ordinary path and by the dual layer Dolby Vision
     // path, which writes its frames later than it finishes them.
     void writeBlock(MkvTrackInfo& track, const uint8_t* frameData, int frameSize, int64_t pts, uint8_t pendingFlags);
+    // Text subtitles: one BlockGroup with its BlockDuration per subtitle, held until the other tracks
+    // reach its time so that every cluster is written in time order
+    void writeTextBlock(MkvTrackInfo& track, const uint8_t* data, int size, int64_t pts, int64_t duration);
+    void flushHeldText(int64_t upToPts);
+    struct HeldText
+    {
+        int streamIndex;
+        int64_t duration;
+        std::vector<uint8_t> data;
+    };
+    std::multimap<int64_t, HeldText> m_heldText;
     void drainHeldFrames(MkvTrackInfo& track, bool atEndOfStream);
     void finishFoldedTracks();  // release every held fold frame and report the merge, once
     bool m_foldsFinished = false;

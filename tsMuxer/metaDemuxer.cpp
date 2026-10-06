@@ -428,7 +428,11 @@ int METADemuxer::readPacket(AVPacket& avPacket)
                 // add static time shift
                 avPacket.dts += m_codecInfo[minDtsIndex].m_timeShift;
                 avPacket.pts += m_codecInfo[minDtsIndex].m_timeShift;
-                m_codecInfo[minDtsIndex].m_lastDTS = avPacket.dts + avPacket.duration;
+                // A text subtitle's duration is how long it stays on screen, not how long until the
+                // next one, which can start sooner and even overlap it. Timed by its end, an overlapping
+                // subtitle was read after the other tracks had passed its start.
+                m_codecInfo[minDtsIndex].m_lastDTS =
+                    avPacket.dts + (avPacket.codecID == CODEC_S_SRT ? 0 : avPacket.duration);
             }
             else
             {  // flush all streams
@@ -1128,7 +1132,7 @@ static bool isKnownTrackParam(const std::string& name)
         "pipCorner", "pipHOffset", "pipVOffset", "pipScale", "pipLumma",
         // text subtitles
         "font-name", "font-size", "font-color", "font-bold", "font-italic", "font-underline", "font-strike-out",
-        "font-border", "font-charset", "line-spacing", "bottom-offset", "fadein-time", "fadeout-time",
+        "font-border", "font-charset", "line-spacing", "bottom-offset", "fadein-time", "fadeout-time", "keep-text",
         // set internally, never written by a user, but accepted so a round tripped meta does
         // not warn. srcdefault is the source container's own default track flag.
         "srclang", "srcdefault"};
@@ -2194,10 +2198,15 @@ AbstractStreamReader* METADemuxer::createCodec(const string& codecName, const ma
                 animation.fadeInDuration = strToFloat(addParam.second.c_str());
             else if (addParam.first == "fadeout-time")
                 animation.fadeOutDuration = strToFloat(addParam.second.c_str());
+            else if (addParam.first == "keep-text")
+                srtReader->setKeepText(true);
         }
-        if (srtWidth == 0 || srtHeight == 0 || fps == 0.0)
+        // The picture size and frame rate are only needed to draw the subtitles. Kept as text they
+        // are not drawn, unless the output cannot carry text, and that output says so when it is.
+        if (!srtReader->keepText() && (srtWidth == 0 || srtHeight == 0 || fps == 0.0))
             THROW(ERR_COMMON, "video-width, video-height and fps parameters MUST be provided for SRT tracks")
-        srtReader->setVideoInfo(srtWidth, srtHeight, fps);
+        if (srtWidth && srtHeight && fps != 0.0)
+            srtReader->setVideoInfo(srtWidth, srtHeight, fps);
         srtReader->setFont(font);
         srtReader->setAnimation(animation);
     }

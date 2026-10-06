@@ -17,12 +17,18 @@ class SRTStreamReader final : public AbstractStreamReader
     SRTStreamReader();
     ~SRTStreamReader() override;
     int readPacket(AVPacket& avPacket) override;
-    int flushPacket(AVPacket& avPacket) override { return m_dstSubCodec->flushPacket(avPacket); }
+    int flushPacket(AVPacket& avPacket) override;
     void setBuffer(uint8_t* data, uint32_t dataLen, bool lastBlock = false) override;
     int64_t getProcessedSize() override { return m_processedSize; }
     CheckStreamRez checkStream(uint8_t* buffer, int len, ContainerType containerType, int containerDataType,
                                int containerStreamIndex);
-    const CodecInfo& getCodecInfo() override { return pgsCodecInfo; }
+    // Kept as text the track is SRT, in Matroska S_TEXT/UTF8; otherwise it is drawn into PGS
+    const CodecInfo& getCodecInfo() override { return m_keepText ? srtCodecInfo : pgsCodecInfo; }
+    // keep-text: hand the subtitles over as text, each with its start and duration, instead of drawing
+    // them into pictures. Only a muxer that can carry text leaves it on; the others turn it off.
+    void setKeepText(const bool value) { m_keepText = value; }
+    [[nodiscard]] bool keepText() const { return m_keepText; }
+    [[nodiscard]] bool hasVideoInfo() const { return m_hasVideoInfo; }
     void setStreamIndex(const int index) override
     {
         m_streamIndex = index;
@@ -38,6 +44,7 @@ class SRTStreamReader final : public AbstractStreamReader
     void setVideoInfo(const uint16_t width, const uint16_t height, const double fps) const
     {
         m_srtRender->setVideoInfo(width, height, fps);
+        m_hasVideoInfo = width && height && fps > 0;
         const auto pgsReader = dynamic_cast<PGSStreamReader*>(m_dstSubCodec);
         if (pgsReader)
             pgsReader->setVideoInfo(0, 0, fps);
@@ -58,6 +65,20 @@ class SRTStreamReader final : public AbstractStreamReader
     double m_inTime;
     double m_outTime;
     bool m_untilNext = false;  // the timing line has no end: shown until the next subtitle
+    bool m_keepText = false;
+    mutable bool m_hasVideoInfo = false;
+    struct TextCue
+    {
+        std::string text;
+        double inTime;
+        double outTime;
+        bool untilNext;
+    };
+    std::deque<TextCue> m_textCues;
+    std::vector<uint8_t> m_textPacket;
+    int m_lengthlessCues = 0;   // kept as text: subtitles left out because they have no length
+    int m_invalidUtf8Cues = 0;  // kept as text: subtitles whose bytes were not all valid UTF-8
+    int readTextPacket(AVPacket& avPacket);
     int m_processedSize;
     int32_t m_charSize;
     AbstractStreamReader* m_dstSubCodec;

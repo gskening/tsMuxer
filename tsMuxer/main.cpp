@@ -682,6 +682,11 @@ Additional parameters for SRT tracks:
 - fadein-time       Time in ms for smooth subtitle appearance.
 - fadeout-time      Time in ms for smooth subtitle disappearance.
 - line-spacing      Interval between subtitle lines. Default value is 1.0.
+- keep-text         Keep the subtitles as text instead of drawing them into
+                    pictures: each one is copied with its text, its tags and
+                    its own start and end. Matroska output only. Other outputs
+                    draw the subtitles as usual, with a warning, which needs
+                    video-width, video-height and fps.
 
 tsMuxeR supports additional tags inside SRT tracks. The syntax and parameters
 coincide with HTML: <b>, <i>, <u>, <strike>, <font>. Default relative font size

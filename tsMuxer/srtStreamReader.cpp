@@ -193,8 +193,137 @@ bool SRTStreamReader::strOnlySpace(const std::string& str)
     return std::all_of(str.begin(), str.end(), [](const char c) { return c == ' '; });
 }
 
+int SRTStreamReader::flushPacket(AVPacket& avPacket)
+{
+    if (!m_keepText)
+        return m_dstSubCodec->flushPacket(avPacket);
+    if (m_lengthlessCues > 1)
+        LTRACE(LT_WARN, 2,
+               "Warning: track " << m_streamIndex << ": " << m_lengthlessCues
+                                 << " subtitles in all have no length and were left out.");
+    if (m_invalidUtf8Cues > 1)
+        LTRACE(LT_WARN, 2,
+               "Warning: track " << m_streamIndex << ": " << m_invalidUtf8Cues
+                                 << " subtitles in all held bytes that are not valid UTF-8.");
+    m_lengthlessCues = m_invalidUtf8Cues = 0;
+    avPacket.codec = this;
+    avPacket.codecID = CODEC_S_SRT;
+    avPacket.stream_index = m_streamIndex;
+    avPacket.data = nullptr;
+    avPacket.size = 0;
+    avPacket.duration = 0;
+    return 0;
+}
+
+// Valid UTF-8, which a Matroska text track must hold: a byte that does not begin or continue a valid
+// sequence (RFC 3629) becomes U+FFFD. The text has already been converted from the file's encoding;
+// this catches a file whose encoding was judged from its first part and changes later, and a file
+// that is not UTF-8 on a system with no code page to fall back to. Returns whether a byte was replaced.
+static bool makeValidUtf8(std::string& text)
+{
+    std::string out;
+    bool replaced = false;
+    size_t i = 0;
+    while (i < text.size())
+    {
+        const auto b = static_cast<uint8_t>(text[i]);
+        size_t len = 0;
+        uint8_t lo = 0x80;  // the allowed range of the second byte
+        uint8_t hi = 0xBF;
+        if (b < 0x80)
+            len = 1;
+        else if (b >= 0xC2 && b <= 0xDF)
+            len = 2;
+        else if (b >= 0xE0 && b <= 0xEF)
+        {
+            len = 3;
+            if (b == 0xE0)
+                lo = 0xA0;  // no overlong form
+            else if (b == 0xED)
+                hi = 0x9F;  // no surrogate
+        }
+        else if (b >= 0xF0 && b <= 0xF4)
+        {
+            len = 4;
+            if (b == 0xF0)
+                lo = 0x90;
+            else if (b == 0xF4)
+                hi = 0x8F;  // nothing above U+10FFFF
+        }
+        bool ok = len > 0 && i + len <= text.size();
+        for (size_t k = 1; ok && k < len; ++k)
+        {
+            const auto c = static_cast<uint8_t>(text[i + k]);
+            ok = k == 1 ? c >= lo && c <= hi : c >= 0x80 && c <= 0xBF;
+        }
+        if (ok)
+        {
+            out.append(text, i, len);
+            i += len;
+            continue;
+        }
+        out += static_cast<char>(0xEF);
+        out += static_cast<char>(0xBF);
+        out += static_cast<char>(0xBD);
+        replaced = true;
+        ++i;
+    }
+    if (replaced)
+        text.swap(out);
+    return replaced;
+}
+
+// One subtitle as text: its UTF-8 text with the lines joined by a line feed and every tag as written,
+// at its start, with its length as the duration. Times go through whole milliseconds, which is what
+// SRT holds, so they arrive exactly.
+int SRTStreamReader::readTextPacket(AVPacket& avPacket)
+{
+    avPacket.codec = this;
+    avPacket.codecID = CODEC_S_SRT;
+    avPacket.stream_index = m_streamIndex;
+    avPacket.data = nullptr;
+    avPacket.size = 0;
+    avPacket.flags = 0;
+    avPacket.duration = 0;
+    for (;;)
+    {
+        while (m_textCues.empty())
+            if (!readNextCue())
+                return NEED_MORE_DATA;
+        TextCue cue = std::move(m_textCues.front());
+        m_textCues.pop_front();
+        const int64_t inMs = llround(cue.inTime * 1000.0);
+        const int64_t outMs = llround(cue.outTime * 1000.0);
+        // A subtitle that ends when it starts, or earlier, is never on screen. Written without a
+        // duration it would mean the opposite, shown until the next one, so it is left out.
+        if (!cue.untilNext && outMs <= inMs)
+        {
+            if (m_lengthlessCues++ == 0)
+                LTRACE(LT_WARN, 2,
+                       "Warning: track " << m_streamIndex << ": the subtitle at " << floatToTime(cue.inTime, ',')
+                                         << " ends when it starts or earlier. It is never shown, so it is left out.");
+            continue;
+        }
+        if (makeValidUtf8(cue.text) && m_invalidUtf8Cues++ == 0)
+            LTRACE(LT_WARN, 2,
+                   "Warning: track " << m_streamIndex << ": the subtitle at " << floatToTime(cue.inTime, ',')
+                                     << " holds bytes that are not valid UTF-8, written as the replacement "
+                                        "character U+FFFD. Save the file as UTF-8 to keep every character.");
+        m_textPacket.assign(cue.text.begin(), cue.text.end());
+        avPacket.data = m_textPacket.data();
+        avPacket.size = static_cast<int>(m_textPacket.size());
+        avPacket.pts = avPacket.dts = inMs * INTERNAL_PTS_PER_MS;
+        // A subtitle without an end is shown until the next one: no duration
+        avPacket.duration = cue.untilNext ? 0 : (outMs - inMs) * INTERNAL_PTS_PER_MS;
+        avPacket.flags = AVPacket::IS_IFRAME;
+        return 0;
+    }
+}
+
 int SRTStreamReader::readPacket(AVPacket& avPacket)
 {
+    if (m_keepText)
+        return readTextPacket(avPacket);
     const int rez = m_dstSubCodec->readPacket(avPacket);
     if (rez == NEED_MORE_DATA)
     {
@@ -417,6 +546,15 @@ static bool hasVisibleText(const std::string& text)
 
 void SRTStreamReader::addCue(const std::string& text, const double inTime, const double outTime)
 {
+    // Kept as text, each subtitle goes out as it was written, overlaps and all: Matroska carries
+    // subtitles that overlap as they are, so nothing is grouped or drawn. A subtitle with no text
+    // at all has nothing to carry.
+    if (m_keepText)
+    {
+        if (!text.empty())
+            m_textCues.push_back(TextCue{text, inTime, outTime, m_untilNext});
+        return;
+    }
     // Each cue used to be drawn as a picture of its own that cleared the screen at its end. Two cues
     // that overlap then wrote their pictures out of time order, and the first one's end cleared
     // the second while it was still due.

@@ -306,13 +306,13 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
     track.matroskaCodecID = codecNameToMatroskaID(codecReader->getCodecInfo().programName, track.codecID);
     if (track.matroskaCodecID != metaCodecID)
         LTRACE(LT_WARN, 2,
-               "Warning: the meta asks for " << codecName << " but the data is "
-                                             << codecReader->getCodecInfo().programName
-                                             << ", so the track is written "
-                                                "as "
-                                             << track.matroskaCodecID
-                                             << ". A text subtitle is drawn into pictures before it is written, so the "
-                                                "text itself is not kept in the file.");
+               "Warning: the meta asks for "
+                   << codecName << " but the data is " << codecReader->getCodecInfo().programName
+                   << ", so the track is written "
+                      "as "
+                   << track.matroskaCodecID
+                   << ". A text subtitle is drawn into pictures before it is written, so the "
+                      "text itself is not kept in the file, unless the track asks for keep-text.");
 
     // Same parameter map the TS muxer reads the language from (tsMuxer.cpp). An explicit lang=
     // wins; "srclang" is the language muxerManager carried over from the source container.
@@ -1940,6 +1940,7 @@ void MatroskaMuxer::replayBufferedPackets()
         tmpPacket.pts = pkt.pts;
         tmpPacket.dts = pkt.dts;
         tmpPacket.flags = pkt.flags;
+        tmpPacket.duration = pkt.duration;
         tmpPacket.data = pkt.data.data();
         tmpPacket.size = static_cast<int>(pkt.data.size());
         muxPacketInternal(tmpPacket);
@@ -2413,12 +2414,82 @@ void MatroskaMuxer::flushPendingFrame(MkvTrackInfo& track)
     track.hasPendingFrame = false;
 }
 
+void MatroskaMuxer::flushHeldText(const int64_t upToPts)
+{
+    while (!m_heldText.empty() && m_heldText.begin()->first <= upToPts)
+    {
+        const auto node = m_heldText.extract(m_heldText.begin());
+        const auto it = m_tracks.find(node.mapped().streamIndex);
+        if (it != m_tracks.end())
+            writeTextBlock(it->second, node.mapped().data.data(), static_cast<int>(node.mapped().data.size()),
+                           node.key(), node.mapped().duration);
+    }
+}
+
+// One text subtitle: a BlockGroup holding its Block and its BlockDuration, the form the Matroska codec
+// mapping gives S_TEXT/UTF8. A subtitle without a duration, shown until the next one, is a SimpleBlock.
+void MatroskaMuxer::writeTextBlock(MkvTrackInfo& track, const uint8_t* data, const int size, const int64_t pts,
+                                   const int64_t duration)
+{
+    if (duration <= 0)
+    {
+        writeBlock(track, data, size, pts, AVPacket::IS_IFRAME);
+        return;
+    }
+    // The start and the end on the same millisecond grid as every other block, so that the end
+    // written is where the subtitle really ends, whatever the fraction of a millisecond the start had
+    const int64_t relMs = (pts - m_firstTimecode) / INTERNAL_PTS_PER_MS;
+    const int64_t durationMs = (std::max)(int64_t{1}, (pts + duration - m_firstTimecode) / INTERNAL_PTS_PER_MS - relMs);
+    if (!track.hasMaxBlockPts || pts > track.maxBlockPts)
+    {
+        track.maxBlockPts = pts;
+        track.hasMaxBlockPts = true;
+    }
+    if (!track.hasTextEnd || pts + duration > track.maxTextEnd)
+    {
+        track.maxTextEnd = pts + duration;
+        track.hasTextEnd = true;
+    }
+    const bool needNewCluster = !m_clusterOpen || relMs - m_clusterTimecodeMs >= CLUSTER_MAX_DURATION_MS ||
+                                m_clusterDataSize >= CLUSTER_MAX_SIZE;
+    const int64_t offset = relMs - m_clusterTimecodeMs;
+    if (needNewCluster || (m_clusterOpen && relMs >= 0 && (offset < INT16_MIN || offset > INT16_MAX)))
+        startCluster(relMs);
+    const auto relTimeMs = static_cast<int16_t>(relMs - m_clusterTimecodeMs);
+
+    uint8_t trackNumBuf[8];
+    const int trackNumLen = ebml_write_size(trackNumBuf, track.trackNumber);
+    const int blockPayloadSize = trackNumLen + 2 + 1 + size;
+    uint8_t blockHeader[16];
+    int blockHeaderLen = ebml_write_id(blockHeader, MATROSKA_ID_BLOCK);
+    blockHeaderLen += ebml_write_size(blockHeader + blockHeaderLen, blockPayloadSize);
+    uint8_t durationElement[16];
+    const int durationLen =
+        ebml_write_uint(durationElement, MATROSKA_ID_BLOCKDURATION, static_cast<uint64_t>(durationMs));
+    const int groupPayloadSize = blockHeaderLen + blockPayloadSize + durationLen;
+    uint8_t groupHeader[16];
+    int groupHeaderLen = ebml_write_id(groupHeader, MATROSKA_ID_BLOCKGROUP);
+    groupHeaderLen += ebml_write_size(groupHeader + groupHeaderLen, groupPayloadSize);
+
+    m_clusterBuf.insert(m_clusterBuf.end(), groupHeader, groupHeader + groupHeaderLen);
+    m_clusterBuf.insert(m_clusterBuf.end(), blockHeader, blockHeader + blockHeaderLen);
+    m_clusterBuf.insert(m_clusterBuf.end(), trackNumBuf, trackNumBuf + trackNumLen);
+    m_clusterBuf.push_back(static_cast<uint8_t>((relTimeMs >> 8) & 0xFF));
+    m_clusterBuf.push_back(static_cast<uint8_t>(relTimeMs & 0xFF));
+    m_clusterBuf.push_back(0);  // Block flags: no lacing
+    m_clusterBuf.insert(m_clusterBuf.end(), data, data + size);
+    m_clusterBuf.insert(m_clusterBuf.end(), durationElement, durationElement + durationLen);
+    m_clusterDataSize += groupHeaderLen + groupPayloadSize;
+}
+
 // Write one completed frame as a SimpleBlock. Split out of flushPendingFrame so that a dual layer
 // Dolby Vision base track, which has to hold its frames back until the matching enhancement layer
 // access unit has arrived, can emit them through exactly the same path later.
 void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, int frameSize, int64_t pts,
                                uint8_t pendingFlags)
 {
+    if (track.trackType != MKV_TRACK_TYPE_SUBTITLE && !m_heldText.empty())
+        flushHeldText(pts);
     // Compute PTS relative to stream start (convert internal PTS units to milliseconds)
     const int64_t relMs = (pts - m_firstTimecode) / INTERNAL_PTS_PER_MS;
 
@@ -2599,6 +2670,7 @@ bool MatroskaMuxer::muxPacket(AVPacket& avPacket)
         bp.pts = avPacket.pts;
         bp.dts = avPacket.dts;
         bp.flags = avPacket.flags;
+        bp.duration = avPacket.duration;
         bp.data.assign(avPacket.data, avPacket.data + avPacket.size);
         m_preHeaderPackets.push_back(std::move(bp));
 
@@ -2730,6 +2802,28 @@ bool MatroskaMuxer::muxPacketInternal(AVPacket& avPacket)
     // written only when the NEXT packet arrived, which for the last piece of a set is the next
     // subtitle, possibly a minute later: far enough behind its cluster to overflow the 16 bit block
     // offset, so a cue due at 6.0 s was written as 71.5 s in a 60 s file.
+    // A text subtitle is written as it is: one block per subtitle, at its start, with its duration. It
+    // can arrive long before its time, because the next subtitle is read as soon as the one before
+    // has ended, so it waits until the other tracks reach it; written at once it would open a cluster
+    // ahead of the video and the clusters after it would go back in time. A file of subtitles alone
+    // has nothing to wait for. Never merged with a packet of the same time: two subtitles may start
+    // together.
+    if (track.codecID == CODEC_S_SRT)
+    {
+        if (avPacket.size <= 0)
+            return true;
+        bool othersPresent = false;
+        for (const auto& [idx, t] : m_tracks) othersPresent |= t.trackType != MKV_TRACK_TYPE_SUBTITLE;
+        if (!othersPresent)
+        {
+            writeTextBlock(track, avPacket.data, avPacket.size, avPacket.pts, avPacket.duration);
+            return true;
+        }
+        m_heldText.emplace(avPacket.pts, HeldText{avPacket.stream_index, avPacket.duration,
+                                                  std::vector<uint8_t>(avPacket.data, avPacket.data + avPacket.size)});
+        return true;
+    }
+
     if (track.codecID == CODEC_S_PGS && avPacket.size > 0)
     {
         // A composition segment opens the next set, so a set still open without its END is
@@ -2793,6 +2887,7 @@ bool MatroskaMuxer::doFlush()
     for (auto& [streamIdx, track] : m_tracks) flushPendingFrame(track);
 
     finishFoldedTracks();
+    flushHeldText(INT64_MAX);
 
     flushCluster();
     return true;
@@ -3401,6 +3496,7 @@ bool MatroskaMuxer::close()
     // Flush any pending accumulated frames for all tracks
     for (auto& [streamIdx, track] : m_tracks) flushPendingFrame(track);
     finishFoldedTracks();
+    flushHeldText(INT64_MAX);
 
     // Flush any remaining cluster data
     flushCluster();
@@ -3458,6 +3554,8 @@ bool MatroskaMuxer::close()
             endMs += 1000.0 / track.fps;
         else if (track.trackType != MKV_TRACK_TYPE_SUBTITLE && track.hasNextMaxBlockPts)
             endMs += static_cast<double>(track.maxBlockPts - track.nextMaxBlockPts) / INTERNAL_PTS_PER_MS;
+        if (track.hasTextEnd)
+            endMs = (std::max)(endMs, static_cast<double>(track.maxTextEnd - m_firstTimecode) / INTERNAL_PTS_PER_MS);
         durationMs = std::max(durationMs, endMs);
     }
 

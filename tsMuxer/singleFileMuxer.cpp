@@ -111,6 +111,17 @@ void SingleFileMuxer::intAddStream(const std::string& streamName, const std::str
     }
     else if (codecName == "S_SUP" || codecName == "S_HDMV/PGS" || codecName == "S_TEXT/UTF8")
     {
+        if (const auto srt = dynamic_cast<SRTStreamReader*>(codecReader); srt && srt->keepText())
+        {
+            if (!srt->hasVideoInfo())
+                THROW(ERR_COMMON, "Track " << streamIndex
+                                           << ": keep-text is not yet available for a demux. The subtitles "
+                                              "are drawn into pictures, which needs video-width, video-height and fps.")
+            LTRACE(LT_WARN, 2,
+                   "Warning: keep-text is not yet available for a demux, so track "
+                       << streamIndex << " is written as pictures (.sup).");
+            srt->setKeepText(false);
+        }
         fileExt = ".sup";
     }
     else if (codecName[0] == 'V')

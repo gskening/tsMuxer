@@ -52,6 +52,8 @@ More fixes like these will follow, because not everything can be found at once. 
 
 * **A Matroska file now says which version of tsMuxeR wrote it.** The writing application reads, for example, `tsMuxeR 2.18.17`. Until now a file only said `tsMuxeR`, so the version behind a problem could not be told from the file.
 
+* **An SRT subtitle can stay text in a Matroska file.** Add `keep-text` to the subtitle line and each subtitle is copied as text, with its tags and its own start and end, instead of being drawn into pictures. Subtitles that overlap stay as they are. No font or picture settings are needed then. A transport stream or a Blu-ray cannot carry text subtitles, so there the subtitles are drawn as before, with a warning. A demux still writes pictures for now.
+
 * **Opus in Matroska tells players how much to decode before a seek point.** The Matroska rules for Opus ask for it, and tsMuxeR now writes it.
 
 ## tsMuxeR 2.18.16
