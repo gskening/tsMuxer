@@ -1,6 +1,6 @@
 ## tsMuxeR 2.19.0
 
-Thirty-four changes: thirty-one fixes and three additions. Most of them are to Matroska output and to subtitles.
+Thirty-five changes: thirty-two fixes and three additions. Most of them are to Matroska output and to subtitles.
 
 **Matroska output is still young.** tsMuxeR has only been able to write MKV files since 2.7.2, earlier this year, and a new feature needs time and real use before it is mature. Several of these fixes started with your reports, and looking more closely at the files tsMuxeR writes turned up the rest. Some go back to when MKV output was first added.
 
@@ -71,6 +71,8 @@ More fixes like these will follow, because not everything can be found at once. 
 * **A new output name without an extension switched the output to TS.** On Linux, a name typed into the Browse dialog came back without ".iso", and the window took it for a transport stream; a name with a dot of its own did the same everywhere. The dialog now adds the extension of the selected output, and only a known extension changes the output. The dialog also opens in the folder of the output name instead of the home folder.
 
 * **A typed output name could leave the mux set up for the previous output.** Typing a name ending in .mkv while TS was chosen switched the output to Matroska, but the track settings stayed as they were for TS, so a FLAC track was left out of the MKV. Typing .ts or .m2ts while Matroska was chosen kept the FLAC track for an output that cannot carry it. A typed name that changes the output now does exactly what a click on that output does.
+
+* **The window could open in Demux mode with the controls of a mux.** A remembered Demux output came back with "Start muxing", "File name" and a live audio option, until another output was clicked, and a remembered Matroska output also left the audio option live. Changing the language while Demux was chosen put the mux texts back as well. The window now opens as a click on the remembered output leaves it, and a language change keeps the right texts.
 
 * **Bibliographic language codes showed as "und" and could be overwritten.** With the Bibliographic choice of 2.18.15, the language box could not show codes such as "ger", and changing another option on such a track wrote "und" into it, which was then muxed. The box shows the right language now, and a track keeps its code unless you choose another. The arrow keys also no longer stop on a heading of the language list, which left a track with no language at all.
 

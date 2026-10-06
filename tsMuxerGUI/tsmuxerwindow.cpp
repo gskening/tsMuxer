@@ -2040,11 +2040,16 @@ TsMuxerWindow::TsMuxerWindow()
             });
     }
 
-    // Settle the output dependent controls once at start up as well. RadioButtonMuxClick does it on
-    // every later change, but it returns early while the output name is being set, so the very first
-    // state has to be established here or the window opens with everything live.
-    updateBluRayTabEnabled();
-    onSplitCutParamsChanged();
+    // Settle everything that follows from the output once at start up as well, as a click on it does.
+    // RadioButtonMuxClick does it on every later change, but the remembered output is restored by
+    // setOutputMode, which only sets its button: a remembered Demux opened with "Start muxing" and
+    // "File name" until another output was clicked. The new audio PES tick was remembered with the
+    // output and is kept.
+    applyOutputMode(false);
+    // retranslateUi puts back the texts of the .ui file, "Start muxing" and "File name", on every
+    // language change, and the saved language itself arrives as one after this constructor: a
+    // remembered Demux opened with them, and a language change while Demux was chosen did the same.
+    m_retranslateHooks.push_back([this] { updateOutputModeTexts(); });
 
     writeSettings();
 }
@@ -4772,13 +4777,25 @@ void TsMuxerWindow::updateDvProfileVisible()
     // its height from the combo.
 }
 
-void TsMuxerWindow::applyOutputMode()
+void TsMuxerWindow::updateOutputModeTexts()
 {
     if (ui->radioButtonDemux->isChecked())
         ui->buttonMux->setText(tr("Start demuxing"));
     else
         ui->buttonMux->setText(tr("Start muxing"));
-    ui->checkBoxNewAudioPes->setChecked(!ui->radioButtonTS->isChecked());
+    ui->FilenameLabel->setText(ui->radioButtonBluRay->isChecked() || ui->radioButtonDemux->isChecked() ||
+                                       ui->radioButtonAVCHD->isChecked()
+                                   ? tr("Folder")
+                                   : tr("File name"));
+}
+
+void TsMuxerWindow::applyOutputMode(const bool resetAudioPes)
+{
+    updateOutputModeTexts();
+    // A chosen output gets the usual value; a restored one keeps the tick that was remembered with it
+    if (resetAudioPes)
+        ui->checkBoxNewAudioPes->setChecked(!ui->radioButtonTS->isChecked());
+    ui->editDelay->setEnabled(!ui->radioButtonDemux->isChecked());
     ui->checkBoxNewAudioPes->setEnabled(ui->radioButtonTS->isChecked() || ui->radioButtonM2TS->isChecked());
     // The Dolby Vision profile only means anything for Matroska output, so it is hidden rather
     // than greyed out anywhere else: a disabled control still invites the question of what it is

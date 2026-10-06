@@ -168,7 +168,10 @@ class TsMuxerWindow : public QWidget
     void updateBluRayTabEnabled();
     // Everything that follows from the chosen output except its name. A click on an output button
     // and a typed name whose extension chooses the output both come through here.
-    void applyOutputMode();
+    // At start, with resetAudioPes false, the remembered new audio PES tick is kept.
+    void applyOutputMode(bool resetAudioPes = true);
+    // The mux button and the name label say what the chosen output does; kept through a language change
+    void updateOutputModeTexts();
     void delTracksByFileName(const QString& fileName);
     void deleteTrack(int idx);
     void updateNum();
