@@ -1,8 +1,8 @@
-## tsMuxeR 2.18.17
+## tsMuxeR 2.19.0
 
-Seventeen changes, nearly all of them to Matroska output: fifteen fixes and two small additions.
+Thirty-three changes: thirty fixes and three additions. Most of them are to Matroska output and to subtitles.
 
-**Matroska output is still young.** tsMuxeR has only been able to write MKV files since 2.7.2, earlier this year, and a new feature needs time and real use before it is mature. Two of these fixes started with your reports, and looking more closely at the files tsMuxeR writes turned up the rest. Some go back to when MKV output was first added.
+**Matroska output is still young.** tsMuxeR has only been able to write MKV files since 2.7.2, earlier this year, and a new feature needs time and real use before it is mature. Several of these fixes started with your reports, and looking more closely at the files tsMuxeR writes turned up the rest. Some go back to when MKV output was first added.
 
 More fixes like these will follow, because not everything can be found at once. Thank you for your patience. Every change is tested before it is released, but no test setup has your files, your player and your settings, so something can still behave differently for you.
 
@@ -34,6 +34,30 @@ More fixes like these will follow, because not everything can be found at once. 
 
 * **Ending a mux early with --cut-end stopped too soon when it had subtitles.** A subtitle ahead of the picture stopped the whole mux, so the end of the video and audio was lost. Subtitles no longer decide where the mux stops.
 
+* **An SRT file could lose its last subtitle, and a large one could lose lines.** The last subtitle was dropped when the file did not end with an empty line. In a file over 2 MB, lines at certain points of the file came out garbled, so a subtitle could show at the wrong time. Both are fixed.
+
+* **An empty line inside an SRT subtitle stopped the mux.** SRT has no way to write an empty line inside a subtitle, but many files contain one. Such a line is now kept as part of the subtitle, and the mux goes on.
+
+* **Subtitles that overlap in an SRT file were drawn out of order.** The end of the first one cleared the second while it was still due, and the pictures could go back in time. Subtitles that overlap are now shown together, the earlier one on top, in time order. At most four are shown at once, with a warning when a file has more.
+
+* **A subtitle could show one frame early.** At 25 and 50 fps a subtitle time can fall exactly between two frames, and it went to the earlier one. It goes to the later frame now.
+
+* **Screen positions after an SRT end time were read as part of the time.** Some SRT files carry positions such as `X1:100 X2:600 Y1:50 Y2:90` after the end time, and the end was then misread. Only the time is read now.
+
+* **A subtitle at the very start of a Matroska file delayed every track.** A subtitle at 0 seconds made every track of the file start a little late, picture and sound included. The file starts at zero now.
+
+* **Subtitle pictures in a Matroska file did not say where playback can start.** The Matroska rules ask for a mark on each block a player can start from, and subtitle blocks never had it. Each subtitle picture that stands on its own carries it now.
+
+* **The last block of a Matroska file could be lost.** When a file ended with a block stored together with its duration, which is how subtitles are usually stored, that block was not read. It is read now.
+
+* **Subtitles from some Matroska files came out far too late.** Most files count time in milliseconds, but a file may use a finer step, which the subtitle times ignored: in a file that counts in tenths of a millisecond, a subtitle due at 0.7 seconds came out at 7. Every time uses the file's own step now.
+
+* **Subtitles without an end time in a Matroska file were cleared at a meaningless time.** A subtitle stored without a duration is shown until the next one, as the Matroska rules say, but it was given an end more than two hours later. It is now shown until the next subtitle.
+
+* **Subtitles from an MP4 file were lost, and the reader could hang.** When several subtitles share one part of the file, only the first was read, at the time of the gap before it, often 0 seconds. Every subtitle comes out at its own time now, with its bold, italic and underline, and a damaged style box can no longer hang the mux.
+
+* **Times written as text were cut off instead of rounded.** A subtitle from a Matroska or MP4 file could land a frame early, and chapter times in an exported chapter file and times in the track listing could read a millisecond short. Times are rounded to the millisecond now.
+
 * **A Dolby Vision or 3D video could lose its last frames without a word.** This happened when another track in the same mux delivered nothing. All frames are written now, and the usual report is printed.
 
 * **A video that opens partway through a group of pictures started before zero.** Its first few pictures were placed at negative times, and some software could not process the file at all. The file now starts at zero.
@@ -50,7 +74,7 @@ More fixes like these will follow, because not everything can be found at once. 
 
 ### New
 
-* **A Matroska file now says which version of tsMuxeR wrote it.** The writing application reads, for example, `tsMuxeR 2.18.17`. Until now a file only said `tsMuxeR`, so the version behind a problem could not be told from the file.
+* **A Matroska file now says which version of tsMuxeR wrote it.** The writing application reads, for example, `tsMuxeR 2.19.0`. Until now a file only said `tsMuxeR`, so the version behind a problem could not be told from the file.
 
 * **An SRT subtitle can stay text in a Matroska file.** Add `keep-text` to the subtitle line and each subtitle is copied as text, with its tags and its own start and end, instead of being drawn into pictures. Subtitles that overlap stay as they are. No font or picture settings are needed then. A transport stream or a Blu-ray cannot carry text subtitles, so there the subtitles are drawn as before, with a warning. A demux still writes pictures for now.
 
