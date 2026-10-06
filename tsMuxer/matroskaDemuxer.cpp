@@ -834,7 +834,19 @@ int MatroskaDemuxer::matroska_parse_blockgroup(const int64_t cluster_time)
     }
 
     if (res)
+    {
+        // A group that is the last thing in the file: the look for its next child finds the end of
+        // the file instead. The Block it holds has been read in full and is still parsed, or the last
+        // block of the file was lost, which for a subtitle track is its last subtitle.
+        if (res == -BufferedReader::DATA_EOF && data != nullptr)
+        {
+            const int blockRes = matroska_parse_block(data, size, pos, cluster_time, duration, is_keyframe, is_bframe);
+            return blockRes ? blockRes : res;
+        }
+        // matroska_parse_block owns and frees the block; on any other early return it was leaked
+        delete[] data;
         return res;
+    }
 
     if (data != nullptr)
         res = matroska_parse_block(data, size, pos, cluster_time, duration, is_keyframe, is_bframe);
