@@ -364,6 +364,12 @@ bool SRTStreamReader::parseTime(const string& text)
         {
             string first = trimStr(text.substr(0, i));
             string second = trimStr(text.substr(i + 3, text.length() - i - 3));
+            // Some writers put display coordinates after the end time, "X1:100 X2:600 Y1:50 Y2:100".
+            // The end time is read by splitting at colons from the right, so those numbers were read
+            // as the time: a subtitle due to end at 3 s ended at 600 hours. Only the first word after
+            // the arrow is the time.
+            if (const size_t gap = second.find_first_of(" \t"); gap != string::npos)
+                second.resize(gap);
             for (char& c : first)
             {
                 if (c == ',')
