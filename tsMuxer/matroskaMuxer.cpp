@@ -2605,17 +2605,24 @@ bool MatroskaMuxer::muxPacket(AVPacket& avPacket)
     return muxPacketInternal(avPacket);
 }
 
-// Whether the bytes are whole PGS segments, the last of them an END segment
-static bool pgsDisplaySetComplete(const std::vector<uint8_t>& data)
+// Whether the bytes end exactly where a PGS segment ends, and the type of the last segment
+static bool pgsWholeSegments(const std::vector<uint8_t>& data, uint8_t& lastType)
 {
     size_t pos = 0;
-    uint8_t lastType = 0;
+    lastType = 0;
     while (pos + 3 <= data.size())
     {
         lastType = data[pos];
         pos += 3 + (static_cast<size_t>(data[pos + 1]) << 8 | data[pos + 2]);
     }
-    return pos == data.size() && lastType == PGS_SEGMENT_END;
+    return pos == data.size();
+}
+
+// Whether the bytes are whole PGS segments, the last of them an END segment
+static bool pgsDisplaySetComplete(const std::vector<uint8_t>& data)
+{
+    uint8_t lastType = 0;
+    return pgsWholeSegments(data, lastType) && lastType == PGS_SEGMENT_END;
 }
 
 bool MatroskaMuxer::muxPacketInternal(AVPacket& avPacket)
@@ -2689,7 +2696,15 @@ bool MatroskaMuxer::muxPacketInternal(AVPacket& avPacket)
     // offset, so a cue due at 6.0 s was written as 71.5 s in a 60 s file.
     if (track.codecID == CODEC_S_PGS && avPacket.size > 0)
     {
-        if (track.hasPendingFrame && avPacket.data[0] == PGS_SEGMENT_PCS)
+        // A composition segment opens the next set, so a set still open without its END is
+        // written first. But a segment longer than a packet arrives in pieces, and a piece after
+        // the first begins with whatever byte the object data has there. When that byte happened
+        // to be 0x16 the set was cut in the middle of its object: two broken blocks, the second
+        // at a wrong time. A packet only starts a segment when the bytes collected so far end
+        // exactly where a segment ends, so the type byte is believed only then.
+        uint8_t lastType = 0;
+        if (track.hasPendingFrame && avPacket.data[0] == PGS_SEGMENT_PCS &&
+            pgsWholeSegments(track.pendingFrameData, lastType))
             flushPendingFrame(track);  // a set that never got its END
         if (!track.hasPendingFrame)
         {
