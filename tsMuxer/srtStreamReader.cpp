@@ -47,9 +47,36 @@ void SRTStreamReader::setBuffer(uint8_t* data, const uint32_t dataLen, const boo
     const size_t rest = dataLen + m_tmpBuffer.size() - parsedLen;
     if (rest > MAX_AV_PACKET_SIZE)
         THROW(ERR_COMMON, "Invalid SRT file or too large text message (>" << MAX_AV_PACKET_SIZE << " bytes)")
+    // The unfinished line starts where parsing stopped. Its position used to be worked out AFTER the
+    // buffer had been resized to the new length, which pointed at the end of the data instead, so
+    // the bytes kept were whatever followed the data: a line crossing the end of a read block was
+    // corrupted, and so was the last line of a file that does not end with a line end.
+    const uint8_t* restStart = dataBegin + parsedLen;
     m_tmpBuffer.resize(rest);
     if (rest > 0)
-        memmove(m_tmpBuffer.data(), dataBegin + dataLen + m_tmpBuffer.size() - rest, rest);
+        memmove(m_tmpBuffer.data(), restStart, rest);
+
+    // A line is only taken once its line end arrives, so the last line of a file that does not end
+    // with one stayed in the buffer for good, and with it the last subtitle. At the end of the file
+    // that line is finished here, with a line end in the file's own encoding.
+    if (m_lastBlock && !m_tmpBuffer.empty())
+    {
+        std::vector<uint8_t> lastLine(m_tmpBuffer.begin(), m_tmpBuffer.end());
+        if (m_charSize == 2)
+        {
+            const auto* nl = reinterpret_cast<const uint8_t*>(&m_short_N);
+            lastLine.insert(lastLine.end(), nl, nl + 2);
+        }
+        else if (m_charSize == 4)
+        {
+            const auto* nl = reinterpret_cast<const uint8_t*>(&m_long_N);
+            lastLine.insert(lastLine.end(), nl, nl + 4);
+        }
+        else
+            lastLine.push_back('\n');
+        parseText(lastLine.data(), lastLine.size());
+        m_tmpBuffer.clear();
+    }
 }
 
 bool SRTStreamReader::detectSrcFormat(const uint8_t* dataStart, const size_t len, int& prefixLen)
@@ -183,7 +210,18 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
 {
     uint8_t* rez = nullptr;
     if (m_sourceText.empty())
-        return nullptr;
+    {
+        // The end of the file usually arrives as a call of its own, after the last lines. The last
+        // subtitle is then complete but still waiting for the blank line that would end it, and it
+        // was never drawn, because this returned before looking.
+        if (m_lastBlock && m_state == ParseState::PARSE_TEXT && !m_renderedText.empty())
+        {
+            m_state = ParseState::PARSE_FIRST_LINE;
+            rez = m_srtRender->doConvert(m_renderedText, m_animation, m_inTime, m_outTime, renderedLen);
+            m_renderedText.clear();
+        }
+        return rez;
+    }
     if (m_state == ParseState::PARSE_FIRST_LINE)
     {
         while (!m_sourceText.empty() && m_sourceText.front().empty())
@@ -255,9 +293,11 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
     {
         if (m_lastBlock && !m_renderedText.empty())
         {
+            // The last subtitle of a file with no blank line after it. Its text used to be cleared
+            // before it was drawn, so it was drawn empty and never appeared.
             m_state = ParseState::PARSE_FIRST_LINE;
-            m_renderedText.clear();
             rez = m_srtRender->doConvert(m_renderedText, m_animation, m_inTime, m_outTime, renderedLen);
+            m_renderedText.clear();
         }
         return rez;
     }
