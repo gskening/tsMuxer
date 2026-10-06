@@ -329,12 +329,14 @@ void TSMuxer::intAddStream(const std::string& streamName, const std::string& cod
         if (const auto srt = dynamic_cast<SRTStreamReader*>(codecReader); srt && srt->keepText())
         {
             if (!srt->hasVideoInfo())
-                THROW(ERR_COMMON, "Track " << streamIndex
-                                           << ": keep-text applies to Matroska output. This output draws the "
-                                              "subtitles into pictures, which needs video-width, video-height and fps.")
+                THROW(ERR_COMMON, "Track "
+                                      << streamIndex
+                                      << ": keep-text applies to Matroska output and to a demux. This output draws the "
+                                         "subtitles into pictures, which needs video-width, video-height and fps.")
             LTRACE(LT_WARN, 2,
                    "Warning: a transport stream has no common way to carry text subtitles, so track "
-                       << streamIndex << " is drawn into pictures as usual. keep-text applies to Matroska output.");
+                       << streamIndex
+                       << " is drawn into pictures as usual. keep-text applies to Matroska output and to a demux.");
             srt->setKeepText(false);
         }
         tsStreamIndex = (V3_flags & 0x1e ? 0x12A0 : 0x1200) + m_pgsTrackCnt;

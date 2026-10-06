@@ -25,7 +25,8 @@ class SRTStreamReader final : public AbstractStreamReader
     // Kept as text the track is SRT, in Matroska S_TEXT/UTF8; otherwise it is drawn into PGS
     const CodecInfo& getCodecInfo() override { return m_keepText ? srtCodecInfo : pgsCodecInfo; }
     // keep-text: hand the subtitles over as text, each with its start and duration, instead of drawing
-    // them into pictures. Only a muxer that can carry text leaves it on; the others turn it off.
+    // them into pictures. Only a muxer that can carry text leaves it on; the others turn it off. In a
+    // demux each subtitle is handed over as an SRT record, so the file written is an SRT file.
     void setKeepText(const bool value) { m_keepText = value; }
     [[nodiscard]] bool keepText() const { return m_keepText; }
     [[nodiscard]] bool hasVideoInfo() const { return m_hasVideoInfo; }
@@ -57,6 +58,9 @@ class SRTStreamReader final : public AbstractStreamReader
     int writeAdditionData(uint8_t* dstBuffer, uint8_t* dstEnd, AVPacket& avPacket,
                           PriorityDataInfo* priorityData) override
     {
+        // The picture form needs a header in front of each set; text carries everything it needs
+        if (m_keepText)
+            return 0;
         return m_dstSubCodec->writeAdditionData(dstBuffer, dstEnd, avPacket, priorityData);
     }
 
@@ -78,7 +82,12 @@ class SRTStreamReader final : public AbstractStreamReader
     std::vector<uint8_t> m_textPacket;
     int m_lengthlessCues = 0;   // kept as text: subtitles left out because they have no length
     int m_invalidUtf8Cues = 0;  // kept as text: subtitles whose bytes were not all valid UTF-8
+    int m_srtRecords = 0;       // demux: SRT records written so far, which numbers the next
+    bool m_openEndWarned = false;
     int readTextPacket(AVPacket& avPacket);
+    void startTextPacket(AVPacket& avPacket);
+    bool prepareTextCue(TextCue& cue, int64_t nextStartMs, int64_t& inMs, int64_t& outMs);
+    void appendSrtRecord(const std::string& text, int64_t inMs, int64_t outMs);
     int m_processedSize;
     int32_t m_charSize;
     AbstractStreamReader* m_dstSubCodec;

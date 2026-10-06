@@ -197,6 +197,49 @@ int SRTStreamReader::flushPacket(AVPacket& avPacket)
 {
     if (!m_keepText)
         return m_dstSubCodec->flushPacket(avPacket);
+    startTextPacket(avPacket);
+    // The data has ended, so every subtitle that is complete is taken now. A demux writes them all,
+    // as one piece of the file; a Matroska block holds one subtitle, so there only the first can go.
+    while (readNextCue())
+        if (!m_demuxMode)
+            break;
+    bool first = true;
+    while (!m_textCues.empty())
+    {
+        const int64_t nextMs = m_textCues.size() > 1 ? llround(m_textCues[1].inTime * 1000.0) : -1;
+        TextCue cue = std::move(m_textCues.front());
+        m_textCues.pop_front();
+        int64_t inMs = 0;
+        int64_t outMs = 0;
+        if (!prepareTextCue(cue, nextMs, inMs, outMs))
+            continue;
+        if (first)
+        {
+            avPacket.pts = avPacket.dts = inMs * INTERNAL_PTS_PER_MS;
+            avPacket.duration = outMs < 0 ? 0 : (outMs - inMs) * INTERNAL_PTS_PER_MS;
+            first = false;
+        }
+        if (m_demuxMode)
+            appendSrtRecord(cue.text, inMs, outMs);
+        else
+        {
+            m_textPacket.assign(cue.text.begin(), cue.text.end());
+            break;
+        }
+    }
+    if (!first)
+    {
+        avPacket.data = m_textPacket.data();
+        avPacket.size = static_cast<int>(m_textPacket.size());
+        avPacket.flags = AVPacket::IS_IFRAME;
+    }
+    // Nothing is left over here today: in Matroska output each subtitle has already gone out as its own
+    // packet by the time the data ends. Should one ever remain, it is said, never lost in silence.
+    if (!m_textCues.empty())
+        LTRACE(LT_WARN, 2,
+               "Warning: track " << m_streamIndex << ": " << m_textCues.size()
+                                 << " subtitles at the end of the track could not be written.");
+    m_textCues.clear();
     if (m_lengthlessCues > 1)
         LTRACE(LT_WARN, 2,
                "Warning: track " << m_streamIndex << ": " << m_lengthlessCues
@@ -206,12 +249,6 @@ int SRTStreamReader::flushPacket(AVPacket& avPacket)
                "Warning: track " << m_streamIndex << ": " << m_invalidUtf8Cues
                                  << " subtitles in all held bytes that are not valid UTF-8.");
     m_lengthlessCues = m_invalidUtf8Cues = 0;
-    avPacket.codec = this;
-    avPacket.codecID = CODEC_S_SRT;
-    avPacket.stream_index = m_streamIndex;
-    avPacket.data = nullptr;
-    avPacket.size = 0;
-    avPacket.duration = 0;
     return 0;
 }
 
@@ -273,10 +310,7 @@ static bool makeValidUtf8(std::string& text)
     return replaced;
 }
 
-// One subtitle as text: its UTF-8 text with the lines joined by a line feed and every tag as written,
-// at its start, with its length as the duration. Times go through whole milliseconds, which is what
-// SRT holds, so they arrive exactly.
-int SRTStreamReader::readTextPacket(AVPacket& avPacket)
+void SRTStreamReader::startTextPacket(AVPacket& avPacket)
 {
     avPacket.codec = this;
     avPacket.codecID = CODEC_S_SRT;
@@ -285,36 +319,129 @@ int SRTStreamReader::readTextPacket(AVPacket& avPacket)
     avPacket.size = 0;
     avPacket.flags = 0;
     avPacket.duration = 0;
+    m_textPacket.clear();
+}
+
+// The times of a subtitle in whole milliseconds, which is what SRT holds, so they arrive exactly. The
+// end is -1 for a subtitle shown until the next one. Returns false for a subtitle that is left out.
+bool SRTStreamReader::prepareTextCue(TextCue& cue, const int64_t nextStartMs, int64_t& inMs, int64_t& outMs)
+{
+    inMs = llround(cue.inTime * 1000.0);
+    outMs = cue.untilNext ? -1 : llround(cue.outTime * 1000.0);
+    if (cue.untilNext && m_demuxMode)
+    {
+        // An SRT file has no way to say "until the next one": the end is where the next one starts.
+        // The last one has no next, and is given an hour, which on screen means until the end.
+        if (nextStartMs >= 0)
+            outMs = nextStartMs;
+        else
+        {
+            outMs = inMs + 3600000;
+            if (!m_openEndWarned)
+                LTRACE(LT_WARN, 2,
+                       "Warning: track " << m_streamIndex << ": the last subtitle, at " << floatToTime(cue.inTime, ',')
+                                         << ", has no end time. It is written with an end one hour later.");
+            m_openEndWarned = true;
+        }
+    }
+    // A subtitle that ends when it starts, or earlier, is never on screen. Written without a duration it
+    // would mean the opposite, shown until the next one, so it is left out.
+    if (outMs >= 0 && outMs <= inMs)
+    {
+        if (m_lengthlessCues++ == 0)
+            LTRACE(LT_WARN, 2,
+                   "Warning: track " << m_streamIndex << ": the subtitle at " << floatToTime(cue.inTime, ',')
+                                     << " ends when it starts or earlier. It is never shown, so it is left out.");
+        return false;
+    }
+    if (makeValidUtf8(cue.text) && m_invalidUtf8Cues++ == 0)
+        LTRACE(LT_WARN, 2,
+               "Warning: track " << m_streamIndex << ": the subtitle at " << floatToTime(cue.inTime, ',')
+                                 << " holds bytes that are not valid UTF-8, written as the replacement "
+                                    "character U+FFFD. Save the file as UTF-8 to keep every character.");
+    return true;
+}
+
+// A time as SRT writes it, hh:mm:ss,mmm
+static std::string srtTime(int64_t ms)
+{
+    ms = (std::max)(int64_t{0}, ms);
+    std::string out = std::to_string(ms / 3600000);
+    if (out.size() < 2)
+        out.insert(0, 1, '0');
+    for (const int64_t part : {ms / 60000 % 60, ms / 1000 % 60})
+    {
+        out += ':';
+        out += static_cast<char>('0' + part / 10);
+        out += static_cast<char>('0' + part % 10);
+    }
+    const int64_t frac = ms % 1000;
+    out += ',';
+    out += static_cast<char>('0' + frac / 100);
+    out += static_cast<char>('0' + frac / 10 % 10);
+    out += static_cast<char>('0' + frac % 10);
+    return out;
+}
+
+// One subtitle as an SRT record for a demux: its number, counted from 1, its times and its lines, with
+// CR LF line ends, and the UTF-8 byte order mark before the first record, so that the encoding is
+// never guessed. The text is as the subtitle holds it, tags included.
+void SRTStreamReader::appendSrtRecord(const std::string& text, const int64_t inMs, const int64_t outMs)
+{
+    const auto newLine = [this]
+    {
+        m_textPacket.push_back(13);
+        m_textPacket.push_back(10);
+    };
+    const auto add = [this](const std::string& str)
+    { m_textPacket.insert(m_textPacket.end(), str.begin(), str.end()); };
+    if (m_srtRecords == 0)
+        m_textPacket.insert(m_textPacket.end(), {0xEF, 0xBB, 0xBF});
+    add(std::to_string(++m_srtRecords));
+    newLine();
+    add(srtTime(inMs) + " --> " + srtTime(outMs));
+    newLine();
+    for (const char c : text)
+        if (c == 10)
+            newLine();
+        else
+            m_textPacket.push_back(static_cast<uint8_t>(c));
+    newLine();
+    newLine();
+}
+
+// One subtitle as text: its UTF-8 text with the lines joined by a line feed and every tag as written,
+// at its start, with its length as the duration. In a demux, the same subtitle as an SRT record.
+int SRTStreamReader::readTextPacket(AVPacket& avPacket)
+{
+    startTextPacket(avPacket);
     for (;;)
     {
         while (m_textCues.empty())
             if (!readNextCue())
                 return NEED_MORE_DATA;
+        // In a demux a subtitle without an end time ends where the next one starts, so it waits for
+        // the next one. At the end of the data flushPacket writes it.
+        if (m_demuxMode && m_textCues.front().untilNext)
+            while (m_textCues.size() < 2)
+                if (!readNextCue())
+                    return NEED_MORE_DATA;
+        const int64_t nextMs = m_textCues.size() > 1 ? llround(m_textCues[1].inTime * 1000.0) : -1;
         TextCue cue = std::move(m_textCues.front());
         m_textCues.pop_front();
-        const int64_t inMs = llround(cue.inTime * 1000.0);
-        const int64_t outMs = llround(cue.outTime * 1000.0);
-        // A subtitle that ends when it starts, or earlier, is never on screen. Written without a
-        // duration it would mean the opposite, shown until the next one, so it is left out.
-        if (!cue.untilNext && outMs <= inMs)
-        {
-            if (m_lengthlessCues++ == 0)
-                LTRACE(LT_WARN, 2,
-                       "Warning: track " << m_streamIndex << ": the subtitle at " << floatToTime(cue.inTime, ',')
-                                         << " ends when it starts or earlier. It is never shown, so it is left out.");
+        int64_t inMs = 0;
+        int64_t outMs = 0;
+        if (!prepareTextCue(cue, nextMs, inMs, outMs))
             continue;
-        }
-        if (makeValidUtf8(cue.text) && m_invalidUtf8Cues++ == 0)
-            LTRACE(LT_WARN, 2,
-                   "Warning: track " << m_streamIndex << ": the subtitle at " << floatToTime(cue.inTime, ',')
-                                     << " holds bytes that are not valid UTF-8, written as the replacement "
-                                        "character U+FFFD. Save the file as UTF-8 to keep every character.");
-        m_textPacket.assign(cue.text.begin(), cue.text.end());
+        if (m_demuxMode)
+            appendSrtRecord(cue.text, inMs, outMs);
+        else
+            m_textPacket.assign(cue.text.begin(), cue.text.end());
         avPacket.data = m_textPacket.data();
         avPacket.size = static_cast<int>(m_textPacket.size());
         avPacket.pts = avPacket.dts = inMs * INTERNAL_PTS_PER_MS;
         // A subtitle without an end is shown until the next one: no duration
-        avPacket.duration = cue.untilNext ? 0 : (outMs - inMs) * INTERNAL_PTS_PER_MS;
+        avPacket.duration = outMs < 0 ? 0 : (outMs - inMs) * INTERNAL_PTS_PER_MS;
         avPacket.flags = AVPacket::IS_IFRAME;
         return 0;
     }
