@@ -98,13 +98,18 @@ void AV_WB64(uint8_t* buffer, const uint64_t value) { *reinterpret_cast<uint64_t
 
 std::string floatToTime(const double time, const char msSeparator)
 {
-    int iTime = static_cast<int>(time);
-    const int hour = iTime / 3600;
-    iTime -= hour * 3600;
-    const int min = iTime / 60;
-    iTime -= min * 60;
-    const int sec = iTime;
-    const int msec = static_cast<int>((time - static_cast<int>(time)) * 1000.0);
+    // To the nearest millisecond. The fraction used to be cut off, and a time is rarely exact in a
+    // double: 1.273 s is held as 1.27299999 and was written as 1.272, a millisecond early. Where a
+    // subtitle is re-written as text that was enough to move it to the frame before its own, and a
+    // chapter written out as XML lost the millisecond too. Counting whole milliseconds also carries
+    // 59.9996 s over to the next minute instead of writing 59.999.
+    int64_t msTotal = llround(time * 1000.0);
+    const auto hour = static_cast<int32_t>(msTotal / 3600000);
+    msTotal -= static_cast<int64_t>(hour) * 3600000;
+    const auto min = static_cast<int32_t>(msTotal / 60000);
+    msTotal -= static_cast<int64_t>(min) * 60000;
+    const auto sec = static_cast<int32_t>(msTotal / 1000);
+    const auto msec = static_cast<int32_t>(msTotal - static_cast<int64_t>(sec) * 1000);
     std::ostringstream str;
     str << strPadLeft(int32ToStr(hour), 2, '0') << ':';
     str << strPadLeft(int32ToStr(min), 2, '0') << ':';
