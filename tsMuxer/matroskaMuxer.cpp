@@ -2625,6 +2625,14 @@ static bool pgsDisplaySetComplete(const std::vector<uint8_t>& data)
     return pgsWholeSegments(data, lastType) && lastType == PGS_SEGMENT_END;
 }
 
+// Whether a display set can be shown on its own. Its composition segment says so: an epoch start
+// (0x80) or an acquisition point (0x40) carries everything the decoder needs, while a normal case
+// (0x00) only changes what an earlier set began. The state is the eighth byte of the segment body.
+static bool pgsSetIsRandomAccess(const std::vector<uint8_t>& data)
+{
+    return data.size() > 10 && data[0] == PGS_SEGMENT_PCS && (data[10] & 0xC0) != 0;
+}
+
 bool MatroskaMuxer::muxPacketInternal(AVPacket& avPacket)
 {
     auto it = m_tracks.find(avPacket.stream_index);
@@ -2714,6 +2722,12 @@ bool MatroskaMuxer::muxPacketInternal(AVPacket& avPacket)
             track.hasPendingFrame = true;
         }
         track.pendingFrameData.insert(track.pendingFrameData.end(), avPacket.data, avPacket.data + avPacket.size);
+        // A set that can be shown on its own is a random access point, and RFC 9559 (10.4) says a
+        // SimpleBlock that is one MUST carry the keyframe flag. The packets of a PGS track never
+        // carried it, so no subtitle block was ever marked, and a player seeking into the file had
+        // nothing to tell it where a subtitle could be shown from.
+        if (pgsSetIsRandomAccess(track.pendingFrameData))
+            track.pendingFlags |= AVPacket::IS_IFRAME;
         if (pgsDisplaySetComplete(track.pendingFrameData))
             flushPendingFrame(track);
         return true;
