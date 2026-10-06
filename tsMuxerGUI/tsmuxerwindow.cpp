@@ -22,6 +22,7 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QGuiApplication>
+#include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLibraryInfo>
@@ -1625,7 +1626,7 @@ TsMuxerWindow::TsMuxerWindow()
         auto updateBottomForTab = [this, bdmvTab]()
         {
             const bool onBdmv = ui->tabWidget->currentWidget() == bdmvTab;
-            ui->groupBox_4->setVisible(!onBdmv);       // Output (type radios + File name; holds the dual-layer box)
+            ui->groupBox_4->setVisible(!onBdmv);       // Output (type radios + File name)
             ui->groupBox_2->setVisible(!onBdmv);       // Meta file
             ui->buttonMux->setVisible(!onBdmv);        // Start muxing
             ui->buttonSaveMeta->setVisible(!onBdmv);   // Save meta file
@@ -1772,17 +1773,24 @@ TsMuxerWindow::TsMuxerWindow()
         };
         // Show where the guard will actually land, so a wrong disc choice is visible before the mux
         // rather than after the burn.
-        auto updateDlBreaks = [discSizeCombo, breaksLabel, dlReadFreeSectors]()
+        //
+        // Only while there is a break to name, and only for ISO output. With Off, a single layer disc
+        // or an emptied Free Sectors field the line is blank, and a blank label still takes a whole
+        // row of the group. The meta builder never reads this label, so hiding it changes nothing the
+        // muxer is given. updateDlVisibility applies the same rule when the output changes.
+        auto updateDlBreaks = [this, discSizeCombo, breaksLabel, dlReadFreeSectors]()
         {
             const QList<qint64> breaks = discBreaks(dlReadFreeSectors(), discSizeCombo->currentData().toInt());
             if (breaks.isEmpty())
             {
                 breaksLabel->clear();
+                breaksLabel->setVisible(false);
                 return;
             }
             QStringList pretty;
             for (const qint64 b : breaks) pretty << QLocale().toString(b);
             breaksLabel->setText(TsMuxerWindow::tr("Layer break(s) at sector: %1").arg(pretty.join("   |   ")));
+            breaksLabel->setVisible(ui->radioButtonBluRayISO->isChecked());
         };
         auto updateDlFreeSectorsRow = [discSizeCombo, dlFreeSectorsLabel, dlFreeSectorsEdit, dlManualCheck]()
         {
@@ -1841,16 +1849,35 @@ TsMuxerWindow::TsMuxerWindow()
                 });
         connect(beforeCheck, &QCheckBox::toggled, beforeSpin, [this, guardCheck, beforeSpin](const bool on)
                 { beforeSpin->setEnabled(on && guardCheck->isChecked() && ui->radioButtonBluRayISO->isChecked()); });
-        // Add to the main window's Output group. Use ui->verticalLayout_2 directly rather than
-        // findChild("verticalLayout_2"): the muxForm progress dialog is a child of this window and has a
-        // layout of the same name, so findChild would inject the group into the progress dialog instead.
-        ui->verticalLayout_2->addWidget(dlBox);
+        // The group sits beside the Meta file box, not in the Output group under the file name. There,
+        // every row it showed made the bottom of the window taller by the same amount, and that height
+        // could only come from the track list: the Output group has a fixed height, the Meta file box
+        // stops shrinking at its minimum, and the splitter above them then takes the rest from the
+        // Input tab, where only the track list can give way. With Blu-ray ISO and a multi-layer disc
+        // the window at its default size showed three of six tracks, and the tracks scrolled out of
+        // sight were taken for tracks the ISO had dropped. Beside the Meta file box the group only
+        // costs the height by which it is taller than that box. It is aligned to the top, so a group
+        // shorter than the Meta file box keeps its own row spacing instead of being stretched.
+        //
+        // ui->verticalLayout_13 and ui->groupBox_2 are used directly, never looked up by name with
+        // findChild: the muxForm progress dialog is a child of this window and has a groupBox_2 and a
+        // verticalLayout_2 of its own, which is how this group once ended up in the progress dialog.
+        {
+            const int metaIndex = ui->verticalLayout_13->indexOf(ui->groupBox_2);
+            ui->verticalLayout_13->removeWidget(ui->groupBox_2);
+            auto* metaRow = new QHBoxLayout();
+            metaRow->addWidget(ui->groupBox_2, 1);
+            metaRow->addWidget(dlBox, 0, Qt::AlignTop);
+            ui->verticalLayout_13->insertLayout(metaIndex, metaRow);
+        }
         // These options only apply to Blu-ray ISO / folder output (see the meta builder), so show the group
         // only for those output modes and keep it hidden for TS / M2TS / MKV / AVCHD / Demux.
         auto updateDlVisibility = [this, dlBox, guardCheck, guardSpin, beforeCheck, beforeSpin, breaksLabel]()
         {
             const bool iso = ui->radioButtonBluRayISO->isChecked();
-            dlBox->setVisible(iso || ui->radioButtonBluRay->isChecked());
+            // The BDMV folder -> ISO tab hides the Output group while it is the current tab. This group
+            // belongs to the output choice but no longer sits inside that group, so it is hidden with it here.
+            dlBox->setVisible((iso || ui->radioButtonBluRay->isChecked()) && !ui->groupBox_4->isHidden());
             // A Blu-ray FOLDER has no image and therefore no layer break, so the guard controls are
             // HIDDEN there rather than merely greyed out. Greyed out still invites the question of
             // what they would do, and the answer is nothing. Fit to disc and Allow oversize stay,
@@ -1859,7 +1886,8 @@ TsMuxerWindow::TsMuxerWindow()
             guardSpin->setVisible(iso);
             beforeCheck->setVisible(iso);
             beforeSpin->setVisible(iso);
-            breaksLabel->setVisible(iso);
+            // The break line also needs a break to name; see updateDlBreaks.
+            breaksLabel->setVisible(iso && !breaksLabel->text().isEmpty());
             beforeCheck->setEnabled(iso && guardCheck->isChecked());
             beforeSpin->setEnabled(iso && guardCheck->isChecked() && beforeCheck->isChecked());
             // The layer-break guard writes zero padding into the disc IMAGE: BlurayHelper::open
@@ -1875,6 +1903,10 @@ TsMuxerWindow::TsMuxerWindow()
                 [updateDlVisibility](bool) { updateDlVisibility(); });
         connect(ui->radioButtonBluRay, &QAbstractButton::toggled, dlBox,
                 [updateDlVisibility](bool) { updateDlVisibility(); });
+        // A tab change has to reach this group too, now that it is outside the Output group.
+        // updateBottomForTab is connected to the same signal earlier, so the Output group has already
+        // been shown or hidden for the new tab when this runs.
+        connect(ui->tabWidget, &QTabWidget::currentChanged, dlBox, [updateDlVisibility](int) { updateDlVisibility(); });
 
         // EVERY control in this group has to rebuild the meta, and until now not one of them did.
         // The meta is what the muxer is actually given, so ticking the guard, choosing a disc or
@@ -4673,6 +4705,11 @@ void TsMuxerWindow::updateDvProfileVisible()
     const bool show = ui->radioButtonMKV->isChecked() && dualLayerDv;
     ui->labelDvProfile->setVisible(show);
     ui->comboBoxDvProfile->setVisible(show);
+    // The spacer at the end of this row is 0 px tall in the designer file, on purpose. A hidden label
+    // and combo take no room, but a spacer always does, so at the designer default of 20 px the hidden
+    // row left an empty band under the file name in every output mode. The Output group has a fixed
+    // height, so that band was taken from the track list or the Meta file box. Shown, the row takes
+    // its height from the combo.
 }
 
 void TsMuxerWindow::RadioButtonMuxClick()
