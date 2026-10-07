@@ -285,6 +285,7 @@ jobs:
       with:
         name: tsMuxer-w32
         path: bin/${{ env.ASSET }}
+        retention-days: 30
       name: upload-artifact
 
     - name: Upload to Release

@@ -69,6 +69,7 @@ jobs:
       with:
          name: tsMuxer-linux
          path: bin/${{ env.ASSET }}
+         retention-days: 30
       name: upload-artefact
 
     - name: Upload to Release

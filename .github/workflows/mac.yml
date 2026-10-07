@@ -62,6 +62,7 @@ jobs:
       with:
          name: tsMuxer-${{ matrix.arch }}
          path: build/bin/${{ env.ASSET }}
+         retention-days: 30
       name: upload-artefact
 
     - name: Upload to Release
