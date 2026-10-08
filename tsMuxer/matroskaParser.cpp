@@ -99,36 +99,45 @@ int ParsedH264TrackData::writeSPSPPS(uint8_t* dst) const
     return static_cast<int>(dst - start);
 }
 
+// The one rule every walk over a block's NAL units follows. A NAL unit starts at curPos only if a whole
+// length field is there and the length it gives fits in what is left of the block. The comparison is made
+// in 64 bits, so a length near 4 GiB can neither wrap round to a small step nor send a copy past the block.
+bool ParsedH264TrackData::nextNal(const uint8_t* curPos, const uint8_t* end, uint32_t& elSize) const
+{
+    if (end - curPos < m_nalSize)
+        return false;
+    uint32_t v = 0;
+    for (int i = 0; i < m_nalSize; ++i) v = (v << 8) | curPos[i];
+    elSize = v;
+    return static_cast<int64_t>(elSize) <= (end - curPos) - m_nalSize;
+}
+
 bool ParsedH264TrackData::spsppsExists(uint8_t* buff, const int size)
 {
-    uint8_t* curPos = buff;
+    const uint8_t* curPos = buff;
     const uint8_t* end = buff + size;
     bool spsFound = false;
     bool ppsFound = false;
-    while (curPos < end - m_nalSize)
+    uint32_t elSize = 0;
+    while (nextNal(curPos, end, elSize))
     {
-        uint32_t elSize;
-        if (m_nalSize == 4)
-        {
-            const auto cur32 = reinterpret_cast<uint32_t*>(curPos);
-            elSize = my_ntohl(*cur32);
-        }
-        else
-            elSize = (curPos[0] << 16l) + (curPos[1] << 8l) + curPos[2];
-        const auto nalUnitType = static_cast<NALUnit::NALType>(curPos[m_nalSize] & 0x1f);
+        const auto nalUnitType = static_cast<NALUnit::NALType>(nalTypeOf(curPos + m_nalSize, static_cast<int>(elSize)));
         if (nalUnitType == NALUnit::NALType::nuSPS)
             spsFound = true;
         else if (nalUnitType == NALUnit::NALType::nuPPS)
             ppsFound = true;
-        curPos += elSize + m_nalSize;
+        curPos += m_nalSize + elSize;
     }
     return spsFound && ppsFound;
 }
 
 void ParsedH264TrackData::extractData(AVPacket* pkt, uint8_t* buff, const int size)
 {
+    if (m_nalSize < 2 || m_nalSize > 4)
+        THROW(ERR_COMMON, "Unsupported nal unit size " << static_cast<int>(m_nalSize))
+
     int newBufSize = size;
-    uint8_t* curPos = buff;
+    const uint8_t* curPos = buff;
     const uint8_t* end = buff + size;
     int elements = 0;
 
@@ -138,27 +147,27 @@ void ParsedH264TrackData::extractData(AVPacket* pkt, uint8_t* buff, const int si
     if (m_firstExtract)
         newBufSize += static_cast<int>(getSPSPPSLen());
 
-    while (curPos <= end - m_nalSize)
+    // The sizing walk and the copy walk below stop at the same NAL unit, so the copy can never write more
+    // than was measured here. A NAL unit whose length runs past the end of the block is left out, with
+    // everything after it, as the MP4 reader does: what is there of it is not a NAL unit any more.
+    uint32_t elSize = 0;
+    while (nextNal(curPos, end, elSize))
     {
-        uint32_t elSize = 0;
-        if (m_nalSize == 4)
-        {
-            const auto cur32 = reinterpret_cast<uint32_t*>(curPos);
-            elSize = my_ntohl(*cur32);
-        }
-        else if (m_nalSize == 3)
-            elSize = (curPos[0] << 16l) + (curPos[1] << 8l) + curPos[2];
-        else if (m_nalSize == 2)
-            elSize = (curPos[0] << 8l) + curPos[1];
-        else
-            THROW(ERR_COMMON, "Unsupported nal unit size " << elSize)
         elements++;
-        curPos += elSize + m_nalSize;
+        curPos += m_nalSize + elSize;
     }
-    assert(curPos == end);
-    if (curPos > end)
+    if (curPos < end)
     {
-        LTRACE(LT_ERROR, 2, "Matroska parse error: invalid H264 NAL unit size. NAL unit truncated.");
+        if (end - curPos >= m_nalSize)
+        {
+            uint32_t declared = 0;
+            for (int i = 0; i < m_nalSize; ++i) declared = (declared << 8) | curPos[i];
+            LTRACE(LT_WARN, 2,
+                   "Matroska: a NAL unit declares " << declared << " bytes but its block holds "
+                                                     << (end - curPos) - m_nalSize << ", so it is left out");
+        }
+        else
+            LTRACE(LT_WARN, 2, "Matroska: " << end - curPos << " stray byte(s) after the last NAL unit of a block left out");
     }
     // Sized for a four byte start code on every NAL, which is the largest this can write. Where the
     // source's own framing was three, one byte per NAL goes unused and the packet is sized below
@@ -172,25 +181,12 @@ void ParsedH264TrackData::extractData(AVPacket* pkt, uint8_t* buff, const int si
         dst += writeSPSPPS(dst);
     }
     curPos = buff;
-    while (curPos <= end - m_nalSize)
+    for (int n = 0; n < elements && nextNal(curPos, end, elSize); ++n)
     {
-        uint32_t elSize = 0;
-        if (m_nalSize == 4)
-        {
-            const auto cur32 = reinterpret_cast<uint32_t*>(curPos);
-            elSize = my_ntohl(*cur32);
-        }
-        else if (m_nalSize == 3)
-            elSize = (curPos[0] << 16l) + (curPos[1] << 8l) + curPos[2];
-        else if (m_nalSize == 2)
-            elSize = (curPos[0] << 8l) + curPos[1];
-        else
-            THROW(ERR_COMMON, "Unsupported nal unit size " << elSize)
-        const auto avail = static_cast<int>(end - (curPos + m_nalSize));
-        writeNalHeader(dst, nalTypeOf(curPos + m_nalSize, FFMIN(static_cast<int>(elSize), avail)));
-        assert((curPos[m_nalSize] & 0x80) == 0);
-        memcpy(dst, curPos + m_nalSize, FFMIN(elSize, (uint32_t)(end - curPos)));
-        curPos += elSize + m_nalSize;
+        writeNalHeader(dst, nalTypeOf(curPos + m_nalSize, static_cast<int>(elSize)));
+        assert(elSize == 0 || (curPos[m_nalSize] & 0x80) == 0);
+        memcpy(dst, curPos + m_nalSize, elSize);
+        curPos += m_nalSize + elSize;
         dst += elSize;
     }
     pkt->size = static_cast<int>(dst - pkt->data);
@@ -210,29 +206,22 @@ int ParsedH265TrackData::nalTypeOf(const uint8_t* nal, const int size) const
 
 bool ParsedH265TrackData::spsppsExists(uint8_t* buff, const int size)
 {
-    uint8_t* curPos = buff;
+    const uint8_t* curPos = buff;
     const uint8_t* end = buff + size;
     bool vpsFound = false;
     bool spsFound = false;
     bool ppsFound = false;
-    while (curPos < end - m_nalSize)
+    uint32_t elSize = 0;
+    while (nextNal(curPos, end, elSize))
     {
-        uint32_t elSize;
-        if (m_nalSize == 4)
-        {
-            const auto cur32 = reinterpret_cast<uint32_t*>(curPos);
-            elSize = my_ntohl(*cur32);
-        }
-        else
-            elSize = (curPos[0] << 16l) + (curPos[1] << 8l) + curPos[2];
-        const auto nalUnitType = static_cast<HevcUnit::NalType>((curPos[m_nalSize] >> 1) & 0x3f);
+        const auto nalUnitType = static_cast<HevcUnit::NalType>(nalTypeOf(curPos + m_nalSize, static_cast<int>(elSize)));
         if (nalUnitType == HevcUnit::NalType::VPS)
             vpsFound = true;
         else if (nalUnitType == HevcUnit::NalType::SPS)
             spsFound = true;
         else if (nalUnitType == HevcUnit::NalType::PPS)
             ppsFound = true;
-        curPos += elSize + m_nalSize;
+        curPos += m_nalSize + elSize;
     }
     return vpsFound && spsFound && ppsFound;
 }
@@ -252,29 +241,22 @@ int ParsedH266TrackData::nalTypeOf(const uint8_t* nal, const int size) const
 
 bool ParsedH266TrackData::spsppsExists(uint8_t* buff, const int size)
 {
-    uint8_t* curPos = buff;
+    const uint8_t* curPos = buff;
     const uint8_t* end = buff + size;
     bool vpsFound = false;
     bool spsFound = false;
     bool ppsFound = false;
-    while (curPos < end - m_nalSize)
+    uint32_t elSize = 0;
+    while (nextNal(curPos, end, elSize))
     {
-        uint32_t elSize;
-        if (m_nalSize == 4)
-        {
-            const auto cur32 = reinterpret_cast<uint32_t*>(curPos);
-            elSize = my_ntohl(*cur32);
-        }
-        else
-            elSize = (curPos[0] << 16l) + (curPos[1] << 8l) + curPos[2];
-        const auto nalUnitType = static_cast<VvcUnit::NalType>(curPos[m_nalSize + 1] >> 3);
+        const auto nalUnitType = static_cast<VvcUnit::NalType>(nalTypeOf(curPos + m_nalSize, static_cast<int>(elSize)));
         if (nalUnitType == VvcUnit::NalType::VPS)
             vpsFound = true;
         else if (nalUnitType == VvcUnit::NalType::SPS)
             spsFound = true;
         else if (nalUnitType == VvcUnit::NalType::PPS)
             ppsFound = true;
-        curPos += elSize + m_nalSize;
+        curPos += m_nalSize + elSize;
     }
     return vpsFound && spsFound && ppsFound;
 }

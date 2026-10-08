@@ -290,6 +290,7 @@ class ParsedH264TrackData : public ParsedTrackPrivData
     [[nodiscard]] size_t getSPSPPSLen() const;
     int writeSPSPPS(uint8_t* dst) const;
     virtual bool spsppsExists(uint8_t* buff, int size);
+    bool nextNal(const uint8_t* curPos, const uint8_t* end, uint32_t& elSize) const;
 };
 
 class ParsedH265TrackData final : public ParsedH264TrackData
