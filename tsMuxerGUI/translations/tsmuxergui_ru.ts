@@ -3940,6 +3940,14 @@ Build the ISO anyway?</source>
         <translation>Папка BDMV найдена.</translation>
     </message>
     <message>
+        <source>3D disc detected: with the 3D box ticked, its 3D video is stored once, as on the disc.</source>
+        <translation>Обнаружен 3D-диск: при отмеченном флажке 3D его 3D-видео хранится один раз, как на диске.</translation>
+    </message>
+    <message>
+        <source>3D disc detected: %1 of %2 .ssif files are missing. With the 3D box ticked they are rebuilt from the two views; without it those titles play in 2D.</source>
+        <translation>Обнаружен 3D-диск: отсутствуют %1 из %2 файлов .ssif. При отмеченном флажке 3D они восстанавливаются из двух видов; без него эти фильмы воспроизводятся в 2D.</translation>
+    </message>
+    <message>
         <source>BD-R DL 50 GB (2 layers)</source>
         <translation>BD-R DL 50 GB (2 слоя)</translation>
     </message>

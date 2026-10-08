@@ -3940,6 +3940,14 @@ Mantener la imagen en torno a 66 GB (las dos primeras capas) mejora las probabil
         <translation>Carpeta BDMV encontrada.</translation>
     </message>
     <message>
+        <source>3D disc detected: with the 3D box ticked, its 3D video is stored once, as on the disc.</source>
+        <translation>Disco 3D detectado: con la casilla 3D marcada, su vídeo 3D se almacena una vez, como en el disco.</translation>
+    </message>
+    <message>
+        <source>3D disc detected: %1 of %2 .ssif files are missing. With the 3D box ticked they are rebuilt from the two views; without it those titles play in 2D.</source>
+        <translation>Disco 3D detectado: faltan %1 de %2 archivos .ssif. Con la casilla 3D marcada se reconstruyen a partir de las dos vistas; sin ella, esos títulos se reproducen en 2D.</translation>
+    </message>
+    <message>
         <source>BD-R DL 50 GB (2 layers)</source>
         <translation>BD-R DL 50 GB (2 capas)</translation>
     </message>

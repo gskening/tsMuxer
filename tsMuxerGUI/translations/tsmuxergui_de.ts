@@ -3939,6 +3939,14 @@ ISO trotzdem erstellen?</translation>
         <translation>BDMV-Ordner gefunden.</translation>
     </message>
     <message>
+        <source>3D disc detected: with the 3D box ticked, its 3D video is stored once, as on the disc.</source>
+        <translation>3D-Disc erkannt: Mit angehakter 3D-Option wird ihr 3D-Video einmal gespeichert, wie auf der Disc.</translation>
+    </message>
+    <message>
+        <source>3D disc detected: %1 of %2 .ssif files are missing. With the 3D box ticked they are rebuilt from the two views; without it those titles play in 2D.</source>
+        <translation>3D-Disc erkannt: %1 von %2 .ssif-Dateien fehlen. Mit angehakter 3D-Option werden sie aus den beiden Ansichten neu erstellt; ohne sie werden diese Titel in 2D abgespielt.</translation>
+    </message>
+    <message>
         <source>BD-R DL 50 GB (2 layers)</source>
         <translation>BD-R DL 50 GB (2 Schichten)</translation>
     </message>

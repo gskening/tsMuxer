@@ -3939,6 +3939,14 @@ Créer l'ISO malgré tout ?</translation>
         <translation>Dossier BDMV trouvé.</translation>
     </message>
     <message>
+        <source>3D disc detected: with the 3D box ticked, its 3D video is stored once, as on the disc.</source>
+        <translation>Disque 3D détecté : avec la case 3D cochée, sa vidéo 3D est stockée une fois, comme sur le disque.</translation>
+    </message>
+    <message>
+        <source>3D disc detected: %1 of %2 .ssif files are missing. With the 3D box ticked they are rebuilt from the two views; without it those titles play in 2D.</source>
+        <translation>Disque 3D détecté : %1 des %2 fichiers .ssif manquent. Avec la case 3D cochée, ils sont reconstruits à partir des deux vues ; sans elle, ces titres sont lus en 2D.</translation>
+    </message>
+    <message>
         <source>BD-R DL 50 GB (2 layers)</source>
         <translation>BD-R DL 50 GB (2 couches)</translation>
     </message>

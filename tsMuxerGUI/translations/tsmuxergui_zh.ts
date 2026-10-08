@@ -3939,6 +3939,14 @@ Build the ISO anyway?</source>
         <translation>已找到 BDMV 文件夹。</translation>
     </message>
     <message>
+        <source>3D disc detected: with the 3D box ticked, its 3D video is stored once, as on the disc.</source>
+        <translation>检测到 3D 光盘：勾选 3D 选项后，其 3D 视频只存储一次，与光盘相同。</translation>
+    </message>
+    <message>
+        <source>3D disc detected: %1 of %2 .ssif files are missing. With the 3D box ticked they are rebuilt from the two views; without it those titles play in 2D.</source>
+        <translation>检测到 3D 光盘：%2 个 .ssif 文件中缺少 %1 个。勾选 3D 选项后会从两个视图重建；不勾选则这些标题以 2D 播放。</translation>
+    </message>
+    <message>
         <source>BD-R DL 50 GB (2 layers)</source>
         <translation>BD-R DL 50 GB（双层）</translation>
     </message>

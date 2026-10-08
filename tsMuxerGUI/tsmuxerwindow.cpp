@@ -456,6 +456,82 @@ QString TsMuxerWindow::getDefaultOutputFileName() const
 // wrapper turns on word wrapping without touching the translated strings themselves.
 static QString wrapTip(const QString& text) { return QStringLiteral("<p>") + text + QStringLiteral("</p>"); }
 
+// The 3D titles of a BDMV folder, read from its playlists as the command line reads them: a playlist with a
+// stereoscopic sub path (extension data 2/2, sub path type 8) plays its clips in 3D, and each such clip has its .ssif
+// in BDMV/STREAM/SSIF. Only the playlist files are read. clips counts those clips, missing the ones without a .ssif.
+struct Bdmv3dScan
+{
+    int clips = 0;
+    int missing = 0;
+};
+
+static Bdmv3dScan scanBdmv3d(const QString& root)
+{
+    Bdmv3dScan scan;
+    const QDir playlistDir(root + QStringLiteral("/BDMV/PLAYLIST"));
+    const QDir ssifDir(root + QStringLiteral("/BDMV/STREAM/SSIF"));
+    QStringList clips;
+    for (const QString& name : playlistDir.entryList({QStringLiteral("*.mpls")}, QDir::Files))
+    {
+        QFile file(playlistDir.filePath(name));
+        if (file.size() > (1 << 20) || !file.open(QIODevice::ReadOnly))
+            continue;
+        const QByteArray b = file.readAll();
+        const auto at = [&b](const qint64 pos, const int len) -> qint64
+        {
+            if (pos < 0 || pos + len > b.size())
+                return -1;
+            qint64 v = 0;
+            for (int i = 0; i < len; ++i) v = (v << 8) | static_cast<uchar>(b[static_cast<int>(pos) + i]);
+            return v;
+        };
+        const qint64 ext = at(16, 4);
+        if (!b.startsWith("MPLS") || ext <= 0 || at(ext, 4) <= 0)
+            continue;
+        bool stereo = false;
+        const qint64 entries = at(ext + 11, 1);
+        for (qint64 k = 0; k < entries && !stereo; ++k)
+        {
+            const qint64 e = ext + 12 + 12 * k;
+            if (at(e, 2) != 2 || at(e + 2, 2) != 2)
+                continue;
+            const qint64 start = ext + at(e + 4, 4);
+            const qint64 subPaths = at(start + 4, 2);
+            qint64 pos = start + 6;
+            for (qint64 s = 0; s < subPaths && pos >= 0 && !stereo; ++s)
+            {
+                stereo = at(pos + 5, 1) == 8;
+                const qint64 len = at(pos, 4);
+                pos = len < 0 ? -1 : pos + 4 + len;
+            }
+        }
+        if (!stereo)
+            continue;
+        const qint64 list = at(8, 4);
+        const qint64 items = at(list + 6, 2);
+        qint64 pos = list + 10;
+        for (qint64 i = 0; i < items && pos >= 0 && pos + 7 <= b.size(); ++i)
+        {
+            const QString clip = QString::fromLatin1(b.mid(static_cast<int>(pos) + 2, 5));
+            if (!clips.contains(clip))
+                clips << clip;
+            const qint64 len = at(pos, 2);
+            pos = len < 0 ? -1 : pos + 2 + len;
+        }
+    }
+    // Only clips that are in the folder count: one whose .m2ts is missing too cannot be rebuilt either.
+    const QDir streamDir(root + QStringLiteral("/BDMV/STREAM"));
+    for (const QString& clip : clips)
+    {
+        if (!streamDir.exists(clip + QStringLiteral(".m2ts")))
+            continue;
+        ++scan.clips;
+        if (!ssifDir.exists(clip + QStringLiteral(".ssif")))
+            ++scan.missing;
+    }
+    return scan;
+}
+
 // ── The disc table, in ONE place ─────────────────────────────────────────────────────────────
 // Two parts of the interface need it: the "BDMV folder -> ISO" tab, which works out the layer
 // break from it, and the dual-layer group beside the normal Blu-ray output, which used to carry
@@ -1007,6 +1083,7 @@ TsMuxerWindow::TsMuxerWindow()
                        "roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back "
                        "onto one. Tick this to store it once, the way the source disc holds it. Has no effect "
                        "on a 2D disc.")));
+        singleCopy3dCheck->setEnabled(false);  // until a 3D folder is chosen (see updateFolderStatus)
         auto* discLabelLabel = new QLabel(tr("Disc label (optional):"), bdmvTab);
         auto* labelEdit = new QLineEdit(bdmvTab);
         labelEdit->setToolTip(wrapTip(tr("Volume label written into the ISO. Leave empty to keep the default.")));
@@ -1200,9 +1277,39 @@ TsMuxerWindow::TsMuxerWindow()
         };
         // Immediate feedback on the selected folder: whether it holds a BDMV, and whether it is a read-only disc
         // (in which case the output ISO must go to a writable location, not the disc).
-        auto updateFolderStatus = [folderEdit, folderStatusLabel]()
+        //
+        // A 3D folder also brings the 3D box to life and ticks it, once for each folder chosen: the video is then
+        // stored once, as on the disc, and a .ssif missing from the folder is rebuilt from the two views. A folder
+        // copied with its SSIF folder would otherwise put the 3D video into the image twice, and one copied
+        // without it would give an image that plays in 2D. Taken off, the image is built as found. For any other
+        // folder the box is off and greyed.
+        auto lastTickedFolder = QSharedPointer<QString>::create();
+        auto updateFolderStatus = [folderEdit, folderStatusLabel, singleCopy3dCheck, lastTickedFolder]()
         {
             const QString folder = folderEdit->text().trimmed();
+            const Bdmv3dScan scan =
+                !folder.isEmpty() && QDir(folder).exists("BDMV") ? scanBdmv3d(folder) : Bdmv3dScan();
+            singleCopy3dCheck->setEnabled(scan.clips > 0);
+            if (scan.clips == 0)
+            {
+                singleCopy3dCheck->setChecked(false);
+                lastTickedFolder->clear();
+            }
+            else if (*lastTickedFolder != folder)
+            {
+                singleCopy3dCheck->setChecked(true);
+                *lastTickedFolder = folder;
+            }
+            QString info3d;
+            if (scan.clips > 0 && scan.missing == 0)
+                info3d = QStringLiteral(" ") + tr("3D disc detected: with the 3D box ticked, its 3D video is stored "
+                                                  "once, as on the disc.");
+            else if (scan.clips > 0)
+                info3d = QStringLiteral(" ") + tr("3D disc detected: %1 of %2 .ssif files are missing. With the 3D "
+                                                  "box ticked they are rebuilt from the two views; without it those "
+                                                  "titles play in 2D.")
+                                                   .arg(scan.missing)
+                                                   .arg(scan.clips);
             if (folder.isEmpty())
             {
                 folderStatusLabel->setText(QString());
@@ -1240,12 +1347,13 @@ TsMuxerWindow::TsMuxerWindow()
                         .arg(themedInk(folderStatusLabel, QLatin1String("#1565c0"), QLatin1String("#4da3ff"))));
                 folderStatusLabel->setText(
                     tr("BDMV disc detected (read-only). The output ISO cannot be written to the "
-                       "disc, so choose a writable output location."));
+                       "disc, so choose a writable output location.") +
+                    info3d);
             }
             else
             {
                 folderStatusLabel->setStyleSheet(QStringLiteral("color:#2e7d32; font-weight:bold;"));
-                folderStatusLabel->setText(tr("BDMV folder found."));
+                folderStatusLabel->setText(tr("BDMV folder found.") + info3d);
             }
         };
         auto updateFit =
