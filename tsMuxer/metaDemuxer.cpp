@@ -2372,6 +2372,31 @@ int StreamInfo::read()
     {
         if (m_isEOF)
         {
+            // A merged TrueHD can reach its own end before its core does: a file of one read block
+            // arrives whole, together with its end of data. Its reader then asks for more core, and the
+            // core side used to be read only together with more lossless data, which no longer comes.
+            // The wait never ended and the lossless audio it held back was dropped at the end, silently.
+            // So the core side is read once more, and the reader gets back what it held.
+            auto* mergeReader = m_mergeAc3ReaderId >= 0 ? dynamic_cast<TrueHDAC3MergeReader*>(m_streamReader) : nullptr;
+            if (mergeReader && !mergeReader->ac3SideEof())
+            {
+                uint32_t ac3Cnt = 0;
+                int ac3Rez = 0;
+                AbstractReader* r = m_mergeAc3DataReader ? m_mergeAc3DataReader : m_dataReader;
+                uint8_t* ac3Data = r->readBlock(m_mergeAc3ReaderId, ac3Cnt, ac3Rez);
+                if (ac3Rez == BufferedFileReader::DATA_NOT_READY || ac3Rez == BufferedFileReader::DATA_DELAYED)
+                    return ac3Rez;
+                if (ac3Data != nullptr)
+                    ac3Data += mergeReader->getTmpBufferSize();
+                mergeReader->setAc3SideData(ac3Data, ac3Cnt);
+                // Nothing read and no more promised is the end as well, or this would ask for ever.
+                if (ac3Rez == BufferedFileReader::DATA_EOF || ac3Cnt == 0)
+                    mergeReader->setAc3SideEof();
+                static uint8_t noData[MAX_AV_PACKET_SIZE + 1];
+                m_streamReader->setBuffer(noData, 0, true);
+                m_lastAVRez = 0;
+                return 0;
+            }
             m_blockSize = 0;
             return BufferedFileReader::DATA_EOF2;
         }

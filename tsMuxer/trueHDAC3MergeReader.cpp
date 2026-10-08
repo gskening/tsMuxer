@@ -214,6 +214,10 @@ int TrueHDAC3MergeReader::readPacket(AVPacket& avPacket)
         // It only bites when the AC-3 source has no sync word in its first block (a wrong or
         // empty merge-ac3-file), but then it silently drops a whole 2 MiB of audio and still
         // reports "Mux successful complete".
+        // A wait armed before the core's end was known can find that end here: then no core frame is
+        // coming, and the lossless audio goes on alone (the coverage report at the end says so).
+        if (m_thdDemuxWaitAc3 && m_ac3FrameQueue.empty() && m_ac3SideEof)
+            m_thdDemuxWaitAc3 = false;
         if (m_thdDemuxWaitAc3 && m_ac3FrameQueue.empty())
         {
             if (m_curPos < m_bufEnd)

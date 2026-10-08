@@ -47,6 +47,7 @@ class TrueHDAC3MergeReader final : public MLPStreamReader
 
     void setAc3SideData(const uint8_t* data, uint32_t len);
     void setAc3SideEof() { m_ac3SideEof = true; }
+    [[nodiscard]] bool ac3SideEof() const { return m_ac3SideEof; }
 
     const CodecInfo& getCodecInfo() override;
     int readPacket(AVPacket& avPacket) override;
