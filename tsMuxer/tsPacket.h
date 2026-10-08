@@ -256,7 +256,8 @@ struct PMTStreamInfo final
     {
         m_streamType = streamType;
         m_pid = pid;
-        memcpy(m_esInfoData, esInfoData, esInfoLen);
+        if (esInfoLen > 0)  // the callers pass no data at all when there is none
+            memcpy(m_esInfoData, esInfoData, esInfoLen);
         m_esInfoLen = esInfoLen;
         m_codecReader = codecReader;
         memset(m_lang, 0, sizeof(m_lang));

@@ -150,7 +150,9 @@ bool AACCodec::decodeFrame(uint8_t* buffer, const uint8_t* end)
         m_channels = aac_channels[m_channels_index];
         m_sample_rate = aac_sample_rates[m_sample_rates_index];
         m_samples = (m_rdb + 1) * 1024;
-        m_bit_rate = frameSize * 8 * m_sample_rate / m_samples;
+        // In 64 bits: a long frame at 44.1 kHz and above went past the int range (8191 bytes at 96 kHz is
+        // 6.3 billion before the division). The result itself always fits.
+        m_bit_rate = static_cast<int>(static_cast<int64_t>(frameSize) * 8 * m_sample_rate / m_samples);
         return true;
     }
     catch (BitStreamException&)
