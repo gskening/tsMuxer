@@ -213,6 +213,71 @@ bool TSDemuxer::checkForRealM2ts(const uint8_t* buffer, const uint8_t* end) cons
     return false;
 }
 
+// The PAT and PMT of one block. For the first clip the PMT becomes the list of streams, as it always has. For a
+// later clip of a join, a stream it declares is added when this demuxer delivers it to a track and does not know it
+// yet. A playlist whose first clip is a short logo without audio declares the film's audio only from the next clip
+// on, and a stream missing from the list keeps its PES headers in the data: the audio reader took each of them
+// for a broken frame. A later clip only ever adds: a PMT that does not parse adds nothing, and a packet that stops
+// the scan of the first clip ends the scan of a later one quietly, so no mux that ran before can stop here.
+void TSDemuxer::readProgramTables(uint8_t* data, const uint8_t* lastFrameAddr, const bool laterClip)
+{
+    uint8_t pmtBuffer[4096]{0};
+    int pmtBufferLen = 0;
+    bool hdrDiscarded = m_m2tsHdrDiscarded;
+    TS_program_association_section pat;
+    for (uint8_t* cur = data; cur <= lastFrameAddr; cur += TS_FRAME_SIZE)
+    {
+        if (!hdrDiscarded && m_m2tsMode)
+            cur += 4;
+        while (cur <= lastFrameAddr && *cur != 0x47) cur++;
+        if (cur > lastFrameAddr)
+            break;
+        hdrDiscarded = false;
+
+        const auto tsPacket = reinterpret_cast<TSPacket*>(cur);
+        const int pid = tsPacket->getPID();
+        if (TS_FRAME_SIZE < tsPacket->getHeaderSize())
+        {
+            if (laterClip)
+                break;
+            THROW(ERR_COMMON, "Invalid tsPacket->getHeaderSize")
+        }
+        if (pid == 0)
+        {  // PAT
+            pat.deserialize(cur + tsPacket->getHeaderSize(), TS_FRAME_SIZE - tsPacket->getHeaderSize());
+        }
+        else if (pat.pmtPids.find(pid) != pat.pmtPids.end())
+        {  // PMT
+            if (tsPacket->payloadStart || pmtBufferLen > 0)
+            {
+                if (pmtBufferLen + TS_FRAME_SIZE - tsPacket->getHeaderSize() > 4096)
+                    break;
+                memcpy(pmtBuffer + pmtBufferLen, cur + tsPacket->getHeaderSize(),
+                       TS_FRAME_SIZE - tsPacket->getHeaderSize());
+                pmtBufferLen += TS_FRAME_SIZE - tsPacket->getHeaderSize();
+                if (TS_program_map_section::isFullBuff(pmtBuffer, pmtBufferLen))
+                {
+                    if (!laterClip)
+                    {
+                        m_pmt.deserialize(pmtBuffer, pmtBufferLen);
+                        if (m_pmt.video_type != static_cast<int>(StreamType::VIDEO_MVC))
+                            m_nonMVCVideoFound = true;
+                    }
+                    else
+                    {
+                        TS_program_map_section clipPmt;
+                        if (clipPmt.deserialize(pmtBuffer, pmtBufferLen))
+                            for (const auto& [streamPid, info] : clipPmt.pidList)
+                                if (streamPid >= 0 && streamPid < 8192 && m_acceptedPidCache[streamPid])
+                                    m_pmt.pidList.emplace(streamPid, info);  // a known stream stays as it is
+                    }
+                    pmtBufferLen = 0;
+                }
+            }
+        }
+    }
+}
+
 int TSDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& acceptedPIDs, int64_t& discardSize)
 {
     if (m_firstDemuxCall)
@@ -221,8 +286,6 @@ int TSDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepted
         m_firstDemuxCall = false;
     }
 
-    uint8_t pmtBuffer[4096]{0};
-    int pmtBufferLen = 0;
     MemoryBlock* vect = nullptr;
     int lastPid = -1;
 
@@ -293,50 +356,10 @@ int TSDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepted
         m_firstCall = false;
     }
 
-    bool forpmtm2tsHdrDiscarded = m_m2tsHdrDiscarded;
     if (m_pmt.pidList.empty() || mvcContinueExpected())
-    {
-        TS_program_association_section pat;
-        for (m_curPos = data; m_curPos <= lastFrameAddr; m_curPos += TS_FRAME_SIZE)
-        {
-            if (!forpmtm2tsHdrDiscarded && m_m2tsMode)
-                m_curPos += 4;
-            while (*m_curPos != 0x47 && m_curPos <= lastFrameAddr) m_curPos++;
-            if (m_curPos > lastFrameAddr)
-                break;
-            forpmtm2tsHdrDiscarded = false;
-
-            const auto tsPacket = reinterpret_cast<TSPacket*>(m_curPos);
-            int pid = tsPacket->getPID();
-            if (TS_FRAME_SIZE < tsPacket->getHeaderSize())
-            {
-                THROW(ERR_COMMON, "Invalid tsPacket->getHeaderSize")
-                break;
-            }
-            if (pid == 0)
-            {  // PAT
-                pat.deserialize(m_curPos + tsPacket->getHeaderSize(), TS_FRAME_SIZE - tsPacket->getHeaderSize());
-            }
-            else if (pat.pmtPids.find(pid) != pat.pmtPids.end())
-            {  // PMT
-                if (tsPacket->payloadStart || pmtBufferLen > 0)
-                {
-                    if (pmtBufferLen + TS_FRAME_SIZE - tsPacket->getHeaderSize() > 4096)
-                        break;
-                    memcpy(pmtBuffer + pmtBufferLen, m_curPos + tsPacket->getHeaderSize(),
-                           TS_FRAME_SIZE - tsPacket->getHeaderSize());
-                    pmtBufferLen += TS_FRAME_SIZE - tsPacket->getHeaderSize();
-                    if (TS_program_map_section::isFullBuff(pmtBuffer, pmtBufferLen))
-                    {
-                        m_pmt.deserialize(pmtBuffer, pmtBufferLen);
-                        if (m_pmt.video_type != static_cast<int>(StreamType::VIDEO_MVC))
-                            m_nonMVCVideoFound = true;
-                        pmtBufferLen = 0;
-                    }
-                }
-            }
-        }
-    }
+        readProgramTables(data, lastFrameAddr, false);
+    else if (isFirstBlock)
+        readProgramTables(data, lastFrameAddr, true);
 
     for (m_curPos = data; m_curPos <= lastFrameAddr; m_curPos += TS_FRAME_SIZE)
     {
@@ -380,6 +403,7 @@ int TSDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepted
         const bool pesStartCode = frameData[0] == 0 && frameData[1] == 0 && frameData[2] == 1 && tsPacket->payloadStart;
         if (pesStartCode)
         {
+            m_clipStartOfPid.try_emplace(pid, m_prevFileLen);
             const auto pesPacket = reinterpret_cast<PESPacket*>(frameData);
             auto streamInfo = m_pmt.pidList.find(pid);
 
@@ -479,6 +503,7 @@ void TSDemuxer::openFile(const std::string& streamName)
     m_fullDtsTime.clear();
     m_firstPtsTime.clear();
     m_firstDtsTime.clear();
+    m_clipStartOfPid.clear();
     m_firstPCRTime = -1;
     m_lastPCRVal = -1;
 

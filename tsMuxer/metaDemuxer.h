@@ -45,6 +45,7 @@ struct StreamInfo
         m_isSubStream = isSubStream;
         m_mergeAc3ReaderId = -1;
         m_mergeAc3DataReader = nullptr;
+        m_clipStartTaken = false;
     }
 
     int read();
@@ -71,6 +72,7 @@ struct StreamInfo
     bool m_isEOF;
     bool m_asyncMode;
     bool m_isSubStream;
+    bool m_clipStartTaken;  // the start of the clip in which this stream begins has been added to m_timeShift
 };
 
 enum class DemuxerReadPolicy
@@ -146,6 +148,8 @@ class ContainerToReaderWrapper final : public AbstractReader
     /// @param[out] size  Receives the codec-private size.
     /// @returns  Pointer to the blob, or nullptr if unavailable.
     const uint8_t* getTrackCodecPrivate(uint32_t readerID, int& size);
+    // Where the stream begins on the timeline of a join, in 90 kHz (see AbstractDemuxer::getTrackClipStart).
+    int64_t getTrackClipStart(uint32_t readerID);
 
    private:
     int64_t m_discardedSize;

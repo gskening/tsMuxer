@@ -158,10 +158,75 @@ DiskType checkBluRayMux(const char* metaFileName, int& autoChapterLen, vector<do
     return result;
 }
 
-void detectStreamReader(const char* fileName, MPLSParser* mplsParser, bool isSubMode)
+// A clip of a playlist after the first: the media file to probe and its clip info.
+struct LaterClip
+{
+    std::string media;
+    std::string clipInfo;
+};
+
+// A playlist may open with a clip that does not carry every stream: a short logo without the film's audio, for one.
+// The playlist declares the rest and later clips carry them, so a stream the first clip lacks is listed from the
+// first later clip that has it. It used to be left out of the listing, and the window could not offer it at all.
+// A later clip is read only when its clip info lists a stream still missing, or has no clip info that can be read;
+// one that cannot be read adds nothing. The rows keep the order a single clip gives: video first, then the rest,
+// each by track ID.
+static void addTracksFromLaterClips(vector<CheckStreamRez>& streams, const MPLSParser& mpls, const string& firstClip,
+                                    const vector<LaterClip>& laterClips)
+{
+    std::set<int> wanted;
+    for (const MPLSStreamInfo& si : mpls.m_streamInfo)
+        if (si.type != 2 && si.streamPID != 0)  // a type 2 entry lives in a sub path clip, not in the play item's
+            wanted.insert(si.streamPID);
+    for (const CheckStreamRez& s : streams) wanted.erase(s.trackID);
+    if (wanted.empty())
+        return;
+
+    std::set<string> probed{firstClip};
+    for (const LaterClip& clip : laterClips)
+    {
+        if (wanted.empty())
+            break;
+        if (!probed.insert(clip.media).second)
+            continue;
+        CLPIParser clpi;
+        if (clpi.parse(clip.clipInfo.c_str()) &&
+            std::none_of(wanted.begin(), wanted.end(), [&](const int pid) { return clpi.m_streamInfo.count(pid) > 0; }))
+            continue;
+        DetectStreamRez later;
+        try
+        {
+            later = METADemuxer::DetectStreamReader(readManager, clip.media, false);
+        }
+        catch (...)
+        {
+            continue;
+        }
+        std::set<int> found;
+        for (const CheckStreamRez& s : later.streams)
+            if (wanted.count(s.trackID))
+            {
+                streams.push_back(s);
+                found.insert(s.trackID);
+            }
+        for (const int pid : found) wanted.erase(pid);
+    }
+    std::stable_sort(streams.begin(), streams.end(), [](const CheckStreamRez& a, const CheckStreamRez& b) {
+        const bool videoA = strStartWith(a.codecInfo.programName, "V_");
+        const bool videoB = strStartWith(b.codecInfo.programName, "V_");
+        if (videoA != videoB)
+            return videoA;
+        return a.trackID < b.trackID;
+    });
+}
+
+void detectStreamReader(const char* fileName, MPLSParser* mplsParser, bool isSubMode,
+                        const vector<LaterClip>* laterClips = nullptr)
 {
     DetectStreamRez streamInfo = METADemuxer::DetectStreamReader(readManager, fileName, mplsParser == nullptr);
     vector<CheckStreamRez>& streams = streamInfo.streams;
+    if (mplsParser && laterClips && !laterClips->empty())
+        addTracksFromLaterClips(streams, *mplsParser, fileName, *laterClips);
 
     // A 3D disc's .m2ts names ONE view, so this file may be half a picture. The disc says so
     // in its playlists; say it too, on the video line, rather than leaving someone to find out
@@ -2093,10 +2158,9 @@ int main(int argc, char** argv)
 
                 if (!mplsParser.m_playItems.empty())
                 {
-                    // The parser has already dropped any clip whose streams contradict the rest,
-                    // so this is the first clip that DOES describe the playlist. It used to be
-                    // whatever happened to be first, which on a playlist that opens with an
-                    // intro of its own reported the intro's tracks and none of the feature's.
+                    // The parser has already dropped any clip whose streams contradict the rest, so
+                    // this is the first clip that fits the playlist. It may still carry fewer
+                    // streams than the playlist declares, and those come from the later clips.
                     MPLSPlayItem& item = mplsParser.m_playItems[0];
                     string itemName = streamDir + item.fileName + mediaExt;
                     if (fileExists(itemName))
@@ -2120,7 +2184,19 @@ int main(int argc, char** argv)
                         if (fileExists(ssifName))
                             itemName = ssifName;  // if m2ts file absent then swith to ssif
                     }
-                    detectStreamReader(itemName.c_str(), &mplsParser, false);
+                    vector<LaterClip> laterClips;
+                    const string clipInfoDir =
+                        streamDir + ".." + getDirSeparator() + "CLIPINF" + getDirSeparator();
+                    for (size_t i = 1; i < mplsParser.m_playItems.size(); ++i)
+                    {
+                        const string& name = mplsParser.m_playItems[i].fileName;
+                        string media = streamDir + name + mediaExt;
+                        if (!fileExists(media))
+                            media = streamDir + string("SSIF") + getDirSeparator() + name + ssifExt;
+                        if (fileExists(media))
+                            laterClips.push_back({media, clipInfoDir + name + (shortExt ? ".CPI" : ".clpi")});
+                    }
+                    detectStreamReader(itemName.c_str(), &mplsParser, false, &laterClips);
                 }
 
                 size_t markIndex = 0;

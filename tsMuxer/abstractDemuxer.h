@@ -134,6 +134,9 @@ class AbstractDemuxer
     [[nodiscard]] virtual uint32_t getFileBlockSize() { return m_fileBlockSize; }
 
     [[nodiscard]] virtual int64_t getTrackDelay(int32_t pid) { return 0; }
+    // Where a stream starts on the timeline of a join of several files, in 90 kHz, for a stream that the first
+    // file does not carry. Only the TS demuxer can tell; every other demuxer says 0.
+    [[nodiscard]] virtual int64_t getTrackClipStart(int32_t pid) { return 0; }
     [[nodiscard]] virtual std::vector<AVChapter> getChapters() { return {}; }
     [[nodiscard]] virtual double getTrackFps(uint32_t trackId) { return 0.0; }
 

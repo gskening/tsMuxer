@@ -50,11 +50,24 @@ class TSDemuxer final : public AbstractDemuxer
 
         return 0;
     }
+    // Where a stream starts on the timeline of a join, in 90 kHz: the start of the clip in which its first PES was
+    // seen, so 0 for every stream of the first clip. An audio or video reader counts its own time from its first
+    // frame and needs this added; PGS times already carry it in their PES headers.
+    int64_t getTrackClipStart(const int32_t pid) override
+    {
+        const auto info = m_pmt.pidList.find(pid);
+        const auto start = m_clipStartOfPid.find(pid);
+        if (info == m_pmt.pidList.end() || info->second.m_streamType == StreamType::SUB_PGS ||
+            start == m_clipStartOfPid.end())
+            return 0;
+        return start->second;
+    }
     void setMPLSInfo(const std::vector<MPLSPlayItem>& mplsInfo) { m_mplsInfo = mplsInfo; }
     [[nodiscard]] int64_t getFileDurationNano() const override;
 
    private:
     [[nodiscard]] bool mvcContinueExpected() const;
+    void readProgramTables(uint8_t* data, const uint8_t* lastFrameAddr, bool laterClip);
 
     int64_t m_firstPCRTime;
     bool m_m2tsHdrDiscarded;
@@ -69,6 +82,7 @@ class TSDemuxer final : public AbstractDemuxer
     std::map<int, int64_t> m_lastPesDts;
     std::map<int, int64_t> m_firstPtsTime;  // first PTS per PID, in file order (never a minimum)
     std::map<int, int64_t> m_firstDtsTime;
+    std::map<int, int64_t> m_clipStartOfPid;  // see getTrackClipStart
     std::map<int, int64_t> m_fullPtsTime;
     std::map<int, int64_t> m_fullDtsTime;
     AbstractReader* m_bufferedReader;

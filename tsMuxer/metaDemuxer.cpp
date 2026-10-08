@@ -2444,6 +2444,24 @@ int StreamInfo::read()
         m_streamReader->setBuffer(m_data, m_blockSize, m_isEOF);
         m_readCnt += m_blockSize;
         m_notificated = false;
+        // A stream that begins in a later clip of a join, such as the film's audio after a logo clip without any,
+        // is moved to where that clip begins, as a timeshift= would move it. Its reader counts time from its own
+        // first frame and cannot know this, so the audio used to start with the logo. The demuxer has seen the
+        // stream's first PES by the time its first data arrives here, and for every stream of the first clip the
+        // start is 0, which changes nothing.
+        if (!m_clipStartTaken && m_readCnt > 0)
+        {
+            m_clipStartTaken = true;
+            if (auto* wrapper = dynamic_cast<ContainerToReaderWrapper*>(m_dataReader))
+            {
+                const int64_t start = ptsToInternalClock(wrapper->getTrackClipStart(m_readerID));
+                if (start > 0)
+                {
+                    m_timeShift += start;
+                    m_lastDTS = FFMAX(m_lastDTS, m_timeShift);
+                }
+            }
+        }
     }
     return readRez;
 }
@@ -2563,6 +2581,15 @@ const uint8_t* ContainerToReaderWrapper::getTrackCodecPrivate(const uint32_t rea
     }
     const ReaderInfo& ri = it->second;
     return ri.m_demuxerData.m_demuxer->getTrackCodecPrivate(ri.m_pid, size);
+}
+
+int64_t ContainerToReaderWrapper::getTrackClipStart(const uint32_t readerID)
+{
+    const auto it = m_readerInfo.find(readerID);
+    if (it == m_readerInfo.end())
+        return 0;
+    const ReaderInfo& ri = it->second;
+    return ri.m_demuxerData.m_demuxer->getTrackClipStart(ri.m_pid);
 }
 
 void ContainerToReaderWrapper::resetDelayedMark() const
