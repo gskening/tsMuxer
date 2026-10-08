@@ -591,7 +591,13 @@ bool BlurayHelper::createMPLSFile(TSMuxer* mainMuxer, TSMuxer* subMuxer, int aut
     {
         for (auto& i : customChapters)
         {
-            auto mark = static_cast<uint32_t>(i * 45000.0);
+            // Checked before it becomes a 32-bit count of 1/45,000 s. A time of 26.5 hours or more is past
+            // the end of any playlist, and it used to wrap round to a mark near the start (26:30:48.718
+            // became 0:05). A time before the start, or one that is not a number, gets no mark either.
+            const double ticks = i * 45000.0;
+            if (!(ticks >= 0.0 && ticks < 4294967296.0))
+                continue;
+            const auto mark = static_cast<uint32_t>(ticks);
             if (mark <= (mplsParser.OUT_time - mplsParser.IN_time))
                 mplsParser.m_marks.emplace_back(-1, mark + mplsParser.IN_time);
         }
