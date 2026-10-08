@@ -337,8 +337,10 @@ vector<pair<Font, string>> TextSubtitlesRender::processTxtLine(const std::string
                     if (!arg.empty())
                     {
                         // In 64 bits and held to the int range: a relative size such as +2147483647
-                        // overflowed the sum.
-                        const int64_t value = std::strtoll(arg.c_str(), nullptr, 10);
+                        // overflowed the sum. The value is held first, so that even a 19-digit one
+                        // cannot overflow the sum in 64 bits either.
+                        const int64_t value =
+                            std::clamp<int64_t>(std::strtoll(arg.c_str(), nullptr, 10), INT_MIN, INT_MAX);
                         const int64_t size = (arg[0] == '+' || arg[0] == '-') ? curFont.m_size + value : value;
                         curFont.m_size = static_cast<int>(std::clamp<int64_t>(size, INT_MIN, INT_MAX));
                     }
