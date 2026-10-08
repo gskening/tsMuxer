@@ -568,6 +568,11 @@ class MovParsedSRTTrackData final : public ParsedTrackPrivData
             sttsCnt = m_sc->stts_data[sttsPos].count;
         }
         sttsCnt--;
+        // The text track's own time scale, from its media header. Zero ended the program on the spot
+        // (a hardware divide error), even when the file was only being listed.
+        if (m_sc->time_scale == 0)
+            THROW(ERR_MOV_PARSE, "MP4/MOV error: text track #" << m_sc->ffindex
+                                                            << " has a time scale of 0 in its media header (mdhd)")
         return m_sc->stts_data[sttsPos].duration * 1000 / m_sc->time_scale;
     }
 
@@ -1585,7 +1590,8 @@ int MovDemuxer::mov_read_mdhd(MOVAtom atom)
     st->time_scale = get_be32();  // time_scale
 
     const int64_t duration = version == 1 ? get_be64() : get_be32();
-    fileDuration = FFMAX(fileDuration, (int64_t)((double)duration / st->time_scale * 1000000000));
+    if (st->time_scale > 0)  // a zero scale gives an infinite duration, which no integer holds
+        fileDuration = FFMAX(fileDuration, (int64_t)((double)duration / st->time_scale * 1000000000));
 
     const unsigned lang = get_be16();  // language
     ff_mov_lang_to_iso639(lang, st->language);
