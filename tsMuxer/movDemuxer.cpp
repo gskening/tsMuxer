@@ -1541,6 +1541,10 @@ int MovDemuxer::mov_read_mvhd(MOVAtom atom)
     }
     m_timescale = get_be32();                                           // time scale
     const int64_t duration = (version == 1) ? get_be64() : get_be32();  // duration
+    // Every movie time is divided by this, and a zero ended the program on the spot (a hardware
+    // divide error that no catch block sees), with no word about the file.
+    if (m_timescale == 0)
+        THROW(ERR_MOV_PARSE, "MP4/MOV error: the movie header (mvhd) gives a time scale of 0")
     fileDuration = duration * 1000000000ll / m_timescale;
     get_be32();      // preferred scale
     get_be16();      // preferred volume
@@ -1996,14 +2000,25 @@ int MovDemuxer::mov_read_elst(MOVAtom atom)
             const int64_t duration = get_be64();
             const int64_t time = get_be64();
             if (time == -1)
+            {
+                // An empty edit is in movie time, so it needs the movie header's time scale. A file that
+                // puts the edit list first would otherwise divide by the zero the scale starts at.
+                if (m_timescale == 0)
+                    THROW(ERR_MOV_PARSE, "MP4/MOV error: an edit list (elst) comes before the movie header (mvhd)")
                 m_firstTimecode[num_tracks] = duration * 1000 / m_timescale;
+            }
         }
         else
         {
             const int64_t duration = get_be32();
             const unsigned time = get_be32();
             if (time == UINT_MAX)
+            {
+                // As above: no division before the movie header has given its time scale.
+                if (m_timescale == 0)
+                    THROW(ERR_MOV_PARSE, "MP4/MOV error: an edit list (elst) comes before the movie header (mvhd)")
                 m_firstTimecode[num_tracks] = duration * 1000 / m_timescale;
+            }
         }
     }
     get_be32();  // Media rate
