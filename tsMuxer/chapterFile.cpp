@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <map>
 
 #include "fs/textfile.h"
 #include "vodCoreException.h"
@@ -133,14 +134,20 @@ std::string readWholeFile(const std::string& fileName)
 // CHAPTER01=00:00:00.000 and CHAPTER01NAME=Opening, in any order, any number of digits, any case.
 std::vector<AVChapter> parseOgm(const std::string& text, const std::string& fileName)
 {
-    std::vector<std::string> times;
-    std::vector<std::string> names;
+    // Keyed by the chapter number, which only orders the file: a list starting at 00 and one starting
+    // at 01 both have to work, and the numbers need not be dense. The number used to index a vector
+    // directly, so CHAPTER4294967295 asked for a vector of four billion entries, or wrapped to -1 and
+    // wrote in front of it.
+    std::map<uint32_t, std::string> times;
+    std::map<uint32_t, std::string> names;
     size_t pos = 0;
+    int lineNo = 0;
     while (pos <= text.size())
     {
         const size_t nl = text.find('\n', pos);
         const std::string line = trimmed(text.substr(pos, nl == std::string::npos ? nl : nl - pos));
         pos = nl == std::string::npos ? text.size() + 1 : nl + 1;
+        ++lineNo;
         if (line.empty())
             continue;
         const size_t eq = line.find('=');
@@ -151,31 +158,32 @@ std::vector<AVChapter> parseOgm(const std::string& text, const std::string& file
         if (key.compare(0, 7, "CHAPTER") != 0)
             continue;
 
-        // CHAPTER<digits> or CHAPTER<digits>NAME. The number only orders the file, so it is used as
-        // an index rather than trusted to be dense: a list starting at 00 and one starting at 01
-        // both have to work.
+        // CHAPTER<digits> or CHAPTER<digits>NAME.
         size_t i = 7;
         while (i < key.size() && std::isdigit(static_cast<unsigned char>(key[i]))) ++i;
         if (i == 7)
             continue;
-        const int index = strToInt32(key.substr(7, i - 7).c_str());
         const bool isName = key.compare(i, std::string::npos, "NAME") == 0;
         if (!isName && i != key.size())
             continue;
+        if (i - 7 > 9)
+            THROW(ERR_COMMON, fileName << ", line " << lineNo << ": the chapter number " << key.substr(7, i - 7)
+                                       << " is too long (at most 9 digits)")
+        const auto number = static_cast<uint32_t>(std::stoul(key.substr(7, i - 7)));
 
-        std::vector<std::string>& into = isName ? names : times;
-        if (static_cast<size_t>(index) >= into.size())
-            into.resize(static_cast<size_t>(index) + 1);
-        into[static_cast<size_t>(index)] = value;
+        std::map<uint32_t, std::string>& into = isName ? names : times;
+        if (!into.emplace(number, value).second)
+            THROW(ERR_COMMON, fileName << ", line " << lineNo << ": " << key << " appears more than once")
     }
 
     std::vector<AVChapter> chapters;
-    for (size_t i = 0; i < times.size(); ++i)
+    for (const auto& [number, time] : times)
     {
-        if (times[i].empty())
+        if (time.empty())
             continue;
-        const int64_t start = static_cast<int64_t>(timeToFloat(times[i]) * 1e9 + 0.5);
-        chapters.emplace_back(start, i < names.size() ? names[i] : std::string(), std::string());
+        const int64_t start = static_cast<int64_t>(timeToFloat(time) * 1e9 + 0.5);
+        const auto name = names.find(number);
+        chapters.emplace_back(start, name != names.end() ? name->second : std::string(), std::string());
     }
     if (chapters.empty())
         THROW(ERR_COMMON, "No chapters found in " << fileName << ". A simple text chapter file has "
