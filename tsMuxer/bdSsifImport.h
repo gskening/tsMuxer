@@ -34,6 +34,9 @@ struct BdSsifGroup
     // length: the views interleave one for one.
     std::vector<int64_t> baseChunkBytes;
     std::vector<int64_t> depChunkBytes;
+    // The folder has no .ssif for this pair, as when only the .m2ts were copied. ssifRel then names the
+    // file the disc would have, beside the base clip in STREAM/SSIF; it can be rebuilt from the two clips.
+    bool ssifMissing = false;
 };
 
 // The chunk boundaries from one clip info file. Fills sizes with the byte size of each chunk EXCEPT
@@ -63,7 +66,8 @@ bool bdReadPlaylistStereoPair(const std::string& mplsPath, std::string& baseClip
 std::string bdFindSsifForM2ts(const std::string& m2tsPath, bool& isBaseView);
 
 // Every interleaved group under a disc root, found by reading the playlists and then the clip info
-// of each pair. srcRoot is the folder holding BDMV. Groups whose files are missing are left out.
+// of each pair. srcRoot is the folder holding BDMV. A group whose clips or clip info are missing is left
+// out; one that only lacks its .ssif is kept, with ssifMissing set.
 std::vector<BdSsifGroup> bdFindSsifGroups(const std::string& srcRoot);
 
 #endif  // BD_SSIF_IMPORT_H_

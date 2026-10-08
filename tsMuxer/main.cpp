@@ -1296,8 +1296,20 @@ static int bdmvFolderToGuardedIso(const int argc, char** argv)
     // doubles the image. --3d-single-copy writes it once instead, the way the disc itself does.
     const std::vector<BdSsifGroup> ssifGroups = bdFindSsifGroups(srcRoot);
     size_t interleavedGroups = 0;
+    size_t missingSsif = 0;
     for (const auto& g : ssifGroups)
     {
+        // A folder copied without its .ssif files used to give an image that played in 2D without a word.
+        // The .ssif holds no data of its own, so --3d-single-copy rebuilds it from the two clips.
+        if (g.ssifMissing)
+        {
+            ++missingSsif;
+            LTRACE(LT_INFO, 2,
+                   "  3D: " << g.ssifRel << " is missing from the folder; it "
+                            << (singleCopy3d ? "is rebuilt" : "can be rebuilt") << " from " << g.baseRel << " and "
+                            << g.depRel);
+            continue;
+        }
         int64_t dup = 0;
         for (const int64_t c : g.baseChunkBytes) dup += c;
         for (const int64_t c : g.depChunkBytes) dup += c;
@@ -1306,8 +1318,14 @@ static int bdmvFolderToGuardedIso(const int argc, char** argv)
                         << g.baseChunkBytes.size() << " chunk pairs, so " << dup / (1024 * 1024)
                         << " MB of this image is the same video twice");
     }
-    if (!ssifGroups.empty() && !singleCopy3d)
+    if (ssifGroups.size() > missingSsif && !singleCopy3d)
         LTRACE(LT_INFO, 2, "  3D: add --3d-single-copy to store that video once, as the source disc does");
+    if (missingSsif > 0 && !singleCopy3d)
+        LTRACE(LT_WARN, 2,
+               "Warning: " << missingSsif
+                           << " of the 3D files (.ssif) are missing from the folder, so this image plays those titles "
+                              "in 2D only. Add --3d-single-copy to rebuild them from their two views, as the disc "
+                              "stores them.");
 
     // Fold each group's three files into ONE entry in the copy list, sized at what the group really
     // costs the image: both views, once. Everything downstream then works off the truth, so the
@@ -1347,7 +1365,8 @@ static int bdmvFolderToGuardedIso(const int argc, char** argv)
             for (const int64_t c : ssifGroups[gi].baseChunkBytes) payload += c;
             for (const int64_t c : ssifGroups[gi].depChunkBytes) payload += c;
             kept.push_back({string(), ssifGroups[gi].ssifRel, payload, static_cast<int>(gi)});
-            saved += payload;  // exactly the second copy that is no longer written
+            if (!ssifGroups[gi].ssifMissing)
+                saved += payload;  // exactly the second copy that is no longer written (none when it was missing)
             ++interleavedGroups;
         }
         items.swap(kept);

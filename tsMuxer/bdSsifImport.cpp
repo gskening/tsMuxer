@@ -315,30 +315,45 @@ std::vector<BdSsifGroup> bdFindSsifGroups(const std::string& srcRoot)
             continue;  // an ordinary 2D playlist, which is most of them
         if (std::find(seen.begin(), seen.end(), baseId) != seen.end())
             continue;  // two playlists can point at one pair; the group is wanted once
-        // The interleaved file is named after the BASE clip. Every member has to be present: a
-        // group missing one of its three files is not something to rebuild, it is something to
-        // leave alone and copy as found.
+        // The interleaved file is named after the BASE clip. Both clips and both clip info files have
+        // to be present: without them there is nothing to rebuild from, and the files are copied as
+        // found. The .ssif itself may be missing, as when only the .m2ts were copied: it holds no data
+        // of its own, so it can be made again from the two clips.
         const auto ssif = ssifById.find(baseId);
         const auto base = m2tsById.find(baseId);
         const auto dep = m2tsById.find(depId);
         const auto baseClpi = clpiById.find(baseId);
         const auto depClpi = clpiById.find(depId);
-        if (ssif == ssifById.end() || base == m2tsById.end() || dep == m2tsById.end() || baseClpi == clpiById.end() ||
-            depClpi == clpiById.end())
+        if (base == m2tsById.end() || dep == m2tsById.end() || baseClpi == clpiById.end() || depClpi == clpiById.end())
             continue;
 
         BdSsifGroup g;
-        g.ssifRel = ssif->second;
         g.baseRel = base->second;
         g.depRel = dep->second;
+        g.ssifMissing = ssif == ssifById.end();
+        if (g.ssifMissing)
+        {
+            // Where the disc keeps it: STREAM/SSIF beside the base clip, with the base clip's own letter case.
+            const size_t slash = g.baseRel.find_last_of('/');
+            const std::string dir = slash == std::string::npos ? std::string() : g.baseRel.substr(0, slash + 1);
+            const bool upperExt = g.baseRel.size() >= 5 && g.baseRel.compare(g.baseRel.size() - 5, 5, ".M2TS") == 0;
+            g.ssifRel = dir + "SSIF/" + baseId + (upperExt ? ".SSIF" : ".ssif");
+        }
+        else
+            g.ssifRel = ssif->second;
         // A clip with ONE chunk has a table holding a single start point, so it yields no
         // differences and a legitimately empty list. Ask whether the TABLE was there.
         if (!bdReadClipChunkSizes(baseClpi->second, g.baseChunkBytes) ||
-            !bdReadClipChunkSizes(depClpi->second, g.depChunkBytes))
-            continue;
-        if (!appendTailChunk(g.baseChunkBytes, static_cast<int64_t>(getFileSize(root + "/" + g.baseRel))) ||
+            !bdReadClipChunkSizes(depClpi->second, g.depChunkBytes) ||
+            !appendTailChunk(g.baseChunkBytes, static_cast<int64_t>(getFileSize(root + "/" + g.baseRel))) ||
             !appendTailChunk(g.depChunkBytes, static_cast<int64_t>(getFileSize(root + "/" + g.depRel))))
+        {
+            if (g.ssifMissing)
+                LTRACE(LT_WARN, 2,
+                       "Warning: 3D: " << g.ssifRel << " is missing, and the clip info of " << g.baseRel << " and "
+                                       << g.depRel << " does not describe how to rebuild it, so that title plays in 2D");
             continue;
+        }
         // The two views interleave one chunk for one. Unequal counts mean this is not the layout
         // this understands, and guessing at it would produce a file of exactly the right size with
         // the halves scrambled, which is the worst way to be wrong.
@@ -346,7 +361,9 @@ std::vector<BdSsifGroup> bdFindSsifGroups(const std::string& srcRoot)
         {
             LTRACE(LT_WARN, 2,
                    "3D: " << g.ssifRel << " has " << g.baseChunkBytes.size() << " base chunks against "
-                          << g.depChunkBytes.size() << " dependent, so it is copied as found rather than rebuilt");
+                          << g.depChunkBytes.size() << " dependent, so it is "
+                          << (g.ssifMissing ? "not rebuilt, and that title plays in 2D"
+                                            : "copied as found rather than rebuilt"));
             continue;
         }
         seen.push_back(baseId);
