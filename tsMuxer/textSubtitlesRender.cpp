@@ -1,7 +1,10 @@
 #include "textSubtitlesRender.h"
 
+#include <algorithm>
 #include <cassert>
+#include <climits>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <unordered_map>
@@ -229,11 +232,18 @@ uint32_t rgbSwap(uint32_t color)
 
 int TextSubtitlesRender::browserSizeToRealSize(const int bSize, double rSize)
 {
-    if (bSize > DEFAULT_BROWSER_STYLE_FS)
-        for (int i = DEFAULT_BROWSER_STYLE_FS; i < bSize; i++) rSize *= BROWSER_FONT_STYLE_INC_COEFF;
-    else if (bSize < DEFAULT_BROWSER_STYLE_FS)
-        for (int i = bSize; i < DEFAULT_BROWSER_STYLE_FS; i++) rSize /= BROWSER_FONT_STYLE_INC_COEFF;
-    return static_cast<int>(rSize);
+    // Each step away from the default size is a factor of the square root of 2, so 64 steps are a factor of
+    // 2^32: the font is then under one pixel or far larger than any frame, and further steps change nothing
+    // that can be shown. A size near 2^31 used to run two billion steps for every piece of text, which took
+    // minutes per subtitle on the way down.
+    const int steps = std::clamp(bSize, DEFAULT_BROWSER_STYLE_FS - 64, DEFAULT_BROWSER_STYLE_FS + 64);
+    if (steps > DEFAULT_BROWSER_STYLE_FS)
+        for (int i = DEFAULT_BROWSER_STYLE_FS; i < steps; i++) rSize *= BROWSER_FONT_STYLE_INC_COEFF;
+    else if (steps < DEFAULT_BROWSER_STYLE_FS)
+        for (int i = steps; i < DEFAULT_BROWSER_STYLE_FS; i++) rSize /= BROWSER_FONT_STYLE_INC_COEFF;
+    // A subtitle picture is at most 65,535 pixels on a side, so no larger font can be shown, and a value
+    // beyond the int range has no defined conversion.
+    return static_cast<int>(std::clamp(rSize, -65535.0, 65535.0));
 }
 
 vector<pair<Font, string>> TextSubtitlesRender::processTxtLine(const std::string& line, vector<Font>& fontStack) const
@@ -326,10 +336,11 @@ vector<pair<Font, string>> TextSubtitlesRender::processTxtLine(const std::string
                     string arg = unquoteStr(findFontArg(tagStr, fontSizePos));
                     if (!arg.empty())
                     {
-                        if (arg[0] == '+' || arg[0] == '-')
-                            curFont.m_size += strToInt32(arg.c_str(), 10);
-                        else
-                            curFont.m_size = strToInt32(arg.c_str(), 10);
+                        // In 64 bits and held to the int range: a relative size such as +2147483647
+                        // overflowed the sum.
+                        const int64_t value = std::strtoll(arg.c_str(), nullptr, 10);
+                        const int64_t size = (arg[0] == '+' || arg[0] == '-') ? curFont.m_size + value : value;
+                        curFont.m_size = static_cast<int>(std::clamp<int64_t>(size, INT_MIN, INT_MAX));
                     }
                 }
                 isTag = true;
