@@ -507,12 +507,17 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
         }
         if (m_toDraw.empty())
         {
-            if (m_lastBlock && m_sourceText.empty() && m_unseenCues > 1 && !m_unseenReported)
+            if (m_lastBlock && m_sourceText.empty() && !m_unseenReported)
             {
-                LTRACE(LT_WARN, 2,
-                       "Warning: track " << m_streamIndex << ": " << m_unseenCues
-                                         << " subtitles in all were left out because none of their text lands "
-                                            "inside the picture.");
+                if (m_shrunkCues > 1)
+                    LTRACE(LT_WARN, 2,
+                           "Warning: track " << m_streamIndex << ": " << m_shrunkCues
+                                             << " subtitles in all did not fit the picture and were drawn smaller.");
+                if (m_unseenCues > 1)
+                    LTRACE(LT_WARN, 2,
+                           "Warning: track " << m_streamIndex << ": " << m_unseenCues
+                                             << " subtitles in all were left out because none of their text lands "
+                                                "inside the picture.");
                 m_unseenReported = true;
             }
             return nullptr;
@@ -889,8 +894,33 @@ uint8_t* SRTStreamReader::drawNext(uint32_t& renderedLen)
         animation.fadeInDuration = 0;
     if (!piece.hide)
         animation.fadeOutDuration = 0;
-    if (uint8_t* rez =
-            m_srtRender->doConvert(piece.text, animation, piece.inTime, piece.outTime, renderedLen, piece.hide))
+    // A subtitle whose text does not fit the picture, usually because of a font size far too large for it, was
+    // cut off at the edges or, when none of it landed inside, left out. It is drawn at the largest size that fits
+    // instead. A subtitle that fits is drawn exactly as written.
+    text_subtitles::TextSubtitlesRender* render = m_srtRender->m_textRender;
+    if (hasVisibleText(piece.text) && !render->textFits(piece.text))
+    {
+        double lo = 0.0;
+        double hi = 1.0;
+        for (int step = 0; step < 24; ++step)
+        {
+            render->m_fitScale = (lo + hi) / 2;
+            if (render->textFits(piece.text))
+                lo = render->m_fitScale;
+            else
+                hi = render->m_fitScale;
+        }
+        render->m_fitScale = lo;
+        if (lo > 0.0 && m_shrunkCues++ == 0)
+            LTRACE(LT_WARN, 2,
+                   "Warning: track " << m_streamIndex << ": the subtitle at " << floatToTime(piece.inTime, ',')
+                                     << " does not fit the picture, which usually means its font size is too large "
+                                        "for it. It is drawn smaller, at the largest size that fits ("
+                                     << lround(lo * 100) << "% of its size).");
+    }
+    uint8_t* rez = m_srtRender->doConvert(piece.text, animation, piece.inTime, piece.outTime, renderedLen, piece.hide);
+    render->m_fitScale = 1.0;
+    if (rez)
     {
         m_screenShown = !piece.hide;
         return rez;

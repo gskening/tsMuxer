@@ -109,6 +109,11 @@ class TextSubtitlesRender
     TextSubtitlesRender();
     virtual ~TextSubtitlesRender();
     bool rasterText(const std::string& text);  // return true if text was forced
+    // Whether every line of the text, measured the way rasterText draws it, fits inside the picture.
+    bool textFits(const std::string& text);
+    // Every font size is multiplied by this before drawing; 1.0 leaves the subtitle as written. Used to draw a
+    // subtitle that does not fit at the largest size that does.
+    double m_fitScale = 1.0;
 
     virtual void setFont(const Font& font) = 0;
     virtual void setRenderSize(int width, int height) = 0;

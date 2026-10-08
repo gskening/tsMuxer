@@ -369,8 +369,41 @@ vector<pair<Font, string>> TextSubtitlesRender::processTxtLine(const std::string
     if (line.size() > static_cast<unsigned>(prevTextPos))
         rez.emplace_back(curFont, line.substr(prevTextPos, line.size() - prevTextPos));
     double rSize = m_initFont.m_size;
-    for (auto& i : rez) i.first.m_size = browserSizeToRealSize(i.first.m_size, rSize);
+    for (auto& i : rez)
+    {
+        i.first.m_size = browserSizeToRealSize(i.first.m_size, rSize);
+        if (m_fitScale != 1.0)
+            i.first.m_size = FFMAX(1, static_cast<int>(i.first.m_size * m_fitScale));
+    }
     return rez;
+}
+
+bool TextSubtitlesRender::textFits(const std::string& text)
+{
+    vector<Font> fontStack;
+    const vector<string> lines = splitStr(text.c_str(), '\n');
+    const Font saved = m_font;
+    m_initFont = m_font;
+    bool fits = true;
+    int curY = 0;
+    for (auto& line : lines)
+    {
+        int ySize = 0;
+        int tWidth = 0;
+        for (auto& part : processTxtLine(line, fontStack))
+        {
+            setFont(part.first);
+            SIZE mSize;
+            getTextSize(part.second, &mSize);
+            ySize = FFMAX(ySize, mSize.cy);
+            tWidth += mSize.cx;
+        }
+        if (tWidth > m_width)
+            fits = false;
+        curY += lround(static_cast<float>(ySize) * m_font.m_lineSpacing);
+    }
+    m_font = saved;
+    return fits && curY <= m_height;
 }
 
 bool TextSubtitlesRender::rasterText(const std::string& text)
