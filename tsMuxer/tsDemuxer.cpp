@@ -123,8 +123,16 @@ void TSDemuxer::getTrackList(std::map<int32_t, TrackInfo>& trackList)
             {  // PMT
                 if (tsPacket->payloadStart || pmtBufferLen > 0)
                 {
-                    if (pmtBufferLen + TS_FRAME_SIZE - tsPacket->getHeaderSize() > 4096)
-                        break;
+                    // A section that would outgrow the buffer is damaged, as on a broken off-air recording.
+                    // Leaving the packet loop here used to strand the rest of the 2 MiB block, which the
+                    // carry-over below then copied into a buffer of one packet. Drop the section and collect
+                    // again from the next one that starts.
+                    if (pmtBufferLen + TS_FRAME_SIZE - tsPacket->getHeaderSize() > static_cast<int>(sizeof(pmtBuffer)))
+                    {
+                        pmtBufferLen = 0;
+                        if (!tsPacket->payloadStart)
+                            continue;
+                    }
                     memcpy(pmtBuffer + pmtBufferLen, curPos + tsPacket->getHeaderSize(),
                            TS_FRAME_SIZE - tsPacket->getHeaderSize());
                     pmtBufferLen += TS_FRAME_SIZE - tsPacket->getHeaderSize();
@@ -153,7 +161,12 @@ void TSDemuxer::getTrackList(std::map<int32_t, TrackInfo>& trackList)
         }
         if (curPos < data + readedBytes)
         {
+            // What is carried over is the part of a packet the block ended in, so it is shorter than a
+            // packet. Anything longer would not fit in m_tmpBuffer, nor in the room reserved in front of
+            // the next block.
             tmpBufferLen = static_cast<uint32_t>(data + readedBytes - curPos);
+            if (tmpBufferLen > TS_FRAME_SIZE)
+                THROW(ERR_COMMON, "TS track scan: " << tmpBufferLen << " bytes left over at the end of a block")
             memmove(m_tmpBuffer, curPos, tmpBufferLen);
         }
     }
