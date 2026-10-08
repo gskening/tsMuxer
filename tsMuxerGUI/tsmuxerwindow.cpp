@@ -5524,7 +5524,8 @@ bool TsMuxerWindow::readSettings()
     ui->lineSpacing->setValue(settings->value("fontLineSpacing").toDouble());
     setRendererAnimationTime(settings->value("fadeTime").toDouble());
     ui->spinEditOffset->setValue(settings->value("offset").toInt());
-    ui->keepTextCheckBox->setChecked(settings->value("keepText").toBool());
+    // On unless it was turned off: Matroska carries text subtitles itself, and text stays sharp, small and editable.
+    ui->keepTextCheckBox->setChecked(settings->value("keepText", true).toBool());
     settings->endGroup();
 
     settings->beginGroup("pip");

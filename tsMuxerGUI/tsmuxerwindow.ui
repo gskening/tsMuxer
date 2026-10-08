@@ -2107,6 +2107,9 @@
           <property name="text">
            <string>Keep SRT subtitles as text (Matroska and Demux)</string>
           </property>
+          <property name="checked">
+           <bool>true</bool>
+          </property>
          </widget>
         </item>
         <item>
