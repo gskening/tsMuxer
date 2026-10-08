@@ -2347,11 +2347,15 @@ void MPLSParser::composePlayListMark(BitStreamWriter& writer)
     const MPLSStreamInfo& streamInfo = getMainStream();
     if (m_marks.empty())
     {
-        if (m_chapterLen == 0)
+        if (m_chapterLen <= 0)
             m_marks.emplace_back(-1, IN_time);
         else
         {
-            for (uint32_t i = IN_time; i < OUT_time; i += m_chapterLen * 45000) m_marks.emplace_back(-1, i);
+            // The step and the sum in 64 bits. In 32 bits a long chapter length wrapped, and so did the
+            // sum near the top of the range, so marks came every few seconds, came before the start, or
+            // never stopped coming.
+            const int64_t step = static_cast<int64_t>(m_chapterLen) * 45000;
+            for (int64_t t = IN_time; t < OUT_time; t += step) m_marks.emplace_back(-1, static_cast<uint32_t>(t));
         }
     }
     writer.putBits(16, static_cast<unsigned>(m_marks.size()));

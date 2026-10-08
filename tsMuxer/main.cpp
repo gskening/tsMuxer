@@ -11,6 +11,7 @@
 #include <sstream>
 #include <vector>
 
+#include <climits>
 #include <cmath>
 #include "bdSsifImport.h"
 #include "blank_patterns.h"
@@ -76,7 +77,16 @@ DiskType checkBluRayMux(const char* metaFileName, int& autoChapterLen, vector<do
                 {
                     if (paramPair.size() < 2)
                         THROW(ERR_COMMON, "Missing value for " << paramPair[0])
-                    autoChapterLen = strToInt32(paramPair[1].c_str()) * 60;
+                    // Minutes between chapters. A negative value put chapters before the start of the
+                    // film, and from about 35.8 million minutes on the seconds no longer fitted. Every
+                    // value longer than a playlist can last (its times are 32-bit counts of 1/45,000 s,
+                    // about 26.5 hours) gives the same single chapter, so the largest ones are held at
+                    // the most the seconds can take.
+                    const int64_t minutes = strToInt64(paramPair[1].c_str());
+                    if (minutes < 0)
+                        THROW(ERR_COMMON, "The value of --auto-chapters is a number of minutes, 0 or more, not "
+                                              << paramPair[1])
+                    autoChapterLen = static_cast<int>(std::min<int64_t>(minutes, INT_MAX / 60) * 60);
                 }
                 else if (paramPair[0] == "--custom-chapters" && paramPair.size() > 1)
                 {
