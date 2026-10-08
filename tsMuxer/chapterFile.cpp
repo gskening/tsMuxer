@@ -120,14 +120,29 @@ std::string readWholeFile(const std::string& fileName)
     TextFile file;
     if (!file.open(fileName.c_str(), File::ofRead))
         THROW(ERR_COMMON, "Can't open the chapter file " << fileName)
-    std::string text;
-    std::string line;
-    while (file.readLine(line))
-    {
-        text += line;
-        text += '\n';
-    }
+    std::string raw;
+    char buf[16384];
+    int got;
+    while ((got = file.read(buf, sizeof(buf))) > 0) raw.append(buf, static_cast<size_t>(got));
     file.close();
+    // One line break per line of the file, and an empty line stays a line, so that a message can name
+    // the line an editor shows (reading line by line dropped the empty ones). CR LF, a lone LF and a
+    // lone CR each end one line.
+    std::string text;
+    text.reserve(raw.size() + 1);
+    for (size_t i = 0; i < raw.size(); ++i)
+    {
+        if (raw[i] == '\r')
+        {
+            text += '\n';
+            if (i + 1 < raw.size() && raw[i + 1] == '\n')
+                ++i;
+        }
+        else
+            text += raw[i];
+    }
+    if (!text.empty() && text.back() != '\n')
+        text += '\n';
     return text;
 }
 
@@ -136,10 +151,11 @@ std::vector<AVChapter> parseOgm(const std::string& text, const std::string& file
 {
     // Keyed by the chapter number, which only orders the file: a list starting at 00 and one starting
     // at 01 both have to work, and the numbers need not be dense. The number used to index a vector
-    // directly, so CHAPTER4294967295 asked for a vector of four billion entries, or wrapped to -1 and
-    // wrote in front of it.
+    // directly, so a large one asked for a list of up to two billion entries.
     std::map<uint32_t, std::string> times;
     std::map<uint32_t, std::string> names;
+    std::map<uint32_t, int> timeLine;  // where each was given, for a message about a repeat
+    std::map<uint32_t, int> nameLine;
     size_t pos = 0;
     int lineNo = 0;
     while (pos <= text.size())
@@ -166,14 +182,20 @@ std::vector<AVChapter> parseOgm(const std::string& text, const std::string& file
         const bool isName = key.compare(i, std::string::npos, "NAME") == 0;
         if (!isName && i != key.size())
             continue;
-        if (i - 7 > 9)
+        // Leading zeros do not count: CHAPTER0000000001 is chapter 1.
+        size_t first = 7;
+        while (first < i && key[first] == '0') ++first;
+        if (i - first > 9)
             THROW(ERR_COMMON, fileName << ", line " << lineNo << ": the chapter number " << key.substr(7, i - 7)
-                                       << " is too long (at most 9 digits)")
-        const auto number = static_cast<uint32_t>(std::stoul(key.substr(7, i - 7)));
+                                       << " is too large (at most 9 digits)")
+        const auto number = first < i ? static_cast<uint32_t>(std::stoul(key.substr(first, i - first))) : 0u;
 
         std::map<uint32_t, std::string>& into = isName ? names : times;
+        std::map<uint32_t, int>& lines = isName ? nameLine : timeLine;
         if (!into.emplace(number, value).second)
-            THROW(ERR_COMMON, fileName << ", line " << lineNo << ": " << key << " appears more than once")
+            THROW(ERR_COMMON, fileName << ": the " << (isName ? "name" : "time") << " of chapter " << number
+                                       << " is given twice, on lines " << lines[number] << " and " << lineNo)
+        lines[number] = lineNo;
     }
 
     std::vector<AVChapter> chapters;
