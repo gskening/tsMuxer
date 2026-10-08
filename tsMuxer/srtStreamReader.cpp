@@ -193,6 +193,27 @@ bool SRTStreamReader::strOnlySpace(const std::string& str)
     return std::all_of(str.begin(), str.end(), [](const char c) { return c == ' '; });
 }
 
+// Whether a subtitle has something to show: a character outside its tags that is not a space, a tab, a
+// line break or a no-break space.
+bool SRTStreamReader::hasVisibleText(const std::string& text)
+{
+    bool inTag = false;
+    for (size_t i = 0; i < text.size(); ++i)
+    {
+        const char c = text[i];
+        if (inTag)
+            inTag = c != '>';
+        else if (c == '<')
+            inTag = true;
+        else if (static_cast<unsigned char>(c) == 0xC2 && i + 1 < text.size() &&
+                 static_cast<unsigned char>(text[i + 1]) == 0xA0)
+            ++i;
+        else if (c != ' ' && c != '\t' && c != '\r' && c != '\n')
+            return true;
+    }
+    return false;
+}
+
 int SRTStreamReader::flushPacket(AVPacket& avPacket)
 {
     reportSkippedLines();
@@ -485,7 +506,17 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
             }
         }
         if (m_toDraw.empty())
+        {
+            if (m_lastBlock && m_sourceText.empty() && m_unseenCues > 1 && !m_unseenReported)
+            {
+                LTRACE(LT_WARN, 2,
+                       "Warning: track " << m_streamIndex << ": " << m_unseenCues
+                                         << " subtitles in all were left out because none of their text lands "
+                                            "inside the picture.");
+                m_unseenReported = true;
+            }
             return nullptr;
+        }
         // A piece that draws nothing, such as a cue of tags only, is passed over
         if (uint8_t* rez = drawNext(renderedLen))
             return rez;
@@ -864,6 +895,13 @@ uint8_t* SRTStreamReader::drawNext(uint32_t& renderedLen)
         m_screenShown = !piece.hide;
         return rez;
     }
+    // A subtitle with text that draws nothing is one whose text lies wholly outside the picture, which
+    // is what a font size far too large does. It used to vanish without a word.
+    if (hasVisibleText(piece.text) && m_unseenCues++ == 0)
+        LTRACE(LT_WARN, 2,
+               "Warning: track " << m_streamIndex << ": the subtitle at " << floatToTime(piece.inTime, ',')
+                                 << " is left out: none of its text lands inside the picture, which usually "
+                                    "means its font size is too large for it.");
     // This piece draws nothing. If the one before it is still on screen, it has to go now, or it
     // would stay until whatever is drawn next.
     if (m_screenShown)

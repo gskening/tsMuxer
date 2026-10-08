@@ -82,6 +82,8 @@ class SRTStreamReader final : public AbstractStreamReader
     std::vector<uint8_t> m_textPacket;
     int m_lengthlessCues = 0;    // kept as text: subtitles left out because they have no length
     int m_invalidUtf8Cues = 0;   // kept as text: subtitles whose bytes were not all valid UTF-8
+    int m_unseenCues = 0;        // drawn: subtitles with text, none of which lands inside the picture
+    bool m_unseenReported = false;
     int m_srtRecords = 0;        // demux: SRT records written so far, which numbers the next
     int64_t m_cuesRead = 0;      // subtitles read from the file
     int64_t m_skippedLines = 0;  // lines of text that are not part of any subtitle, passed over
@@ -154,6 +156,7 @@ class SRTStreamReader final : public AbstractStreamReader
     static std::string detectUTF8Lang(uint8_t* buffer, int len);
     bool detectSrcFormat(const uint8_t* dataStart, size_t len, int& prefixLen);
     static bool strOnlySpace(const std::string& str);
+    static bool hasVisibleText(const std::string& text);
     int blankLineEndsCue() const;
 };
 
