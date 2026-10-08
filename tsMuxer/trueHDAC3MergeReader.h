@@ -84,7 +84,9 @@ class TrueHDAC3MergeReader final : public MLPStreamReader
     MemoryBlock m_delayedAc3Buffer;
     MemoryBlock m_immediateAc3Buffer;
     AVPacket m_delayedAc3Packet;
-    int m_demuxedTHDSamplesForAc3;
+    // Lossless time since the last core frame was due, in TrueHD samples times the core's sample rate,
+    // so the two clocks are compared exactly (see readPacket).
+    int64_t m_demuxedTHDTimeForAc3;
     int64_t m_nextAc3Time;
     int m_ac3SamplesPerSyncFrame;
     int m_pendingEmitSamples;

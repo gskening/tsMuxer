@@ -11,11 +11,23 @@
 #include "vodCoreException.h"
 #include "vod_common.h"
 
+namespace
+{
+// Sample count to internal clock ticks. The clock runs at 5.292 GHz, so the single product
+// samples x clock passes the 64-bit range after 1,742,889,652 samples: two and a half hours at
+// 192 kHz, after which every timestamp came out wrong. Whole seconds and the rest are converted
+// apart, which gives the same value to the tick and cannot overflow for any real length.
+int64_t samplesToInternal(const int64_t samples, const int64_t rate)
+{
+    return samples / rate * INTERNAL_PTS_FREQ + samples % rate * INTERNAL_PTS_FREQ / rate;
+}
+}  // namespace
+
 TrueHDAC3MergeReader::TrueHDAC3MergeReader(const std::map<std::string, std::string>& addParams)
     : m_mergeAc3Pid(0),
       m_useNewStyleAudioPES(false),
       m_thdDemuxWaitAc3(true),
-      m_demuxedTHDSamplesForAc3(0),
+      m_demuxedTHDTimeForAc3(0),
       m_nextAc3Time(0),
       m_ac3SamplesPerSyncFrame(0),
       m_pendingEmitSamples(0),
@@ -223,10 +235,19 @@ int TrueHDAC3MergeReader::readPacket(AVPacket& avPacket)
             return rez;
 
         if (m_samplerate)
-            avPacket.dts = avPacket.pts = m_totalTHDSamples * INTERNAL_PTS_FREQ / m_samplerate;
+            avPacket.dts = avPacket.pts = samplesToInternal(m_totalTHDSamples, m_samplerate);
 
         m_totalTHDSamples += m_samples;
-        m_demuxedTHDSamplesForAc3 += m_samples;
+        // A core frame is due when the lossless audio sent since the last one has PLAYED for as long
+        // as one core frame plays. Counting samples compared two clocks: a 96 or 192 kHz TrueHD unit
+        // holds 80 or 160 samples, so the 1,536 of a 48 kHz core frame were reached two or four times
+        // too soon, every core frame went out in the first half or quarter of the title and none
+        // after. Each side is scaled by the other's rate, so with equal rates the decisions are
+        // exactly the ones the sample count made.
+        const int64_t thdRate = m_samplerate > 0 ? m_samplerate : 1;
+        const int64_t coreRate = m_ac3CoreSampleRate > 0 ? m_ac3CoreSampleRate : thdRate;
+        m_demuxedTHDTimeForAc3 += static_cast<int64_t>(m_samples) * coreRate;
+        const int64_t coreFrameTime = static_cast<int64_t>(m_ac3SamplesPerSyncFrame) * thdRate;
         // Trigger AC3 wait when we have enough TrueHD samples and AC3 frames available.
         // A frame held in the delayed buffer counts as available. Priority 4 above keeps exactly
         // one frame back OUT of the queue, so at the end of the stream the queue is empty
@@ -247,10 +268,10 @@ int TrueHDAC3MergeReader::readPacket(AVPacket& avPacket)
         // wait is that none is coming, and that is the AC-3 side's own end of data: with
         // merge-ac3-file the core can end while most of the lossless track remains, so asking the
         // LOSSLESS stream instead threw part way through a short core run rather than warning.
-        if (m_ac3SamplesPerSyncFrame > 0 && m_demuxedTHDSamplesForAc3 >= m_ac3SamplesPerSyncFrame &&
+        if (m_ac3SamplesPerSyncFrame > 0 && m_demuxedTHDTimeForAc3 >= coreFrameTime &&
             (!m_ac3FrameQueue.empty() || !m_delayedAc3Buffer.isEmpty() || !m_ac3SideEof))
         {
-            m_demuxedTHDSamplesForAc3 -= m_ac3SamplesPerSyncFrame;
+            m_demuxedTHDTimeForAc3 -= coreFrameTime;
             m_thdDemuxWaitAc3 = true;
         }
         return 0;
@@ -264,7 +285,7 @@ int TrueHDAC3MergeReader::flushPacket(AVPacket& avPacket)
     {
         if (!(avPacket.flags & AVPacket::PRIORITY_DATA))
             if (m_samplerate)
-                avPacket.pts = avPacket.dts = m_totalTHDSamples * INTERNAL_PTS_FREQ / m_samplerate;
+                avPacket.pts = avPacket.dts = samplesToInternal(m_totalTHDSamples, m_samplerate);
     }
     return rez;
 }
