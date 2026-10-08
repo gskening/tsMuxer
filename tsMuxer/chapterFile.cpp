@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <map>
 
 #include "fs/textfile.h"
@@ -203,7 +204,8 @@ std::vector<AVChapter> parseOgm(const std::string& text, const std::string& file
     {
         if (time.empty())
             continue;
-        const int64_t start = static_cast<int64_t>(timeToFloat(time) * 1e9 + 0.5);
+        const double seconds = chapterTimeToSeconds(time, fileName + ", line " + std::to_string(timeLine[number]));
+        const int64_t start = static_cast<int64_t>(seconds * 1e9 + 0.5);
         const auto name = names.find(number);
         chapters.emplace_back(start, name != names.end() ? name->second : std::string(), std::string());
     }
@@ -256,7 +258,7 @@ std::vector<AVChapter> parseXml(const std::string& text, const std::string& file
             if (tagText(display, "ChapterLanguage", 0, display.size(), value))
                 language = trimmed(value);
         }
-        const int64_t start = static_cast<int64_t>(timeToFloat(trimmed(timeStr)) * 1e9 + 0.5);
+        const int64_t start = static_cast<int64_t>(chapterTimeToSeconds(timeStr, fileName) * 1e9 + 0.5);
         chapters.emplace_back(start, name, language);
     }
     if (chapters.empty())
@@ -265,6 +267,34 @@ std::vector<AVChapter> parseXml(const std::string& text, const std::string& file
     return chapters;
 }
 }  // namespace
+
+double chapterTimeToSeconds(const std::string& text, const std::string& where)
+{
+    // The reader below skips whatever it does not understand, so "abc" became a chapter at 0:00 and
+    // "-00:00:05" one at 0:05, while a negative, endless or very large time vanished from the output
+    // although it was counted among the chapters read. So every part between the colons has to start
+    // with a digit, and there is no minus sign anywhere.
+    const std::string t = trimmed(text);
+    if (t.empty())
+        return 0.0;
+    bool ok = true;
+    size_t partStart = 0;
+    for (size_t i = 0; ok && i <= t.size(); ++i)
+    {
+        if (i == t.size() || t[i] == ':')
+        {
+            ok = i > partStart && std::isdigit(static_cast<unsigned char>(t[partStart]));
+            partStart = i + 1;
+        }
+        else if (t[i] == '-')
+            ok = false;
+    }
+    const double seconds = ok ? timeToFloat(t) : 0.0;
+    if (!ok || !std::isfinite(seconds) || seconds < 0.0 || seconds > 100000.0 * 3600.0)
+        THROW(ERR_COMMON, where << ": the chapter time \"" << t
+                                << "\" is not a time from 0 to 100000 hours, written as HH:MM:SS.mmm")
+    return seconds;
+}
 
 std::vector<AVChapter> readChapterFile(const std::string& fileName)
 {

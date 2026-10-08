@@ -91,7 +91,8 @@ DiskType checkBluRayMux(const char* metaFileName, int& autoChapterLen, vector<do
                 else if (paramPair[0] == "--custom-chapters" && paramPair.size() > 1)
                 {
                     vector<string> chapList = splitStr(paramPair[1].c_str(), ';');
-                    for (const string& chap : chapList) customChaptersList.push_back(timeToFloat(chap));
+                    for (const string& chap : chapList)
+                        customChaptersList.push_back(chapterTimeToSeconds(chap, "--custom-chapters"));
                 }
                 else if (paramPair[0] == "--chapters-file")
                 {

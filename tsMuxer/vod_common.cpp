@@ -131,7 +131,9 @@ double timeToFloat(const std::string& chapterStr)
     int hour = 0;
     if (timeParts.size() > 2)
         hour = strToInt32(timeParts[timeParts.size() - 3].c_str());
-    return hour * 3600 + min * 60 + sec;
+    // Multiplied as doubles: in int, 600000 hours came out negative. Every time that fitted before gives
+    // the same value.
+    return hour * 3600.0 + min * 60.0 + sec;
 }
 
 double correctFps(const double fps)

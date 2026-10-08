@@ -31,6 +31,11 @@
 // is worse than stopping.
 std::vector<AVChapter> readChapterFile(const std::string& fileName);
 
+// Seconds from one chapter time, such as 01:02:03.456 (the hours and the minutes may be left out; an empty
+// time is 0, as it always was). A time that is not written in digits, is negative, or is past 100,000
+// hours is refused with a message that starts with where (a file and line, or an option name).
+double chapterTimeToSeconds(const std::string& text, const std::string& where);
+
 // Writes the Matroska XML form. Chosen for the written side because it is the one that carries names
 // and languages and the one other tools read back without being told anything.
 bool writeChapterXml(const std::string& fileName, const std::vector<AVChapter>& chapters);
