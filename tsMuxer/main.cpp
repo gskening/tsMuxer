@@ -1372,7 +1372,7 @@ static int bdmvFolderToGuardedIso(const int argc, char** argv)
         items.swap(kept);
         total = 0;
         for (const auto& it : items) total += it.size;
-        if (interleavedGroups > 0)
+        if (interleavedGroups > 0 && saved > 0)  // nothing is saved for a .ssif the folder did not have
             LTRACE(LT_INFO, 2,
                    "  3D: writing " << interleavedGroups << " interleaved group(s) once, so the image is "
                                     << saved / (1024 * 1024) << " MB smaller");
