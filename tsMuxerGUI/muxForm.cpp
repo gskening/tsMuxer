@@ -5,7 +5,13 @@
 
 #include "ui_muxForm.h"
 
-const static int MAX_ERRORS_CNT = 10000;
+// The window used to end tsMuxeR itself once 10,000 lines had come in on its error output ("Too many errors!
+// tsMuxeR is terminated."). Warnings arrive there too, and some are printed once per frame, so a long mux that the
+// command line finishes was cut off part way and its output file left short. tsMuxeR ends by itself on a real
+// error. So the window now only stops drawing: it shows the first MAX_SHOWN_LINES lines, counts the rest, and when
+// the mux ends shows how many were left out and the last TAIL_LINES of them, where a final error message would be.
+const static int MAX_SHOWN_LINES = 10000;
+const static int TAIL_LINES = 20;
 
 MuxForm::MuxForm(QWidget* parent) : QDialog(parent, Qt::WindowMaximizeButtonHint), ui(new Ui_muxForm), muxProcess(0)
 {
@@ -34,6 +40,8 @@ void MuxForm::prepare(const QString& label)
 {
     muxProcess = 0;
     errCnt = 0;
+    m_hiddenLines = 0;
+    m_hiddenTail.clear();
     setWindowTitle(label);
     ui->muxLabel->setText(label + '.');
     ui->progressBar->setValue(0);
@@ -61,15 +69,23 @@ void MuxForm::addStdOutLine(const QString& line)
 
 void MuxForm::addStdErrLine(const QString& line)
 {
-    if (errCnt >= MAX_ERRORS_CNT)
+    if (errCnt >= MAX_SHOWN_LINES)
+    {
+        const QStringList lines = line.split('\n');
+        m_hiddenLines += lines.size();
+        m_hiddenTail += lines;
+        if (m_hiddenTail.size() > TAIL_LINES)
+            m_hiddenTail.erase(m_hiddenTail.begin(), m_hiddenTail.end() - TAIL_LINES);
         return;
+    }
     ui->stderrText->append(line);
     errCnt = ui->stderrText->document()->blockCount();
-    if (errCnt >= MAX_ERRORS_CNT)
+    if (errCnt >= MAX_SHOWN_LINES)
     {
         ui->stderrText->append("---------------------------------------");
-        ui->stderrText->append(QObject::tr("Too many errors! tsMuxeR is terminated."));
-        onAbort();
+        ui->stderrText->append(QObject::tr("Only the first %1 lines are shown here. tsMuxeR goes on, and the last "
+                                           "lines are shown when it ends.")
+                                   .arg(MAX_SHOWN_LINES));
     }
     QTextCursor c = ui->stderrText->textCursor();
     c.movePosition(QTextCursor::End);
@@ -78,6 +94,17 @@ void MuxForm::addStdErrLine(const QString& line)
 
 void MuxForm::muxFinished(int exitCode, const QString&)
 {
+    if (m_hiddenLines > 0)
+    {
+        ui->stderrText->append("---------------------------------------");
+        ui->stderrText->append(QObject::tr("Lines not shown: %1. The last of them:").arg(m_hiddenLines));
+        for (const QString& hidden : m_hiddenTail) ui->stderrText->append(hidden);
+        m_hiddenLines = 0;
+        m_hiddenTail.clear();
+        QTextCursor c = ui->stderrText->textCursor();
+        c.movePosition(QTextCursor::End);
+        ui->stderrText->setTextCursor(c);
+    }
     if (muxProcess && ui->abortBtn->isEnabled())
     {
         if (exitCode == 0)

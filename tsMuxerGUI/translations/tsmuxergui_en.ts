@@ -2482,32 +2482,37 @@
 <context>
     <name>QObject</name>
     <message>
-        <location filename="../muxForm.cpp" line="48"/>
+        <location filename="../muxForm.cpp" line="56"/>
         <source>Progress: </source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="71"/>
-        <source>Too many errors! tsMuxeR is terminated.</source>
-        <translation type="unfinished"></translation>
+        <location filename="../muxForm.cpp" line="86"/>
+        <source>Only the first %1 lines are shown here. tsMuxeR goes on, and the last lines are shown when it ends.</source>
+        <translation>Only the first %1 lines are shown here. tsMuxeR goes on, and the last lines are shown when it ends.</translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="84"/>
+        <location filename="../muxForm.cpp" line="100"/>
+        <source>Lines not shown: %1. The last of them:</source>
+        <translation>Lines not shown: %1. The last of them:</translation>
+    </message>
+    <message>
+        <location filename="../muxForm.cpp" line="111"/>
         <source>tsMuxeR successfully finished</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="86"/>
+        <location filename="../muxForm.cpp" line="113"/>
         <source>tsMuxeR finished with error code %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="99"/>
+        <location filename="../muxForm.cpp" line="126"/>
         <source>terminating tsMuxeR...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="102"/>
+        <location filename="../muxForm.cpp" line="129"/>
         <source>tsMuxeR is terminated</source>
         <translation type="unfinished"></translation>
     </message>

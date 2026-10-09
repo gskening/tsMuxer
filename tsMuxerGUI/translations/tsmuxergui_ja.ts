@@ -2482,32 +2482,37 @@
 <context>
     <name>QObject</name>
     <message>
-        <location filename="../muxForm.cpp" line="48"/>
+        <location filename="../muxForm.cpp" line="56"/>
         <source>Progress: </source>
         <translation>進捗: </translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="71"/>
-        <source>Too many errors! tsMuxeR is terminated.</source>
-        <translation>エラーが多すぎます。tsMuxeRを終了しました。</translation>
+        <location filename="../muxForm.cpp" line="86"/>
+        <source>Only the first %1 lines are shown here. tsMuxeR goes on, and the last lines are shown when it ends.</source>
+        <translation>ここには最初の %1 行のみ表示します。tsMuxeR は処理を続け、終了時に最後の行を表示します。</translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="84"/>
+        <location filename="../muxForm.cpp" line="100"/>
+        <source>Lines not shown: %1. The last of them:</source>
+        <translation>表示しなかった行: %1。そのうち最後の行:</translation>
+    </message>
+    <message>
+        <location filename="../muxForm.cpp" line="111"/>
         <source>tsMuxeR successfully finished</source>
         <translation>tsMuxeRは正常に完了しました</translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="86"/>
+        <location filename="../muxForm.cpp" line="113"/>
         <source>tsMuxeR finished with error code %1</source>
         <translation>tsMuxeRはエラーコード %1 で終了しました</translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="99"/>
+        <location filename="../muxForm.cpp" line="126"/>
         <source>terminating tsMuxeR...</source>
         <translation>tsMuxeRを終了しています...</translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="102"/>
+        <location filename="../muxForm.cpp" line="129"/>
         <source>tsMuxeR is terminated</source>
         <translation>tsMuxeRを終了しました</translation>
     </message>

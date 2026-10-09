@@ -2,6 +2,7 @@
 #define MUX_FORM_H_
 
 #include <QDialog>
+#include <QStringList>
 class QProcess;
 class Ui_muxForm;
 
@@ -26,6 +27,8 @@ class MuxForm : public QDialog  // QWidget
 
    private:
     int errCnt;
+    int m_hiddenLines = 0;     // error-output lines that came in after the shown ones
+    QStringList m_hiddenTail;  // the last of those, shown when the mux ends
     Ui_muxForm* ui;
     QProcess* muxProcess;
 };

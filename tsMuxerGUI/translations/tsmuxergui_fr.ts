@@ -2482,32 +2482,37 @@
 <context>
     <name>QObject</name>
     <message>
-        <location filename="../muxForm.cpp" line="48"/>
+        <location filename="../muxForm.cpp" line="56"/>
         <source>Progress: </source>
         <translation>Progression : </translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="71"/>
-        <source>Too many errors! tsMuxeR is terminated.</source>
-        <translation>Trop d&apos;erreurs ! tsMuxeR a abandonné.</translation>
+        <location filename="../muxForm.cpp" line="86"/>
+        <source>Only the first %1 lines are shown here. tsMuxeR goes on, and the last lines are shown when it ends.</source>
+        <translation>Seules les %1 premières lignes sont affichées ici. tsMuxeR continue, et les dernières lignes sont affichées à la fin.</translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="84"/>
+        <location filename="../muxForm.cpp" line="100"/>
+        <source>Lines not shown: %1. The last of them:</source>
+        <translation>Lignes non affichées : %1. Les dernières :</translation>
+    </message>
+    <message>
+        <location filename="../muxForm.cpp" line="111"/>
         <source>tsMuxeR successfully finished</source>
         <translation>tsMuxeR a fini avec succès</translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="86"/>
+        <location filename="../muxForm.cpp" line="113"/>
         <source>tsMuxeR finished with error code %1</source>
         <translation>tsMuxeR a fini avec le code d&apos;erreur %1</translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="99"/>
+        <location filename="../muxForm.cpp" line="126"/>
         <source>terminating tsMuxeR...</source>
         <translation>tsMuxeR est en train de terminer...</translation>
     </message>
     <message>
-        <location filename="../muxForm.cpp" line="102"/>
+        <location filename="../muxForm.cpp" line="129"/>
         <source>tsMuxeR is terminated</source>
         <translation>tsMuxeR a terminé</translation>
     </message>
