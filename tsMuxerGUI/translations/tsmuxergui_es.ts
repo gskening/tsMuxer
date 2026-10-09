@@ -3940,6 +3940,10 @@ Mantener la imagen en torno a 66 GB (las dos primeras capas) mejora las probabil
         <translation>Carpeta BDMV encontrada.</translation>
     </message>
     <message>
+        <source>3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made from it plays in 3D only if the .ssif files are added. Choose Blu-ray ISO, or make the folder into an image on the BDMV folder -&gt; ISO tab, which adds them.</source>
+        <translation>Vídeo 3D (MVC) detectado: una carpeta Blu-ray no recibe archivos .ssif, así que un disco creado a partir de ella solo se reproduce en 3D si se añaden. Elija Blu-ray ISO o convierta la carpeta en una imagen en la pestaña Carpeta BDMV -&gt; ISO, que los añade.</translation>
+    </message>
+    <message>
         <source>3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D.</source>
         <translation>Vídeo 3D (MVC) detectado: el disco Blu-ray recibe sus archivos .ssif, así que se reproduce en 3D.</translation>
     </message>

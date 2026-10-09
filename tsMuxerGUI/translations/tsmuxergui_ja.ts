@@ -3939,6 +3939,10 @@ Build the ISO anyway?</source>
         <translation>BDMVフォルダーが見つかりました。</translation>
     </message>
     <message>
+        <source>3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made from it plays in 3D only if the .ssif files are added. Choose Blu-ray ISO, or make the folder into an image on the BDMV folder -&gt; ISO tab, which adds them.</source>
+        <translation>3D 映像 (MVC) を検出しました: Blu-ray フォルダーには .ssif ファイルが作成されないため、そこから作ったディスクは .ssif ファイルを追加しない限り 3D で再生されません。Blu-ray ISO を選ぶか、「BDMVフォルダー → ISO」タブでフォルダーをイメージにしてください (そこで追加されます)。</translation>
+    </message>
+    <message>
         <source>3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D.</source>
         <translation>3D 映像 (MVC) を検出しました: Blu-ray ディスクには .ssif ファイルが作成され、3D で再生されます。</translation>
     </message>

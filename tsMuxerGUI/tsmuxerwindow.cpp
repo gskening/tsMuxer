@@ -5503,15 +5503,22 @@ void TsMuxerWindow::onOpacityTimer()
     updateBtns(0);
 }
 
-// A 3D (MVC) track in the list and a Blu-ray folder or image as the output: the disc gets its .ssif files, the
-// names under which a 3D player finds both views. Said here so that it is known before the mux starts.
+// A 3D (MVC) track in the list and a Blu-ray folder or image as the output. An image gets its .ssif files, the names
+// under which a 3D player finds both views. A folder does not: a .ssif in a folder would be a full second copy of
+// the video, so it is left to whatever makes the folder into a disc, and software that does not add it makes a disc
+// that plays in 2D. Said here so that it is known before the mux starts.
 void TsMuxerWindow::updateMux3dLabel()
 {
     if (!m_mux3dLabel)
         return;
-    const bool bluRay = ui->radioButtonBluRay->isChecked() || ui->radioButtonBluRayISO->isChecked();
-    m_mux3dLabel->setText(tr("3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D."));
-    m_mux3dLabel->setVisible(m_3dMode && bluRay && !ui->groupBox_4->isHidden());
+    const bool iso = ui->radioButtonBluRayISO->isChecked();
+    if (iso)
+        m_mux3dLabel->setText(tr("3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D."));
+    else
+        m_mux3dLabel->setText(tr("3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made "
+                                 "from it plays in 3D only if the .ssif files are added. Choose Blu-ray ISO, or make "
+                                 "the folder into an image on the BDMV folder -> ISO tab, which adds them."));
+    m_mux3dLabel->setVisible(m_3dMode && (iso || ui->radioButtonBluRay->isChecked()) && !ui->groupBox_4->isHidden());
 }
 
 void TsMuxerWindow::updateMaxOffsets()

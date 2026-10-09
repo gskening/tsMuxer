@@ -3939,6 +3939,10 @@ Créer l'ISO malgré tout ?</translation>
         <translation>Dossier BDMV trouvé.</translation>
     </message>
     <message>
+        <source>3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made from it plays in 3D only if the .ssif files are added. Choose Blu-ray ISO, or make the folder into an image on the BDMV folder -&gt; ISO tab, which adds them.</source>
+        <translation>Vidéo 3D (MVC) détectée : un dossier Blu-ray ne reçoit pas de fichiers .ssif, donc un disque créé à partir de lui ne se lit en 3D que si on les ajoute. Choisissez Blu-ray ISO, ou transformez le dossier en image dans l'onglet Dossier BDMV -&gt; ISO, qui les ajoute.</translation>
+    </message>
+    <message>
         <source>3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D.</source>
         <translation>Vidéo 3D (MVC) détectée : le disque Blu-ray reçoit ses fichiers .ssif et se lit donc en 3D.</translation>
     </message>

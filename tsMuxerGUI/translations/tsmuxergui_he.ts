@@ -3939,6 +3939,10 @@ Build the ISO anyway?</source>
         <translation>נמצאה תיקיית BDMV.</translation>
     </message>
     <message>
+        <source>3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made from it plays in 3D only if the .ssif files are added. Choose Blu-ray ISO, or make the folder into an image on the BDMV folder -&gt; ISO tab, which adds them.</source>
+        <translation>זוהה וידאו תלת-ממד (MVC): תיקיית Blu-ray אינה מקבלת קובצי ‎.ssif, ולכן דיסק שנוצר ממנה יוצג בתלת-ממד רק אם יתווספו. בחרו Blu-ray ISO, או הפכו את התיקייה לתמונה בכרטיסייה תיקיית BDMV -&gt; ISO, שמוסיפה אותם.</translation>
+    </message>
+    <message>
         <source>3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D.</source>
         <translation>זוהה וידאו תלת-ממד (MVC): דיסק ה-Blu-ray מקבל את קובצי ה-‎.ssif שלו, ולכן יוצג בתלת-ממד.</translation>
     </message>

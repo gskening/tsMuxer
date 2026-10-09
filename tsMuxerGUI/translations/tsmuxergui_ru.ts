@@ -3940,6 +3940,10 @@ Build the ISO anyway?</source>
         <translation>Папка BDMV найдена.</translation>
     </message>
     <message>
+        <source>3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made from it plays in 3D only if the .ssif files are added. Choose Blu-ray ISO, or make the folder into an image on the BDMV folder -&gt; ISO tab, which adds them.</source>
+        <translation>Обнаружено 3D-видео (MVC): папка Blu-ray не получает файлов .ssif, поэтому диск, созданный из неё, воспроизводится в 3D, только если их добавить. Выберите Blu-ray ISO или превратите папку в образ на вкладке «Папка BDMV -&gt; ISO», которая их добавляет.</translation>
+    </message>
+    <message>
         <source>3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D.</source>
         <translation>Обнаружено 3D-видео (MVC): диск Blu-ray получает свои файлы .ssif и воспроизводится в 3D.</translation>
     </message>

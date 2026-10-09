@@ -3939,6 +3939,10 @@ Build the ISO anyway?</source>
         <translation>已找到 BDMV 文件夹。</translation>
     </message>
     <message>
+        <source>3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made from it plays in 3D only if the .ssif files are added. Choose Blu-ray ISO, or make the folder into an image on the BDMV folder -&gt; ISO tab, which adds them.</source>
+        <translation>检测到 3D 视频 (MVC)：蓝光文件夹不会获得 .ssif 文件，因此由它制作的光盘只有在补上 .ssif 文件后才能 3D 播放。请选择 Blu-ray ISO，或在“BDMV 文件夹 -&gt; ISO”选项卡中把文件夹制成镜像（会补上这些文件）。</translation>
+    </message>
+    <message>
         <source>3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D.</source>
         <translation>检测到 3D 视频 (MVC)：蓝光光盘将获得其 .ssif 文件，因此可以 3D 播放。</translation>
     </message>
