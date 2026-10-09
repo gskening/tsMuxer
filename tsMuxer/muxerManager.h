@@ -61,6 +61,7 @@ class MuxerManager final
     [[nodiscard]] const std::string& getMuxOpts() const { return m_muxOpts; }
     [[nodiscard]] const std::vector<StreamInfo>& getStreamInfo() const { return m_metaDemuxer.getStreamInfo(); }
     [[nodiscard]] bool getHevcFound() const { return m_metaDemuxer.m_HevcFound; }
+    [[nodiscard]] bool getMvcFound() const { return m_metaDemuxer.m_MvcFound; }
     [[nodiscard]] AbstractMuxer* getMainMuxer() const;
     [[nodiscard]] AbstractMuxer* getSubMuxer() const;
     [[nodiscard]] bool isStereoMode() const;

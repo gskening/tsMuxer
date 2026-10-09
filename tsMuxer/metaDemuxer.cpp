@@ -329,6 +329,7 @@ METADemuxer::METADemuxer(const BufferedReaderManager& readManager)
 {
     m_flushDataMode = false;
     m_HevcFound = false;
+    m_MvcFound = false;
     m_totalSize = 0;
     m_lastProgressY = 0;
     m_lastReadRez = 0;
@@ -581,6 +582,8 @@ void METADemuxer::openFile(const string& streamName)
         }
         if (!m_HevcFound)
             m_HevcFound = (codec.find("HEVC") == 12);
+        if (!m_MvcFound)
+            m_MvcFound = codec == "V_MPEG4/ISO/MVC";
         addStream(codec, codecStreamName, addParams);
         file.readLine(str);
     }

@@ -226,6 +226,7 @@ class METADemuxer final : public AbstractDemuxer
     static std::string mplsTrackToFullName(const std::string& mplsFileName, const std::string& mplsNum);
     static std::string mplsTrackToSSIFName(const std::string& mplsFileName, const std::string& mplsNum);
     bool m_HevcFound;
+    bool m_MvcFound;  // a 3D (MVC) track is in the mux
 
    private:
     std::vector<FileListIterator*> m_iterators;

@@ -2365,6 +2365,24 @@ int main(int argc, char** argv)
                 LTRACE(LT_INFO, 2, "HEVC stream detected: changing Blu-Ray version to V3.");
                 V3_flags |= HDMV_V3;
             }
+            // A UHD disc (V3) has no 3D, so a 3D track written onto one gave a disc that players show in 2D,
+            // with nothing said. The window ticks V3 from the last video added, so it is easily left on. The
+            // 3D track wins: the disc is written as a Blu-ray 3D disc. With HEVC in the mux the disc has to
+            // stay UHD, so that case is only reported.
+            if (isV3() && dt == DiskType::BLURAY && muxerManager.getMvcFound())
+            {
+                if (!muxerManager.getHevcFound())
+                {
+                    LTRACE(LT_WARN, 2,
+                           "Warning: --blu-ray-v3 is left out: the mux has 3D (MVC) video, and a UHD disc cannot "
+                           "carry 3D, so the disc is written as a Blu-ray 3D disc.");
+                    V3_flags &= ~HDMV_V3;
+                }
+                else
+                    LTRACE(LT_WARN, 2,
+                           "Warning: the mux has 3D (MVC) video and HEVC video. HEVC needs a UHD disc, and a UHD "
+                           "disc cannot carry 3D, so players show this disc in 2D.");
+            }
 
             // output path - is checked for invalid characters on our platform
             string dstFile = unquoteStr(argv[2]);
