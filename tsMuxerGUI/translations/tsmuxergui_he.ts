@@ -3939,6 +3939,10 @@ Build the ISO anyway?</source>
         <translation>נמצאה תיקיית BDMV.</translation>
     </message>
     <message>
+        <source>3D track unticked: the disc is made in 2D from the left-eye view, without the right-eye view or .ssif files.</source>
+        <translation>רצועת התלת-ממד אינה מסומנת: הדיסק נוצר בדו-ממד מתצוגת העין השמאלית, בלי תצוגת העין הימנית ובלי קובצי ‎.ssif.</translation>
+    </message>
+    <message>
         <source>3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made from it plays in 3D only if the .ssif files are added. Choose Blu-ray ISO, or make the folder into an image on the BDMV folder -&gt; ISO tab, which adds them.</source>
         <translation>זוהה וידאו תלת-ממד (MVC): תיקיית Blu-ray אינה מקבלת קובצי ‎.ssif, ולכן דיסק שנוצר ממנה יוצג בתלת-ממד רק אם יתווספו. בחרו Blu-ray ISO, או הפכו את התיקייה לתמונה בכרטיסייה תיקיית BDMV -&gt; ISO, שמוסיפה אותם.</translation>
     </message>
@@ -3995,8 +3999,8 @@ Build the ISO anyway?</source>
         <translation>דיסק תלת-ממד: לאחסן את הווידאו פעם אחת, לא פעמיים</translation>
     </message>
     <message>
-        <source>A 3D disc stores its video once and gives it three names: the .ssif and the two .m2ts are the same sectors seen three ways. Copying all three by name writes the video twice and roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back onto one. Tick this to store it once, the way the source disc holds it. Has no effect on a 2D disc.</source>
-        <translation>דיסק תלת-ממד מאחסן את הווידאו שלו פעם אחת ונותן לו שלושה שמות: קובץ ה-.ssif ושני קבצי ה-.m2ts הם אותם סקטורים בשלוש תצוגות שונות. העתקת שלושתם לפי השם כותבת את הווידאו פעמיים ומכפילה כמעט את גודל התמונה, ולכן דיסק תלת-ממד שנלקח מ-BD50 כבר אינו נכנס חזרה ל-BD50. סמן אפשרות זו כדי לאחסן אותו פעם אחת בלבד, כפי שדיסק המקור שומר אותו. אין לכך השפעה על דיסק דו-ממדי.</translation>
+        <source>A 3D disc stores its video once and gives it three names: the .ssif and the two .m2ts are the same sectors seen three ways. Copying all three by name writes the video twice and roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back onto one. It is ticked by itself when the folder holds a 3D disc: the video is then stored once, the way the source disc holds it, and a missing .ssif is rebuilt from the two views. Unticked, the folder is copied as it is, both views and any .ssif files, and the disc stays 3D.</source>
+        <translation>דיסק תלת-ממד מאחסן את הווידאו שלו פעם אחת ונותן לו שלושה שמות: קובץ ה-.ssif ושני קבצי ה-.m2ts הם אותם סקטורים בשלוש תצוגות שונות. העתקת שלושתם לפי השם כותבת את הווידאו פעמיים ומכפילה כמעט את גודל התמונה, ולכן דיסק תלת-ממד שנלקח מ-BD50 כבר אינו נכנס חזרה ל-BD50. האפשרות מסומנת מעצמה כשהתיקייה מכילה דיסק תלת-ממד: הווידאו מאוחסן אז פעם אחת, כפי שדיסק המקור שומר אותו, וקובץ ‎.ssif חסר נבנה מחדש משתי התצוגות. כשאינה מסומנת, התיקייה מועתקת כפי שהיא, עם שתי התצוגות וכל קובצי ה-‎.ssif, והדיסק נשאר תלת-ממדי.</translation>
     </message>
     <message>
         <source>Disc label (optional):</source>

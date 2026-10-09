@@ -3939,6 +3939,10 @@ Build the ISO anyway?</source>
         <translation>BDMVフォルダーが見つかりました。</translation>
     </message>
     <message>
+        <source>3D track unticked: the disc is made in 2D from the left-eye view, without the right-eye view or .ssif files.</source>
+        <translation>3D トラックのチェックが外れています: ディスクは左目用の映像から 2D で作成され、右目用の映像と .ssif ファイルは含まれません。</translation>
+    </message>
+    <message>
         <source>3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made from it plays in 3D only if the .ssif files are added. Choose Blu-ray ISO, or make the folder into an image on the BDMV folder -&gt; ISO tab, which adds them.</source>
         <translation>3D 映像 (MVC) を検出しました: Blu-ray フォルダーには .ssif ファイルが作成されないため、そこから作ったディスクは .ssif ファイルを追加しない限り 3D で再生されません。Blu-ray ISO を選ぶか、「BDMVフォルダー → ISO」タブでフォルダーをイメージにしてください (そこで追加されます)。</translation>
     </message>
@@ -3995,8 +3999,8 @@ Build the ISO anyway?</source>
         <translation>3D ディスク: 映像を 2 回ではなく 1 回だけ格納する</translation>
     </message>
     <message>
-        <source>A 3D disc stores its video once and gives it three names: the .ssif and the two .m2ts are the same sectors seen three ways. Copying all three by name writes the video twice and roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back onto one. Tick this to store it once, the way the source disc holds it. Has no effect on a 2D disc.</source>
-        <translation>3D ディスクは映像を 1 回だけ保存し、それに 3 つの名前を与えます。.ssif と 2 つの .m2ts は同じセクタを 3 通りに見たものです。3 つを名前どおりにコピーすると映像が 2 度書き込まれ、イメージはおよそ 2 倍になります。BD50 から取った 3D ディスクが BD50 に戻らないのはそのためです。これをオンにすると、ソースディスクと同じ形で 1 回だけ格納します。2D ディスクには影響しません。</translation>
+        <source>A 3D disc stores its video once and gives it three names: the .ssif and the two .m2ts are the same sectors seen three ways. Copying all three by name writes the video twice and roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back onto one. It is ticked by itself when the folder holds a 3D disc: the video is then stored once, the way the source disc holds it, and a missing .ssif is rebuilt from the two views. Unticked, the folder is copied as it is, both views and any .ssif files, and the disc stays 3D.</source>
+        <translation>3D ディスクは映像を 1 回だけ保存し、それに 3 つの名前を与えます。.ssif と 2 つの .m2ts は同じセクタを 3 通りに見たものです。3 つを名前どおりにコピーすると映像が 2 度書き込まれ、イメージはおよそ 2 倍になります。BD50 から取った 3D ディスクが BD50 に戻らないのはそのためです。フォルダーに 3D ディスクがあると自動的にオンになります。映像はソースディスクと同じ形で 1 回だけ格納され、欠けている .ssif は 2 つのビューから再構築されます。オフにすると、フォルダーはそのままコピーされ (両方のビューとすべての .ssif ファイル)、ディスクは 3D のままです。</translation>
     </message>
     <message>
         <source>Disc label (optional):</source>

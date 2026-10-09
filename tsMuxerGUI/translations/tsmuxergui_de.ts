@@ -3939,6 +3939,10 @@ ISO trotzdem erstellen?</translation>
         <translation>BDMV-Ordner gefunden.</translation>
     </message>
     <message>
+        <source>3D track unticked: the disc is made in 2D from the left-eye view, without the right-eye view or .ssif files.</source>
+        <translation>3D-Spur abgewählt: Die Disc wird in 2D aus der Ansicht für das linke Auge erstellt, ohne die Ansicht für das rechte Auge und ohne .ssif-Dateien.</translation>
+    </message>
+    <message>
         <source>3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made from it plays in 3D only if the .ssif files are added. Choose Blu-ray ISO, or make the folder into an image on the BDMV folder -&gt; ISO tab, which adds them.</source>
         <translation>3D-Video (MVC) erkannt: Ein Blu-ray-Ordner erhält keine .ssif-Dateien, daher spielt eine daraus erstellte Disc nur in 3D, wenn die .ssif-Dateien ergänzt werden. Wählen Sie Blu-ray ISO, oder machen Sie den Ordner im Reiter &quot;BDMV-Ordner -&gt; ISO&quot; zu einem Image, das sie ergänzt.</translation>
     </message>
@@ -3995,8 +3999,8 @@ ISO trotzdem erstellen?</translation>
         <translation>3D-Disc: Video einmal speichern, nicht zweimal</translation>
     </message>
     <message>
-        <source>A 3D disc stores its video once and gives it three names: the .ssif and the two .m2ts are the same sectors seen three ways. Copying all three by name writes the video twice and roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back onto one. Tick this to store it once, the way the source disc holds it. Has no effect on a 2D disc.</source>
-        <translation>Eine 3D-Disc speichert ihr Video einmal und gibt ihm drei Namen: Die .ssif und die beiden .m2ts sind dieselben Sektoren, dreifach betrachtet. Werden alle drei über ihren Namen kopiert, landet das Video zweimal im Abbild und dieses wird etwa doppelt so groß. Deshalb passt eine 3D-Disc, die von einer BD50 stammt, nicht wieder auf eine BD50. Mit gesetztem Haken wird es einmal gespeichert, so wie die Quelldisc es hält. Bei einer 2D-Disc ohne Wirkung.</translation>
+        <source>A 3D disc stores its video once and gives it three names: the .ssif and the two .m2ts are the same sectors seen three ways. Copying all three by name writes the video twice and roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back onto one. It is ticked by itself when the folder holds a 3D disc: the video is then stored once, the way the source disc holds it, and a missing .ssif is rebuilt from the two views. Unticked, the folder is copied as it is, both views and any .ssif files, and the disc stays 3D.</source>
+        <translation>Eine 3D-Disc speichert ihr Video einmal und gibt ihm drei Namen: Die .ssif und die beiden .m2ts sind dieselben Sektoren, dreifach betrachtet. Werden alle drei über ihren Namen kopiert, landet das Video zweimal im Abbild und dieses wird etwa doppelt so groß. Deshalb passt eine 3D-Disc, die von einer BD50 stammt, nicht wieder auf eine BD50. Der Haken wird von selbst gesetzt, wenn der Ordner eine 3D-Disc enthält: Das Video wird dann einmal gespeichert, so wie die Quelldisc es hält, und eine fehlende .ssif wird aus den beiden Ansichten neu erstellt. Ohne Haken wird der Ordner so kopiert, wie er ist, mit beiden Ansichten und allen .ssif-Dateien, und die Disc bleibt 3D.</translation>
     </message>
     <message>
         <source>Disc label (optional):</source>

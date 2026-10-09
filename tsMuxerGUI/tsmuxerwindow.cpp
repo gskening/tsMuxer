@@ -1081,8 +1081,9 @@ TsMuxerWindow::TsMuxerWindow()
             wrapTip(tr("A 3D disc stores its video once and gives it three names: the .ssif and the two .m2ts are the "
                        "same sectors seen three ways. Copying all three by name writes the video twice and "
                        "roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back "
-                       "onto one. Tick this to store it once, the way the source disc holds it. Has no effect "
-                       "on a 2D disc.")));
+                       "onto one. It is ticked by itself when the folder holds a 3D disc: the video is then stored once, the "
+                       "way the source disc holds it, and a missing .ssif is rebuilt from the two views. Unticked, the "
+                       "folder is copied as it is, both views and any .ssif files, and the disc stays 3D.")));
         singleCopy3dCheck->setEnabled(false);  // until a 3D folder is chosen (see updateFolderStatus)
         auto* discLabelLabel = new QLabel(tr("Disc label (optional):"), bdmvTab);
         auto* labelEdit = new QLineEdit(bdmvTab);
@@ -1612,8 +1613,9 @@ TsMuxerWindow::TsMuxerWindow()
                     tr("A 3D disc stores its video once and gives it three names: the .ssif and the two .m2ts are the "
                        "same sectors seen three ways. Copying all three by name writes the video twice and "
                        "roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back "
-                       "onto one. Tick this to store it once, the way the source disc holds it. Has no effect "
-                       "on a 2D disc.")));
+                       "onto one. It is ticked by itself when the folder holds a 3D disc: the video is then stored once, the "
+                       "way the source disc holds it, and a missing .ssif is rebuilt from the two views. Unticked, the "
+                       "folder is copied as it is, both views and any .ssif files, and the disc stays 3D.")));
                 discLabelLabel->setText(tr("Disc label (optional):"));
                 labelEdit->setToolTip(
                     wrapTip(tr("Volume label written into the ISO. Leave empty to keep the default.")));
@@ -3151,6 +3153,7 @@ void TsMuxerWindow::trackLVItemChanged(QTableWidgetItem* item)
     // the meta is written from whether that selector is showing.
     updateDvProfileVisible();
     updateMetaLines();
+    updateMux3dLabel();  // a ticked or unticked 3D track makes the disc 3D or 2D
     ui->moveupBtn->setEnabled(ui->trackLV->currentItem() != 0);
     ui->movedownBtn->setEnabled(ui->trackLV->currentItem() != 0);
     ui->removeTrackBtn->setEnabled(ui->trackLV->currentItem() != 0);
@@ -5511,8 +5514,21 @@ void TsMuxerWindow::updateMux3dLabel()
 {
     if (!m_mux3dLabel)
         return;
+    // Unticking the 3D track is how a 2D disc is made from a 3D title: only the left-eye view is muxed, and the
+    // disc gets plain 2D playlists. The line then says so, as the confirmation of that choice.
+    bool mvcTicked = false;
+    for (int i = 0; i < ui->trackLV->rowCount(); ++i)
+    {
+        const auto codecInfo = getCodecInfo(i);
+        if (codecInfo && codecInfo->displayName == "MVC" && ui->trackLV->item(i, 0) &&
+            ui->trackLV->item(i, 0)->checkState() == Qt::Checked)
+            mvcTicked = true;
+    }
     const bool iso = ui->radioButtonBluRayISO->isChecked();
-    if (iso)
+    if (!mvcTicked)
+        m_mux3dLabel->setText(tr("3D track unticked: the disc is made in 2D from the left-eye view, without the "
+                                 "right-eye view or .ssif files."));
+    else if (iso)
         m_mux3dLabel->setText(tr("3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D."));
     else
         m_mux3dLabel->setText(tr("3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made "

@@ -3939,6 +3939,10 @@ Build the ISO anyway?</source>
         <translation>已找到 BDMV 文件夹。</translation>
     </message>
     <message>
+        <source>3D track unticked: the disc is made in 2D from the left-eye view, without the right-eye view or .ssif files.</source>
+        <translation>3D 轨道未勾选：光盘将以左眼视图制作为 2D，不含右眼视图和 .ssif 文件。</translation>
+    </message>
+    <message>
         <source>3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made from it plays in 3D only if the .ssif files are added. Choose Blu-ray ISO, or make the folder into an image on the BDMV folder -&gt; ISO tab, which adds them.</source>
         <translation>检测到 3D 视频 (MVC)：蓝光文件夹不会获得 .ssif 文件，因此由它制作的光盘只有在补上 .ssif 文件后才能 3D 播放。请选择 Blu-ray ISO，或在“BDMV 文件夹 -&gt; ISO”选项卡中把文件夹制成镜像（会补上这些文件）。</translation>
     </message>
@@ -3995,8 +3999,8 @@ Build the ISO anyway?</source>
         <translation>3D 光盘：视频只存储一次，而非两次</translation>
     </message>
     <message>
-        <source>A 3D disc stores its video once and gives it three names: the .ssif and the two .m2ts are the same sectors seen three ways. Copying all three by name writes the video twice and roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back onto one. Tick this to store it once, the way the source disc holds it. Has no effect on a 2D disc.</source>
-        <translation>3D 光盘只保存一份视频，却给它三个名字：.ssif 和两个 .m2ts 是同一批扇区的三种视图。按名称复制这三个文件会把视频写入两次，映像大约会翻倍，这就是从 BD50 取出的 3D 光盘无法再装回 BD50 的原因。勾选此项可像源光盘那样只存储一次。对 2D 光盘无效。</translation>
+        <source>A 3D disc stores its video once and gives it three names: the .ssif and the two .m2ts are the same sectors seen three ways. Copying all three by name writes the video twice and roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back onto one. It is ticked by itself when the folder holds a 3D disc: the video is then stored once, the way the source disc holds it, and a missing .ssif is rebuilt from the two views. Unticked, the folder is copied as it is, both views and any .ssif files, and the disc stays 3D.</source>
+        <translation>3D 光盘只保存一份视频，却给它三个名字：.ssif 和两个 .m2ts 是同一批扇区的三种视图。按名称复制这三个文件会把视频写入两次，映像大约会翻倍，这就是从 BD50 取出的 3D 光盘无法再装回 BD50 的原因。文件夹包含 3D 光盘时会自动勾选：视频像源光盘那样只存储一次，缺少的 .ssif 会根据两个视图重建。不勾选时，文件夹按原样复制，包括两个视图和所有 .ssif 文件，光盘仍为 3D。</translation>
     </message>
     <message>
         <source>Disc label (optional):</source>
