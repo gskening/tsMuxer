@@ -21,6 +21,7 @@
 
 class QTableWidgetItem;
 class QComboBox;
+class QLabel;
 class QCheckBox;
 
 class MuxForm;
@@ -119,6 +120,7 @@ class TsMuxerWindow : public QWidget
     void changeEvent(QEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;
     void updateMaxOffsets();
+    void updateMux3dLabel();
     void updateCustomChapters();
 
     void writeSettings();
@@ -229,6 +231,7 @@ class TsMuxerWindow : public QWidget
     QTimer opacityTimer;
     bool m_updateMeta;
     bool m_3dMode;
+    QLabel* m_mux3dLabel = nullptr;  // says that a 3D (MVC) track gives the disc its .ssif files
     bool m_fileDialogOpen;
     /// When true, custom chapter text was edited by the user; do not overwrite from input file marks.
     bool m_customChaptersUserOverride;

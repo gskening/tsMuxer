@@ -3939,6 +3939,10 @@ Build the ISO anyway?</source>
         <translation>已找到 BDMV 文件夹。</translation>
     </message>
     <message>
+        <source>3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D.</source>
+        <translation>检测到 3D 视频 (MVC)：蓝光光盘将获得其 .ssif 文件，因此可以 3D 播放。</translation>
+    </message>
+    <message>
         <source>3D disc detected: with the 3D box ticked, its 3D video is stored once, as on the disc.</source>
         <translation>检测到 3D 光盘：勾选 3D 选项后，其 3D 视频只存储一次，与光盘相同。</translation>
     </message>

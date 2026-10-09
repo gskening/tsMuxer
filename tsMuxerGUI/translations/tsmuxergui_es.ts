@@ -3940,6 +3940,10 @@ Mantener la imagen en torno a 66 GB (las dos primeras capas) mejora las probabil
         <translation>Carpeta BDMV encontrada.</translation>
     </message>
     <message>
+        <source>3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D.</source>
+        <translation>Vídeo 3D (MVC) detectado: el disco Blu-ray recibe sus archivos .ssif, así que se reproduce en 3D.</translation>
+    </message>
+    <message>
         <source>3D disc detected: with the 3D box ticked, its 3D video is stored once, as on the disc.</source>
         <translation>Disco 3D detectado: con la casilla 3D marcada, su vídeo 3D se almacena una vez, como en el disco.</translation>
     </message>

@@ -2034,6 +2034,12 @@ TsMuxerWindow::TsMuxerWindow()
             metaRow->addWidget(ui->groupBox_2, 1);
             metaRow->addWidget(dlBox, 0, Qt::AlignTop);
             ui->verticalLayout_13->insertLayout(metaIndex, metaRow);
+            // Under it, a line for a 3D track on a Blu-ray output (see updateMux3dLabel).
+            m_mux3dLabel = new QLabel(this);
+            m_mux3dLabel->setWordWrap(true);
+            m_mux3dLabel->setVisible(false);
+            ui->verticalLayout_13->insertWidget(metaIndex + 1, m_mux3dLabel);
+            m_retranslateHooks.push_back([this]() { updateMux3dLabel(); });
         }
         // These options only apply to Blu-ray ISO / folder output (see the meta builder), so show the group
         // only for those output modes and keep it hidden for TS / M2TS / MKV / AVCHD / Demux.
@@ -2062,6 +2068,7 @@ TsMuxerWindow::TsMuxerWindow()
             // output, since the capacity check runs for any disc type, so those stay enabled.
             guardCheck->setEnabled(iso);
             guardSpin->setEnabled(iso && guardCheck->isChecked());
+            updateMux3dLabel();
         };
         updateDlVisibility();
         connect(ui->radioButtonBluRayISO, &QAbstractButton::toggled, dlBox,
@@ -5496,6 +5503,17 @@ void TsMuxerWindow::onOpacityTimer()
     updateBtns(0);
 }
 
+// A 3D (MVC) track in the list and a Blu-ray folder or image as the output: the disc gets its .ssif files, the
+// names under which a 3D player finds both views. Said here so that it is known before the mux starts.
+void TsMuxerWindow::updateMux3dLabel()
+{
+    if (!m_mux3dLabel)
+        return;
+    const bool bluRay = ui->radioButtonBluRay->isChecked() || ui->radioButtonBluRayISO->isChecked();
+    m_mux3dLabel->setText(tr("3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D."));
+    m_mux3dLabel->setVisible(m_3dMode && bluRay && !ui->groupBox_4->isHidden());
+}
+
 void TsMuxerWindow::updateMaxOffsets()
 {
     int maxPGOffsets = 0;
@@ -5524,6 +5542,7 @@ void TsMuxerWindow::updateMaxOffsets()
         ui->offsetsComboBox->setCurrentIndex(oldIndex);
 
     disableUpdatesCnt--;
+    updateMux3dLabel();
 }
 
 bool TsMuxerWindow::eventFilter(QObject* obj, QEvent* event)

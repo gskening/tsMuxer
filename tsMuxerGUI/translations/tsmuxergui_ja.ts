@@ -3939,6 +3939,10 @@ Build the ISO anyway?</source>
         <translation>BDMVフォルダーが見つかりました。</translation>
     </message>
     <message>
+        <source>3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D.</source>
+        <translation>3D 映像 (MVC) を検出しました: Blu-ray ディスクには .ssif ファイルが作成され、3D で再生されます。</translation>
+    </message>
+    <message>
         <source>3D disc detected: with the 3D box ticked, its 3D video is stored once, as on the disc.</source>
         <translation>3D ディスクを検出しました: 3D のチェックを入れると、3D 映像はディスクと同じく 1 回だけ格納されます。</translation>
     </message>

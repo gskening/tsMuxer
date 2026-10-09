@@ -3939,6 +3939,10 @@ Build the ISO anyway?</source>
         <translation>נמצאה תיקיית BDMV.</translation>
     </message>
     <message>
+        <source>3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D.</source>
+        <translation>זוהה וידאו תלת-ממד (MVC): דיסק ה-Blu-ray מקבל את קובצי ה-‎.ssif שלו, ולכן יוצג בתלת-ממד.</translation>
+    </message>
+    <message>
         <source>3D disc detected: with the 3D box ticked, its 3D video is stored once, as on the disc.</source>
         <translation>זוהה דיסק תלת-ממד: כשתיבת התלת-ממד מסומנת, וידאו התלת-ממד שלו מאוחסן פעם אחת, כמו בדיסק.</translation>
     </message>

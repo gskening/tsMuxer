@@ -3939,6 +3939,10 @@ ISO trotzdem erstellen?</translation>
         <translation>BDMV-Ordner gefunden.</translation>
     </message>
     <message>
+        <source>3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D.</source>
+        <translation>3D-Video (MVC) erkannt: Die Blu-ray-Disc erhält ihre .ssif-Dateien und wird so in 3D abgespielt.</translation>
+    </message>
+    <message>
         <source>3D disc detected: with the 3D box ticked, its 3D video is stored once, as on the disc.</source>
         <translation>3D-Disc erkannt: Mit angehakter 3D-Option wird ihr 3D-Video einmal gespeichert, wie auf der Disc.</translation>
     </message>
