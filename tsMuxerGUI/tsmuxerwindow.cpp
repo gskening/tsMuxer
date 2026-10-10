@@ -3451,6 +3451,10 @@ void TsMuxerWindow::updateCustomChapters()
     std::sort(std::begin(mergedChapterList), std::end(mergedChapterList));
     for (auto chapter : mergedChapterList)
         ui->memoChapters->insertPlainText(floatToTime(chapter / 1000.0) + QString('\n'));
+    // The meta line carries this list, and the box's own signal is blocked above, so it is brought up to date here.
+    // After a file was joined or removed, the meta line was refreshed BEFORE this list changed and kept the old one:
+    // the box showed the joined file's chapters, and a mux started then got only the first file's.
+    updateMetaLines();
 }
 
 void splitLines(const QString& str, QList<QString>& strList)
