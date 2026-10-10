@@ -217,6 +217,19 @@ void MuxerManager::preinitMux(const std::string& outFileName, FileFactory* fileF
             si.m_streamReader->applyDiscoveryData(m_discoveryData[i]);
         }
 
+        // A player seeks a disc through the EP map of its clips, and an H.264 picture gets an entry there only where
+        // its group carries the parameter sets (TSMuxer, needSPSForSplit). A stream from MP4 or Matroska holds them
+        // once, ahead of its first picture, so a disc made from one had a single entry and could not be seeked: the
+        // picture froze or the player started over (#646). For disc output they are now repeated before each key
+        // frame where the stream does not repeat them itself, which is what contSPS asks for. A stream that does
+        // repeat them, as every disc does, is left exactly as it is. The second view of a 3D stream keeps its own rule.
+        if (m_bluRayMode)
+        {
+            auto* h264 = dynamic_cast<H264StreamReader*>(si.m_streamReader);
+            if (h264 != nullptr && !h264->isSubStream())
+                h264->setH264SPSCont(true);
+        }
+
         // A language taken from the source container travels under its own key. An explicit lang=
         // is already in m_addParams and must win, so only fill the gap. Keeping it out of "lang"
         // is what stops SingleFileMuxer from renaming demuxed files: that muxer reads only "lang"
