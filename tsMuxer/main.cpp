@@ -2516,6 +2516,10 @@ int main(int argc, char** argv)
                     muxBlankPL(extractFileDir(argv[0]), blurayHelper, mainMuxer->getPidList(), dt, blankNum);
                 }
             }
+            // An image is finished here, before success is reported: finishing can still refuse, when its metadata
+            // area is full, and it used to happen in the destructor after "Mux successful complete", which ended the
+            // program without a message.
+            blurayHelper.close();
 
             checkSourceConsumed(muxerManager);
             LTRACE(LT_INFO, 2, "Mux successful complete");

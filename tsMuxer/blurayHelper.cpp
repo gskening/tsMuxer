@@ -10,6 +10,7 @@
 #include "muxerManager.h"
 #include "pgsStreamReader.h"
 #include "tsMuxer.h"
+#include "vodCoreException.h"
 
 using namespace std;
 
@@ -270,7 +271,24 @@ bool writeBdMovieObjectData(const MuxerManager& muxer, AbstractOutputStream* fil
 
 BlurayHelper::BlurayHelper() : m_dt(), m_isoWriter(nullptr) {}
 
-BlurayHelper::~BlurayHelper() { close(); }
+// The image is finished by close(), which the mux calls before it reports success. Here it is only a last resort,
+// as when the mux fails part way: a refusal while finishing cannot leave a destructor, and it used to end the
+// program on the spot without a word.
+BlurayHelper::~BlurayHelper()
+{
+    try
+    {
+        close();
+    }
+    catch (const std::exception& e)
+    {
+        LTRACE(LT_ERROR, 2, e.what());
+    }
+    catch (const VodCoreException& e)
+    {
+        LTRACE(LT_ERROR, 2, e.m_errStr);
+    }
+}
 
 void BlurayHelper::close()
 {
