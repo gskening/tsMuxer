@@ -58,10 +58,13 @@ int ProgramStreamDemuxer::mpegps_psm_parse(const uint8_t* buff, const uint8_t* e
     const uint8_t* curBuff = buff + 4;
     // int map_stream_id = *curBuff++;
     const int psm_length = (*curBuff << 8) + curBuff[1];
-    if (psm_length > MAX_PES_HEADER_SIZE)
+    // A map cut by the end of a read is kept, with its 6-byte header, in m_tmpBuffer until the rest arrives, so the
+    // whole map has to fit there. The limit used to be the room itself, without the header, and the kept part of a
+    // map at the limit was then up to 6 bytes longer than the room.
+    if (psm_length > MAX_PES_HEADER_SIZE - 6)
     {
-        THROW(ERR_COMMON,
-              "Can't parse Program Stream Map. Too large size " << psm_length << ". Max allowed size 1018 bytes.")
+        THROW(ERR_COMMON, "Can't parse Program Stream Map. Too large size " << psm_length << ". Max allowed size "
+                                                                            << MAX_PES_HEADER_SIZE - 6 << " bytes.")
     }
     if (end - buff < psm_length + 7)
         return -1;
@@ -342,6 +345,12 @@ int ProgramStreamDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSe
         curBuf = MPEGHeader::findNextMarker(curBuf, end);
         discardSize += curBuf - prevBuf;
     }
+    // What is left is a header cut by the end of the read; it is kept until the rest arrives. Nothing longer than the
+    // room for it can be kept, and nothing that fits a program stream is.
+    if (end - curBuf > MAX_PES_HEADER_SIZE)
+        THROW(ERR_COMMON, "Can't parse the program stream: a header cut by the end of a read is "
+                              << end - curBuf << " bytes long, more than the " << MAX_PES_HEADER_SIZE
+                              << " bytes kept for one.")
     m_tmpBufferLen = static_cast<uint32_t>(end - curBuf);
     if (m_tmpBufferLen > 0)
         memmove(m_tmpBuffer, curBuf, end - curBuf);
