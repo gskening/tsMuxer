@@ -40,11 +40,12 @@ int makeUnixOpenFlags(unsigned int oflag)
         {
             sysFlags &= ~O_TRUNC;
         }
+        // Not O_APPEND: that sends every write to the end of the file, whatever the position, and a WAV or W64
+        // file gets its sizes written into its header at the start once its data is written. On Linux and macOS
+        // that patch landed after the audio: the header kept its placeholder sizes and 8 bytes followed the
+        // audio. The file is opened at its end instead (openAtEnd), as on Windows, and a seek then works.
         if (oflag & File::ofAppend)
-        {
-            sysFlags |= O_APPEND;
             sysFlags &= ~O_TRUNC;
-        }
     }
     if (oflag & File::ofCreateNew)
         sysFlags |= O_CREAT | O_EXCL;
@@ -52,12 +53,20 @@ int makeUnixOpenFlags(unsigned int oflag)
 }
 }  // namespace
 
+// An append opens at the end of the file; a seek can still move away from it.
+static void openAtEnd(const int fd, const unsigned int oflag)
+{
+    if (fd != -1 && (oflag & File::ofAppend))
+        lseek(fd, 0, SEEK_END);
+}
+
 File::File() : m_impl(from_fd(-1)), m_pos(0) {}
 
 File::File(const char* fName, unsigned int oflag, unsigned int systemDependentFlags) : m_name(fName), m_pos(0)
 {
     int sysFlags = makeUnixOpenFlags(oflag);
     auto fd = ::open(fName, sysFlags | systemDependentFlags, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+    openAtEnd(fd, oflag);
     if (fd == -1)
     {
         std::ostringstream ss;
@@ -85,6 +94,7 @@ bool File::open(const char* fName, unsigned int oflag, unsigned int systemDepend
     int sysFlags = makeUnixOpenFlags(oflag);
     createDir(extractFileDir(fName), true);
     auto fd = ::open(fName, sysFlags | systemDependentFlags, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+    openAtEnd(fd, oflag);
     m_impl = from_fd(fd);
     return fd != -1;
 }
