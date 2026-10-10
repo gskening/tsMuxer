@@ -1817,6 +1817,32 @@ CheckStreamRez METADemuxer::detectTrackReader(uint8_t* tmpBuffer, int len,
             return rez;
     }
 
+    // The same for video. Every audio probe below runs before the MPEG-2 video one, and on DVD video in a Matroska
+    // the FLAC probe found frames in the picture data by chance: the track was listed and muxed as FLAC (#27). Where
+    // the container names a video codec, that reader is asked first; a wrong name still falls through to the rest.
+    switch (static_cast<StreamType>(containerDataType))
+    {
+    case StreamType::VIDEO_MPEG2:
+        rez = std::make_unique<MPEG2StreamReader>()->checkStream(tmpBuffer, len);
+        break;
+    case StreamType::VIDEO_H264:
+        rez = std::make_unique<H264StreamReader>()->checkStream(tmpBuffer, len);
+        break;
+    case StreamType::VIDEO_H265:
+        rez = std::make_unique<HEVCStreamReader>()->checkStream(tmpBuffer, len);
+        break;
+    case StreamType::VIDEO_H266:
+        rez = std::make_unique<VVCStreamReader>()->checkStream(tmpBuffer, len);
+        break;
+    case StreamType::VIDEO_VC1:
+        rez = std::make_unique<VC1StreamReader>()->checkStream(tmpBuffer, len);
+        break;
+    default:
+        break;
+    }
+    if (rez.codecInfo.codecID)
+        return rez;
+
     auto lpcmReader = std::make_unique<LPCMStreamReader>();
     rez = lpcmReader->checkStream(tmpBuffer, len, containerType, containerDataType, containerStreamIndex);
     if (rez.codecInfo.codecID)

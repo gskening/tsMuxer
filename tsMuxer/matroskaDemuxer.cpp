@@ -2978,6 +2978,17 @@ int MatroskaDemuxer::getTrackType(const MatroskaTrack* track)
     if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_PGS))
         return TRACKTYPE_PGS;
 
+    // The video codecs are named as well, so that detection asks that reader first: MPEG-2 video from a DVD was taken
+    // for FLAC (#27). Detection still checks the data, so a wrong name changes nothing.
+    if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_VIDEO_MPEG2))
+        return static_cast<int>(StreamType::VIDEO_MPEG2);
+    if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_AVC_FOURCC))
+        return static_cast<int>(StreamType::VIDEO_H264);
+    if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_HEVC_FOURCC))
+        return static_cast<int>(StreamType::VIDEO_H265);
+    if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_VVC_FOURCC))
+        return static_cast<int>(StreamType::VIDEO_H266);
+
     return 0;
 }
 

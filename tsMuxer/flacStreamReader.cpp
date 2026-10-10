@@ -2,6 +2,7 @@
 
 #include <fs/systemlog.h>
 
+#include <array>
 #include <cstring>
 #include <sstream>
 
@@ -103,6 +104,25 @@ static uint8_t flac_crc8(const uint8_t* data, int len)
 {
     uint8_t crc = 0;
     for (int i = 0; i < len; i++) crc = kCRC8Table[crc ^ data[i]];
+    return crc;
+}
+
+// CRC-16 of a whole frame (polynomial 0x8005, initial value 0), stored in the last two bytes of every FLAC frame.
+static uint16_t flac_crc16(const uint8_t* data, const size_t len)
+{
+    static const std::array<uint16_t, 256> table = [] {
+        std::array<uint16_t, 256> t{};
+        for (int i = 0; i < 256; ++i)
+        {
+            auto c = static_cast<uint16_t>(i << 8);
+            for (int k = 0; k < 8; ++k)
+                c = (c & 0x8000) ? static_cast<uint16_t>((c << 1) ^ 0x8005) : static_cast<uint16_t>(c << 1);
+            t[i] = c;
+        }
+        return t;
+    }();
+    uint16_t crc = 0;
+    for (size_t i = 0; i < len; ++i) crc = static_cast<uint16_t>((crc << 8) ^ table[(crc >> 8) ^ data[i]]);
     return crc;
 }
 
@@ -361,7 +381,7 @@ static int readUtf8Value(const uint8_t* buf, const uint8_t* end, uint64_t& value
     return len;
 }
 
-int FLACStreamReader::parseFrameHeader(const uint8_t* buff, const uint8_t* end) const
+int FLACStreamReader::parseFrameHeader(const uint8_t* buff, const uint8_t* end, FrameFields* fields) const
 {
     if (end - buff < 5)
         return 0;
@@ -435,7 +455,61 @@ int FLACStreamReader::parseFrameHeader(const uint8_t* buff, const uint8_t* end) 
     if (blockSize <= 0)
         return 0;
 
+    if (fields)
+    {
+        fields->variableBlocks = sync == FLAC_SYNC_VARIABLE;
+        fields->sampleRateCode = sampleRateCode;
+        fields->channels = channelAssign <= 7 ? channelAssign + 1 : 2;
+        fields->sampleSizeCode = bpsCode;
+        fields->number = frameOrSample;
+        fields->blockSize = blockSize;
+    }
     return blockSize;
+}
+
+// While the type of a track is still being worked out, a frame header pattern is not enough. 0xFFF8 followed by fields
+// that pass the header's CRC-8 turns up by chance in other data, about once in every 5 to 10 MB of the MPEG-2 video of
+// a DVD, and with each "frame" measured up to the next such chance match, the ten frames the check asks for were found
+// in a video track, which was then listed and muxed as FLAC (#27). So here a frame counts only when it is a whole FLAC
+// frame: it ends where a next header begins AND its own CRC-16, the last two bytes of every frame, matches there. And
+// it must follow the frame accepted before it: the same blocking strategy, sample rate, channel count and sample size,
+// and the next frame or sample number. Muxing is not changed; this runs only while a track is being identified.
+int FLACStreamReader::testFrameLength(uint8_t* buff, uint8_t* end, const FrameFields& fields)
+{
+    // checkStream measures its first frame twice, and the second time it gets the same answer.
+    if (buff == m_testLastFrame)
+        return m_testLastLen;
+
+    if (m_testPrevValid)
+    {
+        const uint64_t next = m_testPrev.variableBlocks ? m_testPrev.number + m_testPrev.blockSize : m_testPrev.number + 1;
+        if (fields.variableBlocks != m_testPrev.variableBlocks || fields.sampleRateCode != m_testPrev.sampleRateCode ||
+            fields.channels != m_testPrev.channels || fields.sampleSizeCode != m_testPrev.sampleSizeCode ||
+            fields.number != next)
+        {
+            m_testPrevValid = false;
+            return 0;
+        }
+    }
+
+    // The largest frame FLAC allows: 65535 samples of 8 channels at 32 bits, and its headers.
+    constexpr ptrdiff_t MAX_FRAME_BYTES = 65535 * 8 * 4 + 1024;
+    uint8_t* limit = end - buff > MAX_FRAME_BYTES ? buff + MAX_FRAME_BYTES : end;
+    for (uint8_t* p = buff + 4; p + 2 <= limit; p++)
+    {
+        if (p[0] != 0xFF || (p[1] != 0xF8 && p[1] != 0xF9) || parseFrameHeader(p, end) == 0)
+            continue;
+        const auto stored = static_cast<uint16_t>((p[-2] << 8) | p[-1]);
+        if (flac_crc16(buff, static_cast<size_t>(p - 2 - buff)) != stored)
+            continue;  // a header pattern inside this frame, not the start of the next one
+        m_testPrev = fields;
+        m_testPrevValid = true;
+        m_testLastFrame = buff;
+        m_testLastLen = static_cast<int>(p - buff);
+        return m_testLastLen;
+    }
+    m_testPrevValid = false;
+    return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -447,9 +521,18 @@ int FLACStreamReader::decodeFrame(uint8_t* buff, uint8_t* end, int& skipBytes, i
     skipBytes = 0;
     skipBeforeBytes = 0;
 
-    const int blockSize = parseFrameHeader(buff, end);
+    FrameFields fields;
+    const int blockSize = parseFrameHeader(buff, end, &fields);
     if (blockSize == 0)
         return 0;  // not a valid frame
+
+    int testLen = 0;
+    if (m_testMode)
+    {
+        testLen = testFrameLength(buff, end, fields);
+        if (testLen <= 0)
+            return 0;
+    }
 
     m_curBlockSize = blockSize;
 
@@ -470,6 +553,9 @@ int FLACStreamReader::decodeFrame(uint8_t* buff, uint8_t* end, int& skipBytes, i
         if (kBpsTable[bpsCode] > 0)
             m_bitsPerSample = kBpsTable[bpsCode];
     }
+
+    if (m_testMode)
+        return testLen;
 
     // Find the next sync code to determine frame length.
     // FLAC frames end with a 16-bit CRC but the only reliable way to find
