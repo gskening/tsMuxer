@@ -159,6 +159,7 @@ class SRTStreamReader final : public AbstractStreamReader
     static bool strOnlySpace(const std::string& str);
     static bool hasVisibleText(const std::string& text);
     int blankLineEndsCue() const;
+    int nextCueFollows() const;
 };
 
 #endif

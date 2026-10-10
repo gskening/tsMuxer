@@ -155,42 +155,63 @@ int SRTStreamReader::parseText(uint8_t* dataStart, const size_t len)
         if (!detectSrcFormat(dataStart, len, prefixLen))
             return false;
     }
-    uint8_t* cur = dataStart + prefixLen;
+    const uint8_t* cur = dataStart + prefixLen;
     const size_t roundLen = len & (~(m_charSize - 1));
     const uint8_t* end = cur + roundLen;
     const uint8_t* lastProcessedLine = cur;
-    vector<string> rez;
+    const auto isChar = [this](const uint8_t* p, const bool lineFeed)
+    {
+        if (m_charSize == 2)
+            return *reinterpret_cast<const uint16_t*>(p) == (lineFeed ? m_short_N : m_short_R);
+        if (m_charSize == 4)
+            return *reinterpret_cast<const uint32_t*>(p) == (lineFeed ? m_long_N : m_long_R);
+        return *p == (lineFeed ? '\n' : '\r');
+    };
+    // A line ends with an LF, a CR LF, or a CR alone, which is how files from the classic Mac OS end their lines: such
+    // a file used to be one single line, and not one subtitle was read from it. Every CR in front of an LF belongs to
+    // the line end, so a file converted twice (CR CR LF) reads as it was meant. CRs that reach the end of the data wait
+    // for the next block, which may start with their LF; at the end of the file, setBuffer ends the last line itself.
     for (; cur < end; cur += m_charSize)
     {
-        // if (cur[m_splitterOfs] == '\n')
-        if ((m_charSize == 1 && *cur == '\n') || (m_charSize == 2 && *reinterpret_cast<uint16_t*>(cur) == m_short_N) ||
-            (m_charSize == 4 && *reinterpret_cast<uint32_t*>(cur) == m_long_N))
+        const uint8_t* textEnd = cur;
+        if (isChar(cur, true))
         {
-            int32_t x = 0;
-            if (cur >= m_charSize + lastProcessedLine)
-                if ((m_charSize == 1 && cur[-1] == '\r') ||
-                    (m_charSize == 2 && reinterpret_cast<uint16_t*>(cur)[-1] == m_short_R) ||
-                    (m_charSize == 4 && reinterpret_cast<uint32_t*>(cur)[-1] == m_long_R))
-                    x = m_charSize;
-
-            m_sourceText.emplace_back(
-                UtfConverter::toUtf8(lastProcessedLine, cur - lastProcessedLine - x, m_srcFormat));
-            std::string& tmp = m_sourceText.back();
-            if (strOnlySpace(tmp))
-                tmp.clear();
-
-            m_linesRead++;
-            m_origSize.push(static_cast<int32_t>(cur + m_charSize - lastProcessedLine + prefixLen));
-            prefixLen = 0;
-            lastProcessedLine = cur + m_charSize;
+            while (textEnd >= lastProcessedLine + m_charSize && isChar(textEnd - m_charSize, false))
+                textEnd -= m_charSize;
         }
+        else if (isChar(cur, false))
+        {
+            const uint8_t* next = cur + m_charSize;
+            while (next < end && isChar(next, false)) next += m_charSize;
+            if (next >= end)
+                break;
+            if (isChar(next, true))
+            {
+                cur = next - m_charSize;  // the LF ends the line, with these CRs
+                continue;
+            }
+        }
+        else
+            continue;
+
+        m_sourceText.emplace_back(UtfConverter::toUtf8(lastProcessedLine, textEnd - lastProcessedLine, m_srcFormat));
+        std::string& tmp = m_sourceText.back();
+        if (strOnlySpace(tmp))
+            tmp.clear();
+
+        m_linesRead++;
+        m_origSize.push(static_cast<int32_t>(cur + m_charSize - lastProcessedLine + prefixLen));
+        prefixLen = 0;
+        lastProcessedLine = cur + m_charSize;
     }
     return static_cast<int>(lastProcessedLine - dataStart);
 }
 
+// A line of spaces, or of tabs, is blank. A tab used to make it text, so a line holding one tab between two subtitles
+// did not end the first, and every subtitle up to the next truly blank line was drawn as one.
 bool SRTStreamReader::strOnlySpace(const std::string& str)
 {
-    return std::all_of(str.begin(), str.end(), [](const char c) { return c == ' '; });
+    return std::all_of(str.begin(), str.end(), [](const char c) { return c == ' ' || c == '\t'; });
 }
 
 // Whether a subtitle has something to show: a character outside its tags that is not a space, a tab, a
@@ -643,10 +664,19 @@ bool SRTStreamReader::readNextCue()
             return false;
     }
 
+    bool blankLineEnds = true;  // a subtitle ends at a blank line, which goes with it
     for (;;)
     {
         while (!m_sourceText.empty() && !m_sourceText.front().empty())
         {
+            const int next = nextCueFollows();
+            if (next < 0)
+                return false;  // the next lines have not arrived yet
+            if (next > 0)
+            {
+                blankLineEnds = false;
+                break;
+            }
             if (!m_renderedText.empty())
                 m_renderedText += '\n';
             m_renderedText += m_sourceText.front();
@@ -654,7 +684,7 @@ bool SRTStreamReader::readNextCue()
             m_processedSize += m_origSize.front();
             m_origSize.pop();
         }
-        if (m_sourceText.empty())
+        if (!blankLineEnds || m_sourceText.empty())
             break;
         // A blank line. SRT has no way to write an empty line inside a subtitle, and files that
         // contain one anyway are common: what follows it is then neither a counter nor a timing
@@ -687,9 +717,12 @@ bool SRTStreamReader::readNextCue()
         }
         return false;
     }
-    m_sourceText.pop_front();  // delete empty line (messages separator)
-    m_processedSize += m_origSize.front();
-    m_origSize.pop();
+    if (blankLineEnds)
+    {
+        m_sourceText.pop_front();  // delete empty line (messages separator)
+        m_processedSize += m_origSize.front();
+        m_origSize.pop();
+    }
     addCue(m_renderedText, m_inTime, m_outTime);
     m_state = ParseState::PARSE_FIRST_LINE;
     m_renderedText.clear();
@@ -1013,6 +1046,25 @@ int SRTStreamReader::blankLineEndsCue() const
             return 0;
     }
     return m_lastBlock ? 1 : -1;
+}
+
+// Whether the next subtitle begins at the line in front: a timing line, or a counter (a number alone on its line) right
+// before a timing line. Files leave out the blank line between two subtitles often enough, and the next subtitle's
+// counter and timing line were then drawn as more text of the one before, with every subtitle after it up to the next
+// blank line. 1 when it begins there, 0 when the line is text, -1 when the line that decides it has not arrived yet.
+// Only the number right before the timing line is taken for the counter, so a number in the text stays text.
+int SRTStreamReader::nextCueFollows() const
+{
+    const std::string& line = m_sourceText.front();
+    if (isTimingLine(line))
+        return 1;
+    const bool counter = !line.empty() && std::all_of(line.begin(), line.end(),
+                                                      [](const char c) { return (c >= '0' && c <= '9') || c == ' '; });
+    if (!counter)
+        return 0;
+    if (m_sourceText.size() < 2)
+        return m_lastBlock || m_containerType != ContainerType::ctNone ? 0 : -1;
+    return isTimingLine(m_sourceText[1]) ? 1 : 0;
 }
 
 bool SRTStreamReader::parseTime(const string& text)
