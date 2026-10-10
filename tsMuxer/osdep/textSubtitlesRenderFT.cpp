@@ -47,15 +47,6 @@ std::map<std::string, std::string> TextSubtitlesRenderFT::m_fontNameToFile;
 constexpr double PI = 3.1415926f;
 constexpr double angle = -PI / 10.0f;
 
-uint32_t convertColor(uint32_t color)
-{
-    const auto arr = reinterpret_cast<uint8_t*>(&color);
-    const uint8_t tmp = arr[0];
-    arr[0] = arr[2];
-    arr[2] = tmp;
-    return color;
-}
-
 TextSubtitlesRenderFT::TextSubtitlesRenderFT() : TextSubtitlesRender()
 {
     static bool initialized = false;
@@ -336,7 +327,9 @@ void TextSubtitlesRenderFT::drawHorLine(int left, int right, int top, const RECT
         right = rect->right;
     const int offset = m_width * top + left;
     auto dst = reinterpret_cast<uint32_t*>(m_pData) + offset;
-    for (int x = left; x <= right; ++x) *dst++ = convertColor(m_font.m_color);
+    // The picture holds each pixel as 0xAARRGGBB, the form of the font colour itself. The colour used to have its red
+    // and blue exchanged on the way, so an underline was drawn blue where the text asked for red.
+    for (int x = left; x <= right; ++x) *dst++ = m_font.m_color;
 }
 
 struct Pixel32
@@ -519,7 +512,7 @@ void RenderGlyph(const FT_Library& library, const uint32_t ch, const FT_Face& fa
                         const auto dst = reinterpret_cast<Pixel32*>(dstData) + offset;
                         if (*reinterpret_cast<uint32_t*>(dst) == 0)
                             *dst = Pixel32(
-                                outlineColOut.r, outlineColOut.g, outlineColOut.b,
+                                outlineColOut.b, outlineColOut.g, outlineColOut.r,
                                 static_cast<uint8_t>(static_cast<float>(span.coverage * outlineColOut.a) / 255.0F));
                     }
                 }
@@ -536,7 +529,7 @@ void RenderGlyph(const FT_Library& library, const uint32_t ch, const FT_Face& fa
                     {
                         const int offset = y * width + x;
                         Pixel32* dst = reinterpret_cast<Pixel32*>(dstData) + offset;
-                        *dst = Pixel32(outlineColIner.r, outlineColIner.g, outlineColIner.b, span.coverage);
+                        *dst = Pixel32(outlineColIner.b, outlineColIner.g, outlineColIner.r, span.coverage);
                     }
                 }
             }
@@ -554,7 +547,9 @@ void RenderGlyph(const FT_Library& library, const uint32_t ch, const FT_Face& fa
                         const int offset = y * width + x;
                         const auto dst = reinterpret_cast<Pixel32*>(dstData) + offset;
 
-                        const auto src = Pixel32(fontCol.r, fontCol.g, fontCol.b, span.coverage);
+                        // Pixel32 takes blue first. The colours were passed red first, so red and blue changed
+                        // places: a subtitle asked for in red came out blue on Linux and macOS.
+                        const auto src = Pixel32(fontCol.b, fontCol.g, fontCol.r, span.coverage);
                         dst->r = static_cast<uint8_t>(static_cast<float>(dst->r + (src.r - dst->r) * src.a) / 255.0f);
                         dst->g = static_cast<uint8_t>(static_cast<float>(dst->g + (src.g - dst->g) * src.a) / 255.0f);
                         dst->b = static_cast<uint8_t>(static_cast<float>(dst->b + (src.b - dst->b) * src.a) / 255.0f);
