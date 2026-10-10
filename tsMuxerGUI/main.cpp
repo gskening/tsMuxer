@@ -2,6 +2,7 @@
 #include <QFileInfo>
 #include <QUrl>
 
+#include "systemcolours.h"
 #include "tsmuxerwindow.h"
 
 int main(int argc, char* argv[])
@@ -9,6 +10,8 @@ int main(int argc, char* argv[])
     QApplication app(argc, argv);
     app.setOrganizationName("Network Optix");
     app.setApplicationName("tsMuxeR");
+    // Before any window exists. On Windows 7 Qt paints selections black; see systemcolours.cpp.
+    useSystemColoursWhereQtHasNone();
     TsMuxerWindow win;
     win.show();
     QList<QUrl> files;

@@ -78,6 +78,7 @@ set(tsmuxer_gui_sources
   checkboxedheaderview.cpp
   images.qrc
   fontsettingstablemodel.cpp
+  systemcolours.cpp
   ${QM_FILES}
   ${CMAKE_CURRENT_BINARY_DIR}/${lang_qrc}
 )

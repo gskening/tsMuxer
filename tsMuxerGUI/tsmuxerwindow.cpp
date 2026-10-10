@@ -4786,12 +4786,24 @@ void TsMuxerWindow::onTrackContextMenu(const QPoint& pos)
     // theme's near-white ground, and the items of this menu could not be read (#27). Taking ground and text from
     // the same palette gives the scheme's own pair, whatever it is; on the default scheme the menu looks the same
     // but for a flatter frame.
-    menu.setStyleSheet(QStringLiteral(
-        "QMenu { background-color: palette(window); color: palette(window-text); border: 1px solid palette(mid); }"
-        "QMenu::item { padding: 3px 24px 3px 20px; }"
-        "QMenu::item:selected { background-color: palette(highlight); color: palette(highlighted-text); }"
-        "QMenu::item:disabled { color: palette(mid); }"
-        "QMenu::separator { height: 1px; background: palette(mid); margin: 3px 6px; }"));
+    // palette() in a style sheet is the application palette. On Windows 7 Qt has no selection colour of its own
+    // there, and the entry under the mouse is in the Selected Items colours only because main.cpp calls
+    // useSystemColoursWhereQtHasNone() (systemcolours.cpp); without that call it is a black bar.
+    // A disabled entry is drawn halfway between text and ground, as Qt's own Windows palette draws disabled text.
+    // palette(mid) is darker than the ground of a dark scheme, and the disabled entries could not be seen there.
+    const QPalette pal = QGuiApplication::palette();
+    const QColor ink = pal.color(QPalette::WindowText);
+    const QColor ground = pal.color(QPalette::Window);
+    const QColor disabledInk((ink.red() + ground.red()) / 2, (ink.green() + ground.green()) / 2,
+                             (ink.blue() + ground.blue()) / 2);
+    menu.setStyleSheet(
+        QStringLiteral(
+            "QMenu { background-color: palette(window); color: palette(window-text); border: 1px solid palette(mid); }"
+            "QMenu::item { padding: 3px 24px 3px 20px; }"
+            "QMenu::item:selected { background-color: palette(highlight); color: palette(highlighted-text); }"
+            "QMenu::item:disabled { color: %1; }"
+            "QMenu::separator { height: 1px; background: palette(mid); margin: 3px 6px; }")
+            .arg(disabledInk.name()));
 #endif
     QAction* checkType = menu.addAction(tr("Check all tracks of this type"));
     QAction* uncheckType = menu.addAction(tr("Uncheck all tracks of this type"));
