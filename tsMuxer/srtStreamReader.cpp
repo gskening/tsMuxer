@@ -191,8 +191,10 @@ int SRTStreamReader::parseText(uint8_t* dataStart, const size_t len)
         if (!detectSrcFormat(dataStart, len, prefixLen))
             return false;
     }
+    // The data ends at dataStart + len. The end used to be counted from after the byte order mark, so the first block
+    // of a file that has one was scanned that many bytes past its end, through whatever the buffer held there.
     const uint8_t* cur = dataStart + prefixLen;
-    const size_t roundLen = len & (~(m_charSize - 1));
+    const size_t roundLen = (len - prefixLen) & ~(static_cast<size_t>(m_charSize) - 1);
     const uint8_t* end = cur + roundLen;
     const uint8_t* lastProcessedLine = cur;
     const auto isChar = [this](const uint8_t* p, const bool lineFeed)
