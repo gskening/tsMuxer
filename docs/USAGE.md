@@ -293,7 +293,7 @@ Parameter           | Description
 --mplsOffset        | The number of the first MPLS file. Used for BD disc mode.
 --m2tsOffset        | The number of the first M2TS file. Used for BD disc mode.
 --insertBlankPL     | Add an additional short playlist.  Used for cropped video muxed to BD disc.
---blankOffset       | Blank playlist number.
+--blankOffset       | Blank playlist number, 0 to 1999, 1900 if not set. Its clip gets the same number, so it must differ from --mplsOffset and from the main title's clips (from --m2tsOffset on, one a part when the output is split).
 --label             | Disk label when muxing to ISO.
 --extra-iso-space   | Allocate extra space in 64K units for ISO metadata (file and directory names). Normally, tsMuxeR allocates this space automatically, and for a split it counts the parts from the split size, the split length or the chapters. A split it cannot count, such as --split-duration on a source that states no length, may need this option. When the space is too small, the mux ends with a message saying so.
 --constant-iso-hdr  | Generates an ISO header that does not depend on the program version or the current time. Normally, the ISO header's "application ID", "implementation ID", and "volume ID" fields are set to strings containing the program version and/or a random number, while the access/modification/creation times of the files in the image are set to the current time. This option disables this behaviour by filling these fields with hardcoded values and setting the file times to the equivalent of `Wed 1 Jul 20:00:00 UTC 2020` in the local timezone. Using this option is not recommended for normal usage, as it is meant only for testing ISO output validity.

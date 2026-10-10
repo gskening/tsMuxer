@@ -111,24 +111,26 @@ DiskType checkBluRayMux(const char* metaFileName, int& autoChapterLen, vector<do
                     if (paramPair.size() < 2)
                         THROW(ERR_COMMON, "Missing value for " << paramPair[0])
                     firstMplsOffset = strToInt32(paramPair[1].c_str());
-                    if (firstMplsOffset > 1999)
-                        THROW(ERR_COMMON, "Too large m2ts offset " << firstMplsOffset)
+                    if (firstMplsOffset < 0 || firstMplsOffset > 1999)
+                        THROW(ERR_COMMON,
+                              "The playlist number of --mplsOffset must be 0 to 1999, not " << firstMplsOffset)
                 }
                 else if (paramPair[0] == "--blankOffset")
                 {
                     if (paramPair.size() < 2)
                         THROW(ERR_COMMON, "Missing value for " << paramPair[0])
                     blankNum = strToInt32(paramPair[1].c_str());
-                    if (blankNum > 1999)
-                        THROW(ERR_COMMON, "Too large black playlist offset " << blankNum)
+                    if (blankNum < 0 || blankNum > 1999)
+                        THROW(ERR_COMMON,
+                              "The blank playlist number of --blankOffset must be 0 to 1999, not " << blankNum)
                 }
                 else if (paramPair[0] == "--m2tsOffset")
                 {
                     if (paramPair.size() < 2)
                         THROW(ERR_COMMON, "Missing value for " << paramPair[0])
                     firstM2tsOffset = strToInt32(paramPair[1].c_str());
-                    if (firstM2tsOffset > 99999)
-                        THROW(ERR_COMMON, "Too large m2ts offset " << firstM2tsOffset)
+                    if (firstM2tsOffset < 0 || firstM2tsOffset > 99999)
+                        THROW(ERR_COMMON, "The clip number of --m2tsOffset must be 0 to 99999, not " << firstM2tsOffset)
                 }
                 else if (paramPair[0] == "--insertBlankPL")
                     insertBlankPL = true;
@@ -155,7 +157,43 @@ DiskType checkBluRayMux(const char* metaFileName, int& autoChapterLen, vector<do
 
         file.readLine(str);
     }
+
+    // The blank playlist is written under its number twice: as a playlist and as the clip it plays. The same number as
+    // the main playlist, or as the main title's first clip, replaced that file without a word (in an image, the blank
+    // was added to it). Both are known now, before anything is written. A clip of a later part of a split is known
+    // only after the mux, and is checked there (blankPlaylistClash). A 3D disc gets no blank playlist.
+    if (result != DiskType::NONE && insertBlankPL && !stereoMode)
+    {
+        if (blankNum == firstMplsOffset)
+            THROW(ERR_COMMON,
+                  "The blank playlist (--blankOffset) and the main playlist (--mplsOffset) both have the number "
+                      << strPadLeft(int32ToStr(blankNum), 5, '0')
+                      << ", and the blank one would replace the main one. Give --blankOffset another number.")
+        if (blankNum == firstM2tsOffset)
+            THROW(ERR_COMMON,
+                  "The blank playlist's clip (--blankOffset) and the first clip of the main title "
+                  "(--m2tsOffset) both have the number "
+                      << strPadLeft(int32ToStr(blankNum), 5, '0')
+                      << ", and the blank one would replace it. Give --blankOffset a number that the main "
+                         "title's clips do not use.")
+    }
     return result;
+}
+
+// The blank playlist's clip takes the number of --blankOffset. A split gives the main title one clip a part, numbered
+// on from --m2tsOffset, so a blank number that is one of them would replace that part. Checked before the blank is
+// written; the rest of the disc is complete by then.
+static void blankPlaylistClash(const TSMuxer& mainMuxer, const int blankNum)
+{
+    const int first = mainMuxer.getFirstFileNum();
+    const int last = first + static_cast<int>(mainMuxer.splitFileCnt()) - 1;
+    if (blankNum >= first && blankNum <= last)
+        THROW(ERR_COMMON, "The blank playlist was not written: its clip number "
+                              << strPadLeft(int32ToStr(blankNum), 5, '0')
+                              << " (--blankOffset) is one of the main title's clips, "
+                              << strPadLeft(int32ToStr(first), 5, '0') << " to " << strPadLeft(int32ToStr(last), 5, '0')
+                              << ", and would have replaced it. The rest of the disc is complete. Give --blankOffset a "
+                                 "number outside that range.")
 }
 
 // A clip of a playlist after the first: the media file to probe and its clip info.
@@ -902,7 +940,10 @@ All parameters in this group start with two dashes:
 --m2tsOffset          The number of the first M2TS file.  Used for BD disc mode.
 --insertBlankPL       Add an additional short playlist. Used for cropped video
                       muxed to BD disc.
---blankOffset         Blank playlist number.
+--blankOffset         Blank playlist number, 0 to 1999, 1900 if not set. Its clip
+                      gets the same number, so it must differ from --mplsOffset
+                      and from the main title's clips (from --m2tsOffset on, one
+                      a part when the output is split).
 --label               Disk label when muxing to ISO.
 --extra-iso-space     Allocate extra space in 64K units for ISO metadata (file
                       and directory names). Normally, tsMuxeR allocates this space
@@ -2515,6 +2556,7 @@ int main(int argc, char** argv)
 
                 if (insertBlankPL && mainMuxer && !subMuxer)
                 {
+                    blankPlaylistClash(*mainMuxer, blankNum);
                     LTRACE(LT_INFO, 2, "Adding blank play list");
                     muxBlankPL(extractFileDir(argv[0]), blurayHelper, mainMuxer->getPidList(), dt, blankNum);
                 }
