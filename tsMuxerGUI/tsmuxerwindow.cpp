@@ -3472,12 +3472,44 @@ void TsMuxerWindow::addLines(const QByteArray& arr, QList<QString>& outList, boo
     }
 }
 
-void TsMuxerWindow::readFromStdout() { addLines(proc.readAllStandardOutput(), procStdOutput, false); }
+// A read gives whatever the pipe holds at that moment, and that can end in the middle of a line, or even in the middle
+// of one character of the UTF-8 text. Each read used to be taken as whole lines, so a line cut by a read was shown as
+// two (15 times in one long mux), a progress line cut that way could set a wrong value for a moment, and a cut
+// character became a replacement mark. The unfinished end now waits for the next read; whatever is left when the
+// process ends is taken as it is (flushPendingOutput).
+static QByteArray takeCompleteLines(QByteArray& pending, const QByteArray& data)
+{
+    pending += data;
+    const auto end = pending.lastIndexOf('\n');
+    if (end < 0)
+        return {};
+    QByteArray lines = pending.left(end + 1);
+    pending.remove(0, end + 1);
+    return lines;
+}
+
+void TsMuxerWindow::readFromStdout()
+{
+    const QByteArray lines = takeCompleteLines(m_pendingStdOut, proc.readAllStandardOutput());
+    if (!lines.isEmpty())
+        addLines(lines, procStdOutput, false);
+}
 
 void TsMuxerWindow::readFromStderr()
 {
-    QByteArray data(proc.readAllStandardError());
-    addLines(data, procErrOutput, true);
+    const QByteArray lines = takeCompleteLines(m_pendingStdErr, proc.readAllStandardError());
+    if (!lines.isEmpty())
+        addLines(lines, procErrOutput, true);
+}
+
+void TsMuxerWindow::flushPendingOutput()
+{
+    if (!m_pendingStdOut.isEmpty())
+        addLines(m_pendingStdOut, procStdOutput, false);
+    if (!m_pendingStdErr.isEmpty())
+        addLines(m_pendingStdErr, procErrOutput, true);
+    m_pendingStdOut.clear();
+    m_pendingStdErr.clear();
 }
 
 void TsMuxerWindow::myPlaySound(const QString& fileName)
@@ -3508,6 +3540,7 @@ void TsMuxerWindow::myPlaySound(const QString& fileName)
 
 void TsMuxerWindow::onProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
 {
+    flushPendingOutput();
     processFinished = true;
     if (!metaName.isEmpty())
     {
@@ -3533,6 +3566,7 @@ void TsMuxerWindow::onProcessFinished(int exitCode, QProcess::ExitStatus exitSta
 
 void TsMuxerWindow::onProcessError(QProcess::ProcessError error)
 {
+    flushPendingOutput();
     processExitCode = -1;
     if (!metaName.isEmpty())
     {
@@ -3611,6 +3645,8 @@ void TsMuxerWindow::tsMuxerExecute(const QStringList& args)
     ui->buttonMux->setEnabled(false);
     procStdOutput.clear();
     procErrOutput.clear();
+    m_pendingStdOut.clear();
+    m_pendingStdErr.clear();
     processFinished = false;
     processExitCode = -1;
     proc.start(exePath, allArgs);

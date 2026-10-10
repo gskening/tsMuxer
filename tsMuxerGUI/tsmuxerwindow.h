@@ -143,6 +143,7 @@ class TsMuxerWindow : public QWidget
     bool checkFileDuplicate(const QString& fileName);
     void tsMuxerExecute(const QStringList& args);
     void addLines(const QByteArray& arr, QList<QString>& outList, bool isError);
+    void flushPendingOutput();
     void doAppendInt(const QString& fileName, const QString& parentFileName, double duration, bool doublePrefix,
                      MplsType mplsRole);
     bool isDiskOutput() const;
@@ -214,6 +215,8 @@ class TsMuxerWindow : public QWidget
     QProcess proc;
     QList<QString> procStdOutput;
     QList<QString> procErrOutput;
+    QByteArray m_pendingStdOut;  // the end of the last read, when the read stopped inside a line
+    QByteArray m_pendingStdErr;
     bool outFileNameModified;
     QString oldFileName;
     bool outFileNameDisableChange;
