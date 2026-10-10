@@ -162,10 +162,30 @@ int VVCStreamReader::getTSDescriptor(uint8_t* dstBuff, bool blurayMode, const bo
     *dstBuff++ = static_cast<uint8_t>(TSDescriptorTag::VVC);
     uint8_t* descLength = dstBuff++;  // descriptor length, filled at the end
     *dstBuff++ = static_cast<uint8_t>(m_sps->profile_idc << 1 | m_sps->tier_flag);
-    *dstBuff++ = m_sps->ptl_num_sub_profiles;
-    auto bufPos = reinterpret_cast<uint32_t*>(dstBuff);
-    for (const auto i : m_sps->general_sub_profile_idc) *bufPos++ = i;
-    dstBuff = reinterpret_cast<uint8_t*>(bufPos);
+    // Each sub-profile takes 4 bytes, and the descriptor has to fit the room kept for a track's descriptors (8 bytes
+    // and 30 sub-profiles). A stream with more had its list written past that room. It is left out of the descriptor
+    // then, as a count of 0, which the standard allows; the stream itself still carries it. The values are 32 bit
+    // numbers in the order H.222.0 gives, most significant byte first; they were written the other way round.
+    constexpr size_t MAX_SUB_PROFILES = (TS_ES_INFO_MAX - 8) / 4;
+    const size_t subProfiles = m_sps->general_sub_profile_idc.size();
+    if (subProfiles > MAX_SUB_PROFILES && !m_subProfilesWarned)
+    {
+        LTRACE(LT_WARN, 2,
+               "Warning: the VVC stream names " << subProfiles << " sub-profiles, more than the " << MAX_SUB_PROFILES
+                                                << " a transport stream descriptor has room for, so they are not "
+                                                   "listed in it.");
+        m_subProfilesWarned = true;
+    }
+    const size_t listed = subProfiles > MAX_SUB_PROFILES ? 0 : subProfiles;
+    *dstBuff++ = static_cast<uint8_t>(listed);
+    for (size_t i = 0; i < listed; ++i)
+    {
+        const uint32_t value = m_sps->general_sub_profile_idc[i];
+        *dstBuff++ = static_cast<uint8_t>(value >> 24);
+        *dstBuff++ = static_cast<uint8_t>(value >> 16);
+        *dstBuff++ = static_cast<uint8_t>(value >> 8);
+        *dstBuff++ = static_cast<uint8_t>(value);
+    }
     *dstBuff++ =
         static_cast<uint8_t>(m_sps->progressive_source_flag << 7 | m_sps->interlaced_source_flag << 6 |
                              m_sps->non_packed_constraint_flag << 5 | m_sps->ptl_frame_only_constraint_flag << 4);

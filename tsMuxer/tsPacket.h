@@ -8,6 +8,7 @@
 
 #include "avPacket.h"
 #include "bitStream.h"
+#include "vodCoreException.h"
 #include "vod_common.h"
 
 // H.222 Table 2-45 - Program and program element descriptor
@@ -230,6 +231,9 @@ struct PMTIndexData
 
 typedef std::map<uint64_t, PMTIndexData> PMTIndex;
 
+// The room kept for the descriptors of one track in the program map. getTSDescriptor writes no more than this.
+static constexpr int TS_ES_INFO_MAX = 128;
+
 struct PMTStreamInfo final
 {
     PMTStreamInfo()
@@ -256,6 +260,10 @@ struct PMTStreamInfo final
     {
         m_streamType = streamType;
         m_pid = pid;
+        if (esInfoLen > TS_ES_INFO_MAX)
+            THROW(ERR_COMMON, "The descriptors of the track on PID " << pid << " take " << esInfoLen
+                                                                     << " bytes, more than the " << TS_ES_INFO_MAX
+                                                                     << " kept for them.")
         if (esInfoLen > 0)  // the callers pass no data at all when there is none
             memcpy(m_esInfoData, esInfoData, esInfoLen);
         m_esInfoLen = esInfoLen;
@@ -274,7 +282,7 @@ struct PMTStreamInfo final
     int m_pid;
     int m_esInfoLen;
     int m_pmtPID;
-    uint8_t m_esInfoData[128];
+    uint8_t m_esInfoData[TS_ES_INFO_MAX];
     char m_lang[4];
     bool isSecondary;
     bool isDvEnhancement;

@@ -494,7 +494,7 @@ uint32_t TS_program_map_section::serialize(uint8_t* buffer, const int max_buf_si
         // when the OpusHead is parsed after the initial PMT write.
         int curEsInfoLen = si.m_esInfoLen;
         const uint8_t* curEsInfoData = si.m_esInfoData;
-        uint8_t refreshedDescr[128];
+        uint8_t refreshedDescr[TS_ES_INFO_MAX];
         if (si.m_codecReader != nullptr)
         {
             const int freshLen = si.m_codecReader->getTSDescriptor(refreshedDescr, blurayMode, hdmvDescriptors);

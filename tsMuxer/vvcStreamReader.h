@@ -52,6 +52,7 @@ class VVCStreamReader final : public MPEGStreamReader
     VvcPpsUnit* m_pps;
     VvcSliceHeader* m_slice;
     bool m_firstFrame;
+    bool m_subProfilesWarned = false;  // the warning that the sub-profiles do not fit the descriptor was given
 
     int m_frameNum;
     int m_fullPicOrder;
