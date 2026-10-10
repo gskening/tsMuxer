@@ -8,7 +8,7 @@ More fixes like these will follow, because not everything can be found at once. 
 
 **If something goes wrong, please report it** with the bug report form on GitHub, and include as much as you can: the version line and the full log, the meta file (the text in the Meta file box of the window), what you expected and what happened instead, and the player you used. A short sample of the source helps most.
 
-**There is no Intel macOS build this time either.** Homebrew has dropped support for Intel Macs, and the Intel build gets its font library from it, so that half of the macOS job still does not run. Apple Silicon is unaffected and is here as usual. If you are on an Intel Mac, 2.18.14 is still available and still works.
+**The Intel macOS build is back, and Mac users are asked to test.** Homebrew no longer supports Intel Macs, and the Intel build took its font library from it, so 2.18.15 and 2.18.16 came for Apple Silicon only. The Intel build now makes that library itself. It has been built and checked, but it has not been run on an Intel Mac, because no Mac is available here. If you have an Intel Mac, please try it and report whether it works. If it does not, 2.18.14 is still available and still works. On any Mac, please also try changing the subtitle font and colour in the window, and report what happens: that could not be tested here either.
 
 ### Worth acting on
 
