@@ -2108,20 +2108,27 @@ void MPLSParser::parseSubPathEntryExtension(uint8_t* data, const uint32_t dataLe
             if (type == 8 || type == 9)
             {
                 reader.skipBits(24);
+                // The dependent-view clips used to go into one flat list, every sub play item's clip and
+                // every extra clip entry of a multi-clip sub play item alike, and the list is read by play
+                // item index. With extra entries (3D with angles), or sub play items that are not one per
+                // play item, every later play item would have got another play item's dependent clip
+                // (T2-F1). Each play item now gets the clip of the sub play item that names it in its
+                // sync_PlayItem_id. The extra entries are the other angles' clips; the main path is read at
+                // its first angle, so the first clip is the one that goes with it.
                 const auto subPlayItems = reader.getBits<uint8_t>(8);
                 for (int i = 0; i < subPlayItems; ++i)
                 {
                     reader.skipBits(16);
                     char clip_Information_file_name[6];
                     CLPIStreamInfo::readString(clip_Information_file_name, reader, 5);
-                    m_mvcFiles.emplace_back(clip_Information_file_name);
+                    const std::string clip = clip_Information_file_name;
                     reader.skipBits(32);  // clip codec identifier
                     reader.skipBits(31);  // reserved, condition
                     const bool isMulticlip = reader.getBit();
                     reader.skipBits(8);   // ref to stc id
                     reader.skipBits(32);  // in time
                     reader.skipBits(32);  // out time
-                    reader.skipBits(16);  // sync play item id
+                    const auto syncPlayItem = reader.getBits<uint16_t>(16);
                     reader.skipBits(32);  // sync start
                     if (isMulticlip)
                     {
@@ -2130,11 +2137,16 @@ void MPLSParser::parseSubPathEntryExtension(uint8_t* data, const uint32_t dataLe
                         for (int j = 1; j < numberOfClipEntries; ++j)
                         {
                             CLPIStreamInfo::readString(clip_Information_file_name, reader, 5);
-                            m_mvcFiles.emplace_back(clip_Information_file_name);
                             reader.skipBits(32);  // clip codec identifier
                             reader.skipBits(8);   // ref to stc id
                         }
                     }
+                    if (syncPlayItem >= 1000)  // a playlist has at most 999 play items
+                        continue;
+                    if (syncPlayItem >= m_mvcFiles.size())
+                        m_mvcFiles.resize(syncPlayItem + 1);
+                    if (m_mvcFiles[syncPlayItem].empty())
+                        m_mvcFiles[syncPlayItem] = clip;
                 }
             }
         }

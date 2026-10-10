@@ -717,7 +717,8 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
                               "Current playlist file doesn't has MVC track info. Please, remove MVC track from the "
                               "track list")
                     }
-                    if (mplsInfo.m_mvcFiles.size() <= i)
+                    // An empty entry is a play item that no sub play item of the 3D sub path names.
+                    if (mplsInfo.m_mvcFiles.size() <= i || mplsInfo.m_mvcFiles[i].empty())
                         THROW(ERR_INVALID_CODEC_FORMAT,
                               "Bad playlist file: number of CLPI files for AVC and VMC parts do not match")
                     playItemName = mplsInfo.m_mvcFiles[i];
