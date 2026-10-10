@@ -1265,7 +1265,7 @@ int64_t METADemuxer::statedDurationNano()
             for (const auto& item : cached->second.m_playItems)
                 ticks += static_cast<int64_t>(item.OUT_time) - item.IN_time;
         }
-        longest = (std::max)(longest, ticks * 1000000000LL / 45000LL);
+        longest = (std::max)(longest, static_cast<int64_t>(ticks * 1000000000LL / 45000LL));
     }
     for (auto& [name, demuxerData] : m_containerReader.m_demuxers)
         if (demuxerData.m_demuxer)

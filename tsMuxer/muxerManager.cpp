@@ -404,7 +404,8 @@ int MuxerManager::getExtraISOBlocks()
         const int64_t fromNano = m_cutStart > 0 ? toNano(m_cutStart) : 0;
         const int64_t toEndNano = m_cutEnd > 0 ? toNano(m_cutEnd) : m_metaDemuxer.statedDurationNano();
         if (toEndNano > fromNano)
-            parts = (std::max)(parts, (toEndNano - fromNano) / (m_isoSplitSeconds * 1000000000LL) + 1);
+            parts = (std::max)(parts,
+                               static_cast<int64_t>((toEndNano - fromNano) / (m_isoSplitSeconds * 1000000000LL) + 1));
     }
     if (m_isoSplitChapters)
     {
