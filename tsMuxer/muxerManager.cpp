@@ -1,6 +1,8 @@
 #include "muxerManager.h"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include <fs/systemlog.h>
 #include "fs/textfile.h"
@@ -157,7 +159,7 @@ void MuxerManager::preinitMux(const std::string& outFileName, FileFactory* fileF
                     // The name comes along with the time. It used to be dropped here, and a
                     // nameless chapter is one this program cannot read back: see
                     // matroskaDemuxer.cpp, which requires a title before it keeps a chapter.
-                    m_chapterInfo = m_metaDemuxer.getChapters();
+                    m_chapterInfo = sourceChapters();
                     for (const auto& chapter : m_chapterInfo)
                         m_chapters.push_back(static_cast<double>(chapter.start) / 1e9);
                 }
@@ -310,9 +312,51 @@ void MuxerManager::checkTrackList(const vector<StreamInfo>& ci) const
 // A source with no chapters writes no file rather than an empty one, and a file that cannot be
 // opened is a warning and not a failure: the tracks are the point of the run and they are already
 // on disk by then.
+// The chapters a source carries are times on the source's own timeline. A cut (--cut-start, --cut-end) keeps only a part
+// of it, and the output begins at the cut start, so they were written where they no longer belong: a three-minute cut
+// out of a film carried all 81 chapters of the film, at their old times. Only the chapters inside the cut are kept now,
+// moved back by the cut start, and the chapter that is already playing where the cut starts opens the output at 0.
+std::vector<AVChapter> MuxerManager::sourceChapters()
+{
+    std::vector<AVChapter> chapters = m_metaDemuxer.getChapters();
+    if (m_cutStart <= 0 && m_cutEnd <= 0)
+        return chapters;
+
+    // The cut is in the internal clock; double, because the clock times 1e9 does not fit in 64 bits.
+    const auto toNano = [](const int64_t pts)
+    { return static_cast<int64_t>(static_cast<double>(pts) * 1e9 / static_cast<double>(INTERNAL_PTS_FREQ) + 0.5); };
+    const int64_t startNano = m_cutStart > 0 ? toNano(m_cutStart) : 0;
+    const int64_t endNano = m_cutEnd > 0 ? toNano(m_cutEnd) : std::numeric_limits<int64_t>::max();
+
+    std::vector<AVChapter> kept;
+    const AVChapter* playing = nullptr;  // the last chapter that starts at or before the cut start
+    for (const AVChapter& chapter : chapters)
+    {
+        if (chapter.start <= startNano)
+        {
+            if (!playing || chapter.start > playing->start)
+                playing = &chapter;
+        }
+        else if (chapter.start < endNano)
+        {
+            AVChapter moved = chapter;
+            moved.start -= startNano;
+            kept.push_back(std::move(moved));
+        }
+    }
+    if (playing)
+    {
+        AVChapter first = *playing;
+        first.start = 0;
+        kept.insert(kept.begin(), std::move(first));
+    }
+    std::sort(kept.begin(), kept.end());
+    return kept;
+}
+
 void MuxerManager::writeChapterFile(const std::string& outDirName)
 {
-    const std::vector<AVChapter> chapters = m_metaDemuxer.getChapters();
+    const std::vector<AVChapter> chapters = sourceChapters();
     if (chapters.empty())
         return;
 

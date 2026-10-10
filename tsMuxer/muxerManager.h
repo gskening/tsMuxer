@@ -99,6 +99,8 @@ class MuxerManager final
    private:
     void preinitMux(const std::string& outFileName, FileFactory* fileFactory);
     void writeChapterFile(const std::string& outDirName);
+    // The source's chapters on the output's timeline: only those inside a --cut-start/--cut-end, moved by the start.
+    std::vector<AVChapter> sourceChapters();
     std::unique_ptr<AbstractMuxer> createMuxer();
     void asyncWriteBlock(const WriterData& data) const;
     void checkTrackList(const std::vector<StreamInfo>& ci) const;
