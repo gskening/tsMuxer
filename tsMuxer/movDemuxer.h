@@ -65,7 +65,8 @@ class MovDemuxer final : public IOContextDemuxer
     {
         int track_id;
         int64_t base_data_offset;
-        int64_t moof_offset;
+        int64_t moof_offset;     // where the next track fragment's data begins when its header names no base
+        int64_t moof_start = 0;  // where the moof box begins
         unsigned stsd_id;
         unsigned duration;
         unsigned size;
@@ -90,6 +91,8 @@ class MovDemuxer final : public IOContextDemuxer
     std::map<int32_t, int64_t> m_firstTimecode;
     // List<chunk offset, chunk size>
     std::vector<std::pair<int64_t, int64_t>> m_mdat_data;
+    // The size of the chunk of a fragmented file at offset (from the first mdat at mdatPos) whose successor is at next.
+    [[nodiscard]] int fragmentChunkSize(int64_t mdatPos, int64_t offset, int64_t next, bool last) const;
     int itunes_metadata;  ///< metadata are itunes style
     int64_t moof_offset;
     std::map<std::string, std::string> metaData;

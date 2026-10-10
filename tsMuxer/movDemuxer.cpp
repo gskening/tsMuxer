@@ -914,6 +914,7 @@ int MovDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepte
     const int64_t startPos = m_processedBytes;
     while (m_processedBytes - startPos < m_fileBlockSize && m_curChunk < chunks.size())
     {
+        const int64_t mdatPos = m_mdat_pos;  // the last chunk of a fragmented file clears it below
         const int64_t offset = chunks[m_curChunk].first;
         int64_t next;
         if (m_curChunk < chunks.size() - 1)
@@ -934,7 +935,8 @@ int MovDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepte
                 m_mdat_pos = 0;
             }
         }
-        const auto chunkSize = static_cast<int>(found_moof ? m_mdat_data[m_curChunk].second : next - offset);
+        const auto chunkSize = static_cast<int>(
+            found_moof ? fragmentChunkSize(mdatPos, offset, next, m_curChunk + 1 == chunks.size()) : next - offset);
         const int trackId = static_cast<int>(chunks[m_curChunk].second);
         auto filterItr = m_pidFilters.find(trackId + 1);
         if (filterItr == m_pidFilters.end() && acceptedPIDs.find(trackId + 1) == acceptedPIDs.end())
@@ -1014,8 +1016,8 @@ int MovDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepte
                 }
             }
         }
-        if (found_moof && m_curChunk < chunks.size() - 1)
-            skip_bytes(next - offset - m_mdat_data[m_curChunk].second);
+        if (found_moof && m_curChunk < chunks.size() - 1 && next - offset > chunkSize)
+            skip_bytes(next - offset - chunkSize);
         m_curChunk++;
     }
 
@@ -1269,6 +1271,31 @@ int MovDemuxer::mov_read_wide(MOVAtom atom)
     return err;
 }
 
+// In a fragmented file every track run of every fragment is a chunk, and every mdat holds the runs of its fragment.
+// The two lists used to be paired by position, chunk n with mdat n, which holds only while each fragment carries one
+// run. With two tracks a fragment carries two runs and one mdat: the first track's chunk was given the whole mdat,
+// the other track's samples included, the second was given the size of the next fragment's mdat, and near the end the
+// list of mdats ran out before the chunks did and was read past its end. A chunk now belongs to the mdat that holds
+// its first byte and ends where the next chunk begins or its mdat ends, whichever comes first. A file with one run per
+// fragment gets exactly the sizes it got before. A chunk that no mdat holds is given nothing.
+int MovDemuxer::fragmentChunkSize(const int64_t mdatPos, const int64_t offset, const int64_t next,
+                                  const bool last) const
+{
+    const int64_t at = mdatPos + offset;
+    // The mdats in file order: the last one that starts at or before the chunk.
+    auto mdat = std::upper_bound(m_mdat_data.begin(), m_mdat_data.end(), at,
+                                 [](const int64_t pos, const std::pair<int64_t, int64_t>& m) { return pos < m.first; });
+    if (mdat == m_mdat_data.begin())
+        return 0;
+    --mdat;
+    int64_t end = mdat->first + mdat->second;
+    if (!last && mdatPos + next < end)
+        end = mdatPos + next;
+    if (end <= at || end - at > INT_MAX)
+        return 0;
+    return static_cast<int>(end - at);
+}
+
 // this atom contains actual media data
 int MovDemuxer::mov_read_mdat(MOVAtom atom)
 {
@@ -1322,6 +1349,9 @@ int MovDemuxer::mov_read_trun(MOVAtom atom)
         }
 
         // assert(sample_duration % sc->time_rate == 0);
+        // The size of each sample, as stsz gives it for an ordinary file: the audio and text readers cut a chunk into
+        // its samples by it. A fragmented file's stsz is empty, so its AAC had no sizes to go by and was not read.
+        sc->m_index.push_back(sample_size);
         offset += sample_size;
     }
     frag->moof_offset = offset;
@@ -1385,8 +1415,15 @@ int MovDemuxer::mov_read_tfhd(MOVAtom atom)
     if (!trex)
         THROW(ERR_COMMON, "could not find corresponding trex")
 
+    // Where this track fragment's data offsets count from: the offset the header gives, else the start of the moof
+    // when the header says so (default-base-is-moof, which CMAF and DASH fragments use), else the end of the data of
+    // the track fragment before it, which mov_read_trun leaves in moof_offset. That last value used to be taken in
+    // the second case as well, so the second track of such a fragment was read from the wrong place: its offsets
+    // counted from the end of the first track's data instead of from the moof.
     if (flags & 0x01)
         frag->base_data_offset = get_be64();
+    else if (flags & 0x020000)
+        frag->base_data_offset = frag->moof_start;
     else
         frag->base_data_offset = frag->moof_offset;
     if (flags & 0x02)
@@ -1527,6 +1564,7 @@ int MovDemuxer::mov_read_moof(MOVAtom atom)
     MOVFragment* frag = &fragment;
     found_moof = true;
     frag->moof_offset = m_processedBytes - 8;
+    frag->moof_start = frag->moof_offset;
     return mov_read_default(atom);
 }
 
