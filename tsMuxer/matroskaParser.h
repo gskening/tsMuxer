@@ -171,6 +171,8 @@ static constexpr uint8_t MATROSKA_ID_CUETRACKPOSITION = 0xB7;
 /* IDs in the cuetrackposition master */
 static constexpr uint8_t MATROSKA_ID_CUETRACK = 0xF7;
 static constexpr uint8_t MATROSKA_ID_CUECLUSTERPOSITION = 0xF1;
+static constexpr uint8_t MATROSKA_ID_CUERELATIVEPOSITION = 0xF0;
+static constexpr uint8_t MATROSKA_ID_CUEDURATION = 0xB2;
 
 /* IDs in the tags master */
 static constexpr uint16_t MATROSKA_ID_TAG = 0x7373;

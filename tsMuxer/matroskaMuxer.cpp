@@ -1960,6 +1960,7 @@ void MatroskaMuxer::startCluster(int64_t timecodeMs)
     m_clusterBuf.clear();
     m_clusterDataSize = 0;
     m_clusterOpen = true;
+    m_clusterBlocks = 0;
 
     // Record cluster position for cue entries
     m_clusterStartFilePos = m_file.pos() - m_segmentStartPos;
@@ -2456,6 +2457,7 @@ void MatroskaMuxer::writeTextBlock(MkvTrackInfo& track, const uint8_t* data, con
     if (needNewCluster || (m_clusterOpen && relMs >= 0 && (offset < INT16_MIN || offset > INT16_MAX)))
         startCluster(relMs);
     const auto relTimeMs = static_cast<int16_t>(relMs - m_clusterTimecodeMs);
+    addCue(track, relMs, durationMs);
 
     uint8_t trackNumBuf[8];
     const int trackNumLen = ebml_write_size(trackNumBuf, track.trackNumber);
@@ -2480,6 +2482,7 @@ void MatroskaMuxer::writeTextBlock(MkvTrackInfo& track, const uint8_t* data, con
     m_clusterBuf.insert(m_clusterBuf.end(), data, data + size);
     m_clusterBuf.insert(m_clusterBuf.end(), durationElement, durationElement + durationLen);
     m_clusterDataSize += groupHeaderLen + groupPayloadSize;
+    m_clusterBlocks++;
 }
 
 // Write one completed frame as a SimpleBlock. Split out of flushPendingFrame so that a dual layer
@@ -2523,15 +2526,12 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
     if (needNewCluster || (m_clusterOpen && relMs >= 0 && (offset < INT16_MIN || offset > INT16_MAX)))
         startCluster(relMs);
 
-    // Record cue entry for video keyframes
-    if (track.trackType == 1 && (pendingFlags & AVPacket::IS_IFRAME))
-    {
-        CueEntry cue;
-        cue.timecodeMs = relMs;
-        cue.trackNumber = track.trackNumber;
-        cue.clusterOffset = m_clusterStartFilePos;
-        m_cueEntries.push_back(cue);
-    }
+    // Cue points, as RFC 9559 (22.1) recommends: every video keyframe, every subtitle a player can show from, and in a
+    // file without video each audio track at most once every 500 ms. Only video keyframes had one, so a player could
+    // not seek to a subtitle, and a file of audio alone had no Cues at all.
+    if ((pendingFlags & AVPacket::IS_IFRAME) && (track.trackType == 1 || track.trackType == MKV_TRACK_TYPE_SUBTITLE ||
+                                                 (track.trackType == 2 && audioCueDue(track, relMs))))
+        addCue(track, relMs, -1);
 
     // Write SimpleBlock
     const int16_t relTimeMs = static_cast<int16_t>(relMs - m_clusterTimecodeMs);
@@ -2556,6 +2556,35 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
 
     m_clusterBuf.insert(m_clusterBuf.end(), frameData, frameData + frameSize);
     m_clusterDataSize += hdrLen + blockPayloadSize;
+    m_clusterBlocks++;
+}
+
+// A cue point for the block about to be written to the open cluster. Where it is not the cluster's first block, the
+// point also says where in the cluster it lies (CueRelativePosition), so that a player goes straight to it.
+void MatroskaMuxer::addCue(const MkvTrackInfo& track, const int64_t relMs, const int64_t durationMs)
+{
+    CueEntry cue;
+    cue.timecodeMs = relMs;
+    cue.trackNumber = track.trackNumber;
+    cue.clusterOffset = m_clusterStartFilePos;
+    if (m_clusterBlocks > 0)
+        cue.relativePosition = static_cast<int64_t>(m_clusterBuf.size());
+    cue.durationMs = durationMs;
+    m_cueEntries.push_back(cue);
+}
+
+// In a file with video, the video keyframes are the cue points. Without video, an audio track gets one, but not more
+// often than every 500 ms (RFC 9559, 22.1).
+bool MatroskaMuxer::audioCueDue(const MkvTrackInfo& track, const int64_t relMs)
+{
+    for (const auto& [index, other] : m_tracks)
+        if (other.trackType == 1)
+            return false;
+    const auto last = m_lastAudioCueMs.find(track.trackNumber);
+    if (last != m_lastAudioCueMs.end() && relMs - last->second < 500)
+        return false;
+    m_lastAudioCueMs[track.trackNumber] = relMs;
+    return true;
 }
 
 // Emit held base layer frames whose enhancement layer access unit has arrived complete.
@@ -2941,33 +2970,40 @@ void MatroskaMuxer::writeCues()
 
     m_cuesPos = m_file.pos() - m_segmentStartPos;
 
-    // Build all cue point entries
+    // In time order (RFC 9559, 22.1); points of several tracks at the same time share one CuePoint, in the order they
+    // were made. With subtitles and audio in the cues, the order they were made in is not always the order of time.
+    std::stable_sort(m_cueEntries.begin(), m_cueEntries.end(),
+                     [](const CueEntry& a, const CueEntry& b) { return a.timecodeMs < b.timecodeMs; });
     std::vector<uint8_t> allPoints;
-
-    for (const auto& cue : m_cueEntries)
+    for (size_t i = 0; i < m_cueEntries.size();)
     {
-        // CueTrackPositions content
-        uint8_t ctpBuf[64];
-        int ctpLen = 0;
-        ctpLen += ebml_write_uint(ctpBuf + ctpLen, MATROSKA_ID_CUETRACK, cue.trackNumber);
-        ctpLen += ebml_write_uint(ctpBuf + ctpLen, MATROSKA_ID_CUECLUSTERPOSITION, cue.clusterOffset);
-
-        // CuePoint content
-        uint8_t cpBuf[128];
-        int cpLen = 0;
-        cpLen += ebml_write_uint(cpBuf + cpLen, MATROSKA_ID_CUETIME, static_cast<uint64_t>(cue.timecodeMs));
-
-        // CueTrackPositions master
-        cpLen += ebml_write_master_open(cpBuf + cpLen, MATROSKA_ID_CUETRACKPOSITION, ctpLen);
-        memcpy(cpBuf + cpLen, ctpBuf, ctpLen);
-        cpLen += ctpLen;
-
-        // PointEntry master
-        uint8_t peBuf[8];
+        const int64_t timecodeMs = m_cueEntries[i].timecodeMs;
+        uint8_t timeBuf[16];
+        const int timeLen = ebml_write_uint(timeBuf, MATROSKA_ID_CUETIME, static_cast<uint64_t>(timecodeMs));
+        std::vector<uint8_t> point(timeBuf, timeBuf + timeLen);
+        for (; i < m_cueEntries.size() && m_cueEntries[i].timecodeMs == timecodeMs; ++i)
+        {
+            const CueEntry& cue = m_cueEntries[i];
+            uint8_t ctpBuf[64];
+            int ctpLen = 0;
+            ctpLen += ebml_write_uint(ctpBuf + ctpLen, MATROSKA_ID_CUETRACK, cue.trackNumber);
+            ctpLen += ebml_write_uint(ctpBuf + ctpLen, MATROSKA_ID_CUECLUSTERPOSITION, cue.clusterOffset);
+            if (cue.relativePosition >= 0)
+                ctpLen += ebml_write_uint(ctpBuf + ctpLen, MATROSKA_ID_CUERELATIVEPOSITION,
+                                          static_cast<uint64_t>(cue.relativePosition));
+            if (cue.durationMs >= 0)
+                ctpLen +=
+                    ebml_write_uint(ctpBuf + ctpLen, MATROSKA_ID_CUEDURATION, static_cast<uint64_t>(cue.durationMs));
+            uint8_t ctpHeader[16];
+            const int ctpHeaderLen = ebml_write_master_open(ctpHeader, MATROSKA_ID_CUETRACKPOSITION, ctpLen);
+            point.insert(point.end(), ctpHeader, ctpHeader + ctpHeaderLen);
+            point.insert(point.end(), ctpBuf, ctpBuf + ctpLen);
+        }
+        uint8_t peBuf[16];
         int peLen = ebml_write_id(peBuf, MATROSKA_ID_POINTENTRY);
-        peLen += ebml_write_size(peBuf + peLen, cpLen);
+        peLen += ebml_write_size(peBuf + peLen, point.size());
         allPoints.insert(allPoints.end(), peBuf, peBuf + peLen);
-        allPoints.insert(allPoints.end(), cpBuf, cpBuf + cpLen);
+        allPoints.insert(allPoints.end(), point.begin(), point.end());
     }
 
     // Write Cues master element

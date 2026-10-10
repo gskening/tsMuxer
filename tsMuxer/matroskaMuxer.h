@@ -252,8 +252,12 @@ class MatroskaMuxer final : public AbstractMuxer
     {
         int64_t timecodeMs;  // cluster-relative time in ms
         int trackNumber;
-        int64_t clusterOffset;  // byte offset of the cluster from segment data start
+        int64_t clusterOffset;          // byte offset of the cluster from segment data start
+        int64_t relativePosition = -1;  // where the block lies in its cluster, when it is not the cluster's first
+        int64_t durationMs = -1;        // a subtitle's BlockDuration, when it has one
     };
+    void addCue(const MkvTrackInfo& track, int64_t relMs, int64_t durationMs);
+    bool audioCueDue(const MkvTrackInfo& track, int64_t relMs);
 
     // Helper: map internal codec name to Matroska codec ID string
     static std::string codecNameToMatroskaID(const std::string& codecName, int codecID);
@@ -367,6 +371,8 @@ class MatroskaMuxer final : public AbstractMuxer
 
     // Cue tracking
     std::vector<CueEntry> m_cueEntries;
+    int m_clusterBlocks = 0;                  // blocks written to the open cluster
+    std::map<int, int64_t> m_lastAudioCueMs;  // track number -> time of its last cue point, in a file without video
 
     // Positions of key elements (relative to segment data start) for SeekHead
     int64_t m_segmentInfoPos;
