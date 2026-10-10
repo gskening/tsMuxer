@@ -48,6 +48,10 @@ class MatroskaDemuxer final : public IOContextDemuxer
     // detection before anything wants it.
     bool getAttachment(const std::string& name, std::vector<uint8_t>& out) override;
 
+    // A joined input, "a"+"b": the files in the order they are read, so that each part is framed as its own record
+    // says when the stream reaches it.
+    void setFileIterator(FileNameIterator* itr) override;
+
    private:
     typedef Track MatroskaTrack;
     typedef IOContextTrackType MatroskaTrackType;
@@ -99,6 +103,9 @@ class MatroskaDemuxer final : public IOContextDemuxer
     std::string m_attachmentSource;  // the file the payloads are read back from
     void loadAttachments(const std::string& fileName);
     void applyStartCodeRule();
+    std::vector<std::string> m_joinFiles;  // the files of a joined input, in order; empty for a single file
+    size_t m_joinPart = 0;                 // the part being read: one more for each header met inside the stream
+    void nextJoinPart();
 
     AVPacket* m_lastDeliveryPacket;
 

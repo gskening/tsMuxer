@@ -9,6 +9,7 @@
 
 #include "abstractDemuxer.h"
 #include "avPacket.h"
+#include "bufferedFileReader.h"
 #include "nalUnits.h"
 #include "subTrackFilter.h"
 #include "vodCoreException.h"
@@ -1105,6 +1106,7 @@ void MatroskaDemuxer::openFile(const std::string& streamName)
     writing_app = nullptr;
     muxing_app = nullptr;
     num_tracks = 0;
+    m_joinPart = 0;
     matroska_read_header();
     // Separately, on its own handle, so nothing about the streaming read is disturbed.
     loadAttachments(streamName);
@@ -1146,6 +1148,26 @@ void MatroskaDemuxer::applyStartCodeRule()
         LTRACE(
             LT_INFO, 2,
             "This file records how its source framed the video (" << rule << "), so it is framed the same way again.");
+}
+
+void MatroskaDemuxer::setFileIterator(FileNameIterator* itr)
+{
+    IOContextDemuxer::setFileIterator(itr);  // the reader moves on to the next file through it
+    const auto* join = dynamic_cast<const FileListIterator*>(itr);
+    m_joinFiles = join != nullptr ? join->getFiles() : std::vector<std::string>();
+}
+
+// The stream of a joined input, "a"+"b", has just reached the header of its next file, and the tracks were read
+// again from it. openFile applies the record of the framing to the first file only, so every part after it lost
+// that record and was framed four byte whatever its own record said. Each part's own record now applies, read from
+// that part, and a part without one is framed as a file without one always was.
+void MatroskaDemuxer::nextJoinPart()
+{
+    if (++m_joinPart >= m_joinFiles.size())
+        return;
+    m_attachments.clear();
+    loadAttachments(m_joinFiles[m_joinPart]);
+    applyStartCodeRule();
 }
 
 // A track is a block of characters that a Track was never constructed in, so ~Track never runs
@@ -1269,6 +1291,7 @@ int MatroskaDemuxer::readPacket(AVPacket& avPacket)
                 break;
             case EBML_ID_HEADER:
                 matroska_read_header();
+                nextJoinPart();
                 break;
             default:
                 res = ebml_read_skip();
