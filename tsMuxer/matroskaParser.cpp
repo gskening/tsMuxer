@@ -620,14 +620,15 @@ void ParsedPGTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int size
 {
     static constexpr int PG_HEADER_SIZE = 10;
 
+    // A segment is a type byte, a 16 bit length and that many bytes. The size with its 3 header bytes was kept in
+    // 16 bits as well, so a segment of 65,533 bytes or more came out as 0, 1 or 2 bytes long, and the packet was
+    // walked from the wrong places.
     const uint8_t* curPtr = buff;
     const uint8_t* end = buff + size;
     int blocks = 0;
     while (curPtr <= end - 3)
     {
-        const uint16_t blockSize = AV_RB16(curPtr + 1) + 3;
-        if (blockSize == 0)
-            break;
+        const int blockSize = AV_RB16(curPtr + 1) + 3;
         curPtr += blockSize;
         blocks++;
     }
@@ -645,7 +646,7 @@ void ParsedPGTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int size
     uint8_t* dst = pkt->data;
     while (curPtr <= end - 3)
     {
-        const uint16_t blockSize = AV_RB16(curPtr + 1) + 3;
+        const int blockSize = AV_RB16(curPtr + 1) + 3;
 
         dst[0] = 'P';
         dst[1] = 'G';

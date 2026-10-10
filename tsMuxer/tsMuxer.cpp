@@ -935,7 +935,19 @@ void TSMuxer::buildPesHeader(const uint8_t pesStreamID, AVPacket& avPacket, int 
     if (ast)
         ast->writePESExtension(pesPacket, avPacket);
     if (avPacket.flags & AVPacket::IS_COMPLETE_FRAME)
+    {
+        // The PES packet length is 16 bits, and only video may leave it open. A longer packet was given a length
+        // that had wrapped round, and the stream after it was read from the wrong place. It is refused instead: a
+        // subtitle segment of nearly 64 KB is the one way to get here.
+        const int pesLength = avPacket.size + pesPacket->getHeaderLength() - 6;
+        if (pesLength > 0xFFFF)
+            THROW(ERR_COMMON, "A packet of " << avPacket.size << " bytes on track " << avPacket.stream_index
+                                             << " does not fit in one PES packet of a transport stream (at most "
+                                             << 0xFFFF - (pesPacket->getHeaderLength() - 6)
+                                             << " bytes), so this track cannot be muxed to a transport stream or a "
+                                                "disc. It can be muxed to Matroska.")
         pesPacket->setPacketLength(avPacket.size + pesPacket->getHeaderLength());
+    }
 
     PriorityDataInfo tmpPriorityData;
     const int additionDataSize = avPacket.codec->writeAdditionData(
