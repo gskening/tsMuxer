@@ -798,6 +798,9 @@ void MovDemuxer::openFile(const std::string& streamName)
 {
     m_fileName = streamName;
     found_moov = 0;
+    // Every file of a join has its own movie header, and its own edit lists to be timed with it.
+    m_timescale = 0;
+    m_emptyEditUnits.clear();
     found_moof = false;
     m_mdat_pos = 0;
     itunes_metadata = 0;
@@ -1611,6 +1614,15 @@ int MovDemuxer::mov_read_moov(MOVAtom atom)
     if (mov_read_default(atom) < 0)
         return -1;
     found_moov = 1;
+    // The start delays of the edit lists, now that the movie header has been read wherever it stood (mov_read_elst).
+    for (const auto& [track, units] : m_emptyEditUnits)
+    {
+        if (m_timescale == 0)
+            THROW(ERR_MOV_PARSE, "MP4/MOV error: an edit list (elst) delays track #"
+                                     << track << ", but the movie has no movie header (mvhd) to time it with")
+        m_firstTimecode[track] = units * 1000 / m_timescale;
+    }
+    m_emptyEditUnits.clear();
     return 0;
 }
 
@@ -1643,7 +1655,9 @@ int MovDemuxer::mov_read_mvhd(MOVAtom atom)
     // divide error that no catch block sees), with no word about the file.
     if (m_timescale == 0)
         THROW(ERR_MOV_PARSE, "MP4/MOV error: the movie header (mvhd) gives a time scale of 0")
-    fileDuration = duration * 1000000000ll / m_timescale;
+    // The longest of the movie's and the tracks' durations, whichever header comes first: the movie header may come
+    // after the tracks, and then it used to replace a longer track duration.
+    fileDuration = FFMAX(fileDuration, duration * 1000000000ll / m_timescale);
     get_be32();      // preferred scale
     get_be16();      // preferred volume
     skip_bytes(10);  // reserved
@@ -2086,41 +2100,56 @@ if (st->codec->codec_id == CODEC_ID_QDM2) {
     return 0;
 }
 
+// The edit list of a track. Each entry is a duration, a media time and a media rate: 20 bytes in version 1, 12 in
+// version 0. The rate was read once after the list instead of with each entry, so every entry after the first was read
+// 4 bytes out of step, and the count was taken as written, so a count larger than the box made the reading run on
+// through what follows it. The entries are now read whole, and no more of them than the box holds.
+//
+// An empty edit (media time -1) at the start delays the track. The delay is the sum of the empty edits before the
+// first edit that shows media; it used to be the last empty edit anywhere in the list. It is in movie time, so it is
+// kept in movie units here and converted once the whole movie box is read, with this file's own movie header: the
+// header may come after the tracks, which the format allows, and in a join the next file's header was not read yet.
 int MovDemuxer::mov_read_elst(MOVAtom atom)
 {
     const int version = get_byte();
     get_be24();                              // flags
     const unsigned edit_count = get_be32();  // entries
 
-    for (unsigned i = 0; i < edit_count; i++)
+    const int64_t entrySize = version == 1 ? 20 : 12;
+    const int64_t fits = atom.size > 8 ? (atom.size - 8) / entrySize : 0;
+    unsigned count = edit_count;
+    if (count > fits)
     {
+        LTRACE(LT_WARN, 2,
+               "Warning: the edit list (elst) of track #" << num_tracks << " gives " << edit_count
+                                                          << " entries, but its box holds only " << fits
+                                                          << ". Only those are read.");
+        count = static_cast<unsigned>(fits);
+    }
+    int64_t leadingEmpty = 0;
+    bool leading = true;
+    for (unsigned i = 0; i < count; i++)
+    {
+        int64_t duration = 0;
+        bool empty = false;
         if (version == 1)
         {
-            const int64_t duration = get_be64();
-            const int64_t time = get_be64();
-            if (time == -1)
-            {
-                // An empty edit is in movie time, so it needs the movie header's time scale. A file that
-                // puts the edit list first would otherwise divide by the zero the scale starts at.
-                if (m_timescale == 0)
-                    THROW(ERR_MOV_PARSE, "MP4/MOV error: an edit list (elst) comes before the movie header (mvhd)")
-                m_firstTimecode[num_tracks] = duration * 1000 / m_timescale;
-            }
+            duration = get_be64();
+            empty = static_cast<int64_t>(get_be64()) == -1;
         }
         else
         {
-            const int64_t duration = get_be32();
-            const unsigned time = get_be32();
-            if (time == UINT_MAX)
-            {
-                // As above: no division before the movie header has given its time scale.
-                if (m_timescale == 0)
-                    THROW(ERR_MOV_PARSE, "MP4/MOV error: an edit list (elst) comes before the movie header (mvhd)")
-                m_firstTimecode[num_tracks] = duration * 1000 / m_timescale;
-            }
+            duration = get_be32();
+            empty = get_be32() == UINT_MAX;
         }
+        get_be32();  // media rate
+        if (leading && empty)
+            leadingEmpty += duration;
+        else
+            leading = false;
     }
-    get_be32();  // Media rate
+    if (leadingEmpty > 0)
+        m_emptyEditUnits[num_tracks] = leadingEmpty;
     return 0;
 }
 
