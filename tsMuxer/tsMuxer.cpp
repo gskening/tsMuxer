@@ -683,9 +683,12 @@ void TSMuxer::reportReadRate() const
     const double fastest = atsGapToRate(m_minAtsGap) / 1e6;
     const double share = 100.0 * static_cast<double>(m_atsOverLimit) / static_cast<double>(m_atsPackets);
 
+    // A share that rounds to 0.0 is still above nothing: "0.0 per cent" read as "none" in a warning.
+    const std::string shareText = share < 0.05 ? std::string("less than 0.1") : doubleToStr(share, 1);
+
     std::ostringstream msg;
     msg << "Warning: this disc asks to be read at " << doubleToStr(fastest, 1) << " Mbit/s at its fastest, and "
-        << doubleToStr(share, 1) << " per cent of its packets are above the limit. A " << (isV3() ? "UHD" : "Blu-ray")
+        << shareText << " per cent of its packets are above the limit. A " << (isV3() ? "UHD" : "Blu-ray")
         << " drive only has to supply " << doubleToStr(limit / 1e6, 0)
         << " Mbit/s. It will play from a hard disk, where the rate does not matter, and may stutter or refuse "
            "to start on a standalone player. Add --maxbitrate="
@@ -770,7 +773,15 @@ void TSMuxer::processM2TSPCR(const int64_t pcrVal, const int64_t pcrGAP)
     // Every packet written in this pass is given the same gap, so one comparison covers all of
     // them. Nothing here changes what is written; it only records the rate the disc is asking to
     // be read at, which nothing measured before.
-    if (m2tsFrameCnt > 0 && pcrIncPerFrame > 0)
+    //
+    // A pass of a handful of packets is the muxer's own tables written together with a PCR: PAT,
+    // PMT, SIT and the PCR packet, four packets 148 ticks apart, which works out at 274 Mbit/s.
+    // No source causes that and no option changes it, and a drive's buffer takes four packets
+    // without effort. Yet it was what the warning quoted as the fastest rate, and on a 3D disc
+    // whose video never went over the limit it alone made a warning that said "0.0 per cent".
+    // Such passes no longer count; a pass that carries the streams themselves still does.
+    constexpr int TABLE_BURST_PACKETS = 5;
+    if (m2tsFrameCnt > TABLE_BURST_PACKETS && pcrIncPerFrame > 0)
     {
         if (m_minAtsGap == 0 || pcrIncPerFrame < m_minAtsGap)
             m_minAtsGap = pcrIncPerFrame;
