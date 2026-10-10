@@ -81,6 +81,10 @@ static constexpr double BD_READ_RATE_UHD = 109.0e6;
 
 static double atsGapFloor(const double bitsPerSecond) { return TS_PACKET_BITS * 27000000.0 / bitsPerSecond; }
 
+// A pass of this many packets or fewer is the muxer's own tables written together with a PCR (PAT, PMT,
+// SIT and the PCR packet), not the streams. See pcrForMaxRate and processM2TSPCR.
+static constexpr int TABLE_BURST_PACKETS = 5;
+
 static double atsGapToRate(const double gap) { return TS_PACKET_BITS * 27000000.0 / gap; }
 
 static constexpr int PAT_PID = 0;
@@ -748,8 +752,25 @@ int TSMuxer::calcM2tsFrameCnt() const
 // extraFrames is what the caller is about to add and has not added yet.
 int64_t TSMuxer::pcrForMaxRate(const int64_t newPCR, const int64_t extraFrames, const int64_t pcrGAP) const
 {
-    if (m_maxBitrate == -1 || m_lastPCR == -1)
+    if (m_lastPCR == -1)
         return newPCR;
+    if (m_maxBitrate == -1)
+    {
+        // Without --maxbitrate nothing holds the rate, and the muxer's own tables could come out as a burst: when
+        // they are written right after a PCR, PAT, PMT, SIT and the next PCR packet share a span of a few
+        // microseconds, four packets 148 ticks apart, 274 Mbit/s, every few seconds on every Blu-ray. A pressed
+        // disc never goes below the read-rate floor even there. Such a short pass is now held at the floor the
+        // way --maxbitrate holds every pass, which moves its PCR later by at most a few hundred ticks of the
+        // 27 MHz clock. A pass that carries the streams is left exactly as it was.
+        if (!m_m2tsMode || !m_bluRayMode)
+            return newPCR;
+        const int64_t frames = calcM2tsFrameCnt() + extraFrames;
+        if (frames <= 0 || frames > TABLE_BURST_PACKETS)
+            return newPCR;
+        const double floorGap = atsGapFloor(isV3() ? BD_READ_RATE_UHD : BD_READ_RATE_HD);
+        const int64_t needed = m_prevM2TSPCR + pcrGAP + static_cast<int64_t>(std::ceil(frames * floorGap));
+        return FFMAX(newPCR, (needed + 299) / 300);  // back to the 90 kHz clock, never downwards
+    }
     // A plain transport stream carries no arrival timestamps, so there is no per packet gap to
     // hold. What the ceiling means there is that the clock may not run ahead of the data: the
     // bits written since the last PCR take a known time to arrive at the rate asked for.
@@ -780,7 +801,6 @@ void TSMuxer::processM2TSPCR(const int64_t pcrVal, const int64_t pcrGAP)
     // without effort. Yet it was what the warning quoted as the fastest rate, and on a 3D disc
     // whose video never went over the limit it alone made a warning that said "0.0 per cent".
     // Such passes no longer count; a pass that carries the streams themselves still does.
-    constexpr int TABLE_BURST_PACKETS = 5;
     if (m2tsFrameCnt > TABLE_BURST_PACKETS && pcrIncPerFrame > 0)
     {
         if (m_minAtsGap == 0 || pcrIncPerFrame < m_minAtsGap)
