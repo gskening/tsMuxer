@@ -1,6 +1,8 @@
 
 #include "matroskaParser.h"
 
+#include <algorithm>
+
 #include <fs/systemlog.h>
 
 #include "bitStream.h"
@@ -387,9 +389,15 @@ ParsedVC1TrackData::ParsedVC1TrackData(uint8_t* buff, const int size) : ParsedTr
 {
     if (size < MS_BIT_MAP_HEADER_SIZE)
         THROW(ERR_MATROSKA_PARSE, "Matroska parse error: Invalid or unsupported VC-1 stream")
-    const uint8_t* curBuf = buff + MS_BIT_MAP_HEADER_SIZE;
-    const uint8_t dataLen = *curBuf++;
-    for (int i = 0; i < dataLen; i++) m_seqHeader.push_back(*curBuf++);
+    // After the 40 byte bitmap header: one byte with the length of the sequence header, then the header. A
+    // CodecPrivate of the bitmap header alone has neither, and both used to be read from past its end; a length
+    // larger than what follows it took that many bytes from past the end as well. Only what is there is taken.
+    if (size > MS_BIT_MAP_HEADER_SIZE)
+    {
+        const uint8_t* curBuf = buff + MS_BIT_MAP_HEADER_SIZE;
+        const int dataLen = (std::min)(static_cast<int>(*curBuf++), size - MS_BIT_MAP_HEADER_SIZE - 1);
+        m_seqHeader.assign(curBuf, curBuf + dataLen);
+    }
     m_firstPacket = true;
 }
 
