@@ -677,6 +677,11 @@ int64_t parseDiscSizeValue(const string& raw)
 
 void MuxerManager::parseMuxOpt(const string& opts)
 {
+    // The muxers are made later, in preinitMux, and take their options from m_muxOpts. The blank playlist's mux
+    // (muxBlankPL) comes here without a meta file, and m_muxOpts was set only where a meta file is read, so its muxer
+    // got no options at all: it was not in disc mode and kept no seek index. The blank playlist came out with no play
+    // item, its one mark pointing at play item 0xFFFF, and its clip information with no entry point map.
+    m_muxOpts = opts;
     const vector<string> params = splitQuotedStr(opts.c_str(), ' ');
     for (auto& i : params)
     {
