@@ -906,8 +906,11 @@ All parameters in this group start with two dashes:
 --label               Disk label when muxing to ISO.
 --extra-iso-space     Allocate extra space in 64K units for ISO metadata (file
                       and directory names). Normally, tsMuxeR allocates this space
-                      automatically, but if split condition generates a lot
-                      of small files, it may be required to define extra space.
+                      automatically, and for a split it counts the parts from the
+                      split size, the split length or the chapters. A split it
+                      cannot count, such as --split-duration on a source that
+                      states no length, may need this option. When the space is
+                      too small, the mux ends with a message saying so.
 --constant-iso-hdr    Generates an ISO header that does not depend on the program
                       version or the current time. Not meant for normal usage.
 --disc-size           Fit-to-disc guard for BD/ISO output. Aborts before muxing if

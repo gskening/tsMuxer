@@ -5,6 +5,7 @@
 
 #include <fs/textfile.h>
 #include <types/types.h>
+#include <algorithm>
 #include <climits>
 #include <cmath>
 #include <memory>
@@ -1248,6 +1249,28 @@ std::vector<AVChapter> METADemuxer::getChapters()
             return chapters;
     }
     return {};
+}
+
+int64_t METADemuxer::statedDurationNano()
+{
+    int64_t longest = 0;
+    for (const StreamInfo& stream : m_codecInfo)
+    {
+        int64_t ticks = 0;  // 45 kHz, as in getChapters
+        for (const std::string& playlist : splitQuotedStr(stream.m_fullStreamName.c_str(), '+'))
+        {
+            const auto cached = m_mplsStreamMap.find(playlist);
+            if (cached == m_mplsStreamMap.end())
+                break;
+            for (const auto& item : cached->second.m_playItems)
+                ticks += static_cast<int64_t>(item.OUT_time) - item.IN_time;
+        }
+        longest = (std::max)(longest, ticks * 1000000000LL / 45000LL);
+    }
+    for (auto& [name, demuxerData] : m_containerReader.m_demuxers)
+        if (demuxerData.m_demuxer)
+            longest = (std::max)(longest, demuxerData.m_demuxer->getFileDurationNano());
+    return longest;
 }
 
 void METADemuxer::readClose()

@@ -332,6 +332,13 @@ void MuxerManager::checkTrackList(const vector<StreamInfo>& ci) const
 // now, moved back by the cut start, and the chapter that is already playing where the cut starts opens the output at 0.
 std::vector<AVChapter> MuxerManager::sourceChapters()
 {
+    if (!m_sourceChapters)
+        m_sourceChapters = readSourceChapters();
+    return *m_sourceChapters;
+}
+
+std::vector<AVChapter> MuxerManager::readSourceChapters()
+{
     // Asked for an output without the source's chapters. Nothing else said so: with no chapter option at all the
     // source's own were taken over, so a Matroska output got them although the window's "No chapters" was chosen.
     if (m_noChapters)
@@ -370,6 +377,50 @@ std::vector<AVChapter> MuxerManager::sourceChapters()
     }
     std::sort(kept.begin(), kept.end());
     return kept;
+}
+
+// The room a disc image keeps for its file system (its metadata area) is set aside before the mux and cannot grow
+// later. Every part of a split adds to it: the clip, its clip information and the backup of that, three files, and
+// in 3D the second view's clip, its two clip information files and the interleaved file as well. The default held
+// about forty parts, and a split into more ran out of room only when the image was finished, after the whole mux:
+// 79 parts of a disc feature cut every 2 seconds did. So the parts are reckoned before the mux where that can be done:
+// the sources' size over the part size, the length of the cut (or the length the sources state) over the part length,
+// or the number of chapters. The room grows only when the default would not hold them, so a split into a few parts
+// gives the same image as before. An --extra-iso-space that is given is taken as it is, and a split that could not be
+// reckoned still gets the plain refusal when the image is finished.
+int MuxerManager::getExtraISOBlocks()
+{
+    if (m_extraIsoBlocksGiven)
+        return m_extraIsoBlocks;
+    int64_t parts = 0;
+    if (m_isoSplitBytes > 0)
+        // A part is cut at the first key frame past the size, so none is smaller, and the transport stream adds
+        // about 5 per cent to what the sources hold.
+        parts = (std::max)(parts, totalSize() / 100 * 106 / m_isoSplitBytes + 1);
+    if (m_isoSplitSeconds > 0)
+    {
+        const auto toNano = [](const int64_t pts)
+        { return static_cast<int64_t>(static_cast<double>(pts) * 1e9 / static_cast<double>(INTERNAL_PTS_FREQ)); };
+        const int64_t fromNano = m_cutStart > 0 ? toNano(m_cutStart) : 0;
+        const int64_t toEndNano = m_cutEnd > 0 ? toNano(m_cutEnd) : m_metaDemuxer.statedDurationNano();
+        if (toEndNano > fromNano)
+            parts = (std::max)(parts, (toEndNano - fromNano) / (m_isoSplitSeconds * 1000000000LL) + 1);
+    }
+    if (m_isoSplitChapters)
+    {
+        const size_t marks = m_chapters.empty() ? sourceChapters().size() : m_chapters.size();
+        parts = (std::max)(parts, static_cast<int64_t>(marks) + 1);
+    }
+    if (parts <= 1)
+        return m_extraIsoBlocks;
+
+    // About twenty sectors for what every disc has, and three a part in 2D, seven in 3D; counted with room to spare.
+    constexpr int64_t SECTORS_PER_BLOCK = ALLOC_BLOCK_SIZE / SECTOR_SIZE;
+    const int64_t needed = 64 + parts * (getMvcFound() ? 8 : 4);
+    const int64_t room = IsoWriter::metadataBlocks(totalSize(), m_extraIsoBlocks) * SECTORS_PER_BLOCK;
+    if (needed <= room)
+        return m_extraIsoBlocks;
+    return m_extraIsoBlocks + static_cast<int>((needed - room + SECTORS_PER_BLOCK - 1) / SECTORS_PER_BLOCK);
 }
 
 void MuxerManager::writeChapterFile(const std::string& outDirName)
@@ -672,12 +723,21 @@ void MuxerManager::parseMuxOpt(const string& opts)
         {
             if (m_extraIsoBlocks == 0)
                 m_extraIsoBlocks = 4;
+            // Kept for getExtraISOBlocks. A missing value is refused where the split is made, and only there: Matroska
+            // output and demux ignore a split with a warning.
+            if (paramPair.size() >= 2 && paramPair[0] == "--split-size")
+                m_isoSplitBytes = checkedSplitSize(paramPair[1]);
+            else if (paramPair.size() >= 2)
+                m_isoSplitSeconds = strToInt64(paramPair[1].c_str());
         }
+        else if (paramPair[0] == "--split-chapters")
+            m_isoSplitChapters = true;
         else if (paramPair[0] == "--extra-iso-space")
         {
             if (paramPair.size() < 2)
                 THROW(ERR_COMMON, "Missing value for " << paramPair[0]);
             m_extraIsoBlocks = strToInt32(paramPair[1]);
+            m_extraIsoBlocksGiven = true;
         }
         else if (paramPair[0] == "--blu-ray" || paramPair[0] == "--blu-ray-v3" || paramPair[0] == "--avchd")
         {

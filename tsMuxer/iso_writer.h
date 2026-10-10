@@ -190,6 +190,8 @@ class IsoWriter
 
     void setVolumeLabel(const std::string& value);
     bool open(const std::string& fileName, int64_t diskSize, int extraISOBlocks);
+    // The metadata area open() sets aside, in blocks of ALLOC_BLOCK_SIZE.
+    static int metadataBlocks(int64_t diskSize, int extraISOBlocks);
 
     bool createDir(const std::string& dir);
     ISOFile* createFile();

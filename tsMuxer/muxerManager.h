@@ -2,6 +2,7 @@
 #define MUXER_MANAGER_H_
 
 #include <memory>
+#include <optional>
 
 #include "abstractMuxer.h"
 #include "bufferedFileWriter.h"
@@ -73,7 +74,8 @@ class MuxerManager final
     // What has actually been read out of the sources. The ratio of this to totalSize() is the
     // figure the progress line prints, and a finished mux must have consumed everything.
     [[nodiscard]] int64_t getDemuxedSize() { return m_metaDemuxer.getDemuxedSize(); }
-    [[nodiscard]] int getExtraISOBlocks() const { return m_extraIsoBlocks; }
+    // The extra room a disc image keeps for its file system, in blocks of 64 KB (see muxerManager.cpp).
+    [[nodiscard]] int getExtraISOBlocks();
 
     [[nodiscard]] bool useReproducibleIsoHeader() const { return m_reproducibleIsoHeader; }
 
@@ -100,7 +102,9 @@ class MuxerManager final
     void preinitMux(const std::string& outFileName, FileFactory* fileFactory);
     void writeChapterFile(const std::string& outDirName);
     // The source's chapters on the output's timeline: only those inside a --cut-start/--cut-end, moved by the start.
+    // Read once and kept: the disc path asks before the mux as well, and reading a join's chapters opens every part.
     std::vector<AVChapter> sourceChapters();
+    std::vector<AVChapter> readSourceChapters();
     // --cut-start: whether a packet the cut start has not dropped by its time is kept (see doMux).
     bool keptAfterCutStart(AVPacket& avPacket);
     std::unique_ptr<AbstractMuxer> createMuxer();
@@ -138,6 +142,11 @@ class MuxerManager final
     bool m_mvcBaseViewR;
     int64_t m_ptsOffset;
     int m_extraIsoBlocks;
+    bool m_extraIsoBlocksGiven = false;  // --extra-iso-space was given, and is taken as it is
+    int64_t m_isoSplitBytes = 0;         // --split-size, in bytes
+    int64_t m_isoSplitSeconds = 0;       // --split-duration, in seconds
+    bool m_isoSplitChapters = false;     // --split-chapters
+    std::optional<std::vector<AVChapter>> m_sourceChapters;
     bool m_bluRayMode;
     bool m_demuxMode;
     bool m_reproducibleIsoHeader = false;

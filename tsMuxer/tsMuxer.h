@@ -41,6 +41,9 @@ static constexpr int MAX_PES_HEADER_LEN = 512;
 // still being read. Sets nothing; the checks inside TSMuxer::parseMuxOpt stay as the backstop.
 void validateMuxOptsEarly(const std::string& opts);
 
+// The size a --split-size value works out at in bytes, or a refusal (tsMuxer.cpp).
+int64_t checkedSplitSize(const std::string& value);
+
 class TSMuxer final : public AbstractMuxer
 {
     typedef AbstractMuxer base_class;

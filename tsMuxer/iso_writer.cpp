@@ -803,6 +803,15 @@ IsoWriter::~IsoWriter()
 
 void IsoWriter::setMetaPartitionSize(const int size) { m_metadataFileLen = roundUp(size, ALLOC_BLOCK_SIZE); }
 
+// Two blocks, the extra asked for, and one for every 16 GB of data. With the size unknown, open() keeps the three
+// blocks the constructor starts from, and the extra is not used.
+int IsoWriter::metadataBlocks(const int64_t diskSize, const int extraISOBlocks)
+{
+    if (diskSize <= 0)
+        return 0x30000 / ALLOC_BLOCK_SIZE;
+    return 2 + extraISOBlocks + static_cast<int>(roundUp64(diskSize, META_BLOCK_PER_DATA) / META_BLOCK_PER_DATA);
+}
+
 void IsoWriter::setVolumeLabel(const std::string& value)
 {
     m_volumeLabel = value;
@@ -822,11 +831,7 @@ bool IsoWriter::open(const std::string& fileName, const int64_t diskSize, const 
     m_sparseOk = m_file.setSparse();
 
     if (diskSize > 0)
-    {
-        const int blocks =
-            2 + extraISOBlocks + static_cast<int>(roundUp64(diskSize, META_BLOCK_PER_DATA) / META_BLOCK_PER_DATA);
-        setMetaPartitionSize(ALLOC_BLOCK_SIZE * blocks);
-    }
+        setMetaPartitionSize(ALLOC_BLOCK_SIZE * metadataBlocks(diskSize, extraISOBlocks));
 
     // 1. write 32K empty space
     memset(m_buffer, 0, sizeof(m_buffer));
