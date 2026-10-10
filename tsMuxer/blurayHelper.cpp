@@ -197,10 +197,10 @@ NavigationCommand makeDefaultTrackCommand(int audioTrackIdx, int subTrackIdx,
         memcpy(cmd.data() + 6, &subTrackIdx, sizeof(subTrackIdx));
         cmd[6] &= 0x0f;
         cmd[6] |= 0x80;
-    }
-    if (subTrackMode == MuxerManager::SubTrackMode::All)
-    {
-        cmd[6] |= 0x40;
+        // Shown from the start, rather than only its forced captions. Only with a subtitle track to show: without
+        // one, this flag set on its own asked a player to switch subtitles on at the start of the disc.
+        if (subTrackMode == MuxerManager::SubTrackMode::All)
+            cmd[6] |= 0x40;
     }
     return cmd;
 }
@@ -235,7 +235,9 @@ bool writeBdMovieObjectData(const MuxerManager& muxer, AbstractOutputStream* fil
         num = isV3() ? BDMV_VersionNumber::Version3 : BDMV_VersionNumber::Version2;
     }
     const auto defaultAudioIdx = muxer.getDefaultAudioTrackIdx();
-    MuxerManager::SubTrackMode mode;
+    // Set only when a subtitle track is marked default. It used to be read uninitialised when none was, with only an
+    // audio track marked: whatever the stack held decided whether the disc switched subtitles on at its start.
+    MuxerManager::SubTrackMode mode = MuxerManager::SubTrackMode::Forced;
     const auto defaultSubIdx = muxer.getDefaultSubTrackIdx(mode);
     if (defaultAudioIdx != -1 || defaultSubIdx != -1)
     {
