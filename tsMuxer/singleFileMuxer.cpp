@@ -1,5 +1,7 @@
 #include "singleFileMuxer.h"
 
+#include <algorithm>
+
 #include <fs/directory.h>
 #include <fs/systemlog.h>
 #include <fs/textfile.h>
@@ -350,16 +352,30 @@ bool SingleFileMuxer::muxPacketTo(StreamInfo* streamInfo, AVPacket& avPacket)
     {
         if (m_owner->isAsyncMode())
         {
-            const auto newBuf = new uint8_t[bufCapacity];
-            m_owner->asyncWriteBuffer(this, streamInfo->m_buffer, streamInfo->m_bufLen, &streamInfo->m_file);
+            // Only whole 64 KiB units go to the file here, as everywhere else on this path: the file
+            // is written unbuffered, and Windows refuses a write of any other size (error 87). This
+            // flush sent the whole buffer, so a FLAC frame larger than the room left (7.1, 24 bit,
+            // 96 kHz: 72 to 193 KB each) stopped the demux after 2 MiB with a bare "T" (W1-4). The
+            // rest stays in front of the frame, as doFlush keeps it; the new buffer is made large
+            // enough for the two together.
+            const int toFileLen = streamInfo->m_bufLen & 0x7fff0000;
+            const int rest = streamInfo->m_bufLen - toFileLen;
+            const auto newBuf = new uint8_t[(std::max)(bufCapacity, rest + outSize + ADD_DATA_SIZE)];
+            memcpy(newBuf, streamInfo->m_buffer + toFileLen, rest);
+            if (toFileLen > 0)
+                m_owner->asyncWriteBuffer(this, streamInfo->m_buffer, toFileLen, &streamInfo->m_file);
+            else
+                delete[] streamInfo->m_buffer;
             streamInfo->m_buffer = newBuf;
+            streamInfo->m_totalWrited += toFileLen;
+            streamInfo->m_bufLen = rest;
         }
         else
         {
             m_owner->syncWriteBuffer(this, streamInfo->m_buffer, streamInfo->m_bufLen, &streamInfo->m_file);
+            streamInfo->m_totalWrited += streamInfo->m_bufLen;
+            streamInfo->m_bufLen = 0;
         }
-        streamInfo->m_totalWrited += streamInfo->m_bufLen;
-        streamInfo->m_bufLen = 0;
     }
 
     memcpy(streamInfo->m_buffer + streamInfo->m_bufLen, outData, outSize);
