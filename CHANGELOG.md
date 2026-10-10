@@ -1,6 +1,6 @@
 ## tsMuxeR 2.19.0
 
-Thirty-seven changes: thirty-four fixes and three additions. Most of them are to Matroska output and to subtitles.
+Ninety-four changes: eighty-eight fixes and six additions, grouped below by area. Most of them are to Matroska output, to subtitles and to Blu-ray discs.
 
 **Matroska output is still young.** tsMuxeR has only been able to write MKV files since 2.7.2, earlier this year, and a new feature needs time and real use before it is mature. Several of these fixes started with your reports, and looking more closely at the files tsMuxeR writes turned up the rest. Some go back to when MKV output was first added.
 
@@ -10,7 +10,13 @@ More fixes like these will follow, because not everything can be found at once. 
 
 **There is no Intel macOS build this time either.** Homebrew has dropped support for Intel Macs, and the Intel build gets its font library from it, so that half of the macOS job still does not run. Apple Silicon is unaffected and is here as usual. If you are on an Intel Mac, 2.18.14 is still available and still works.
 
-### Fixed
+### Worth acting on
+
+* **A Blu-ray made from H.264 in MP4 or Matroska could not be seeked.** Such a disc had one seek point for each clip, so a player froze or started over when you skipped. Mux it again to get a seek point at every key frame.
+
+* **The blank playlist of --insertBlankPL was empty.** It had no play item, which a strict player may refuse. Discs made with this option should be made again.
+
+### Matroska output
 
 * **LPCM in a Matroska file played as noise in other players.** The track was labelled as plain PCM but held the Blu-ray form of it, with a header on every frame and the bytes in the other order. It holds plain PCM now, and decodes to exactly the source. Blu-ray and transport stream output are unchanged.
 
@@ -22,13 +28,41 @@ More fixes like these will follow, because not everything can be found at once. 
 
 * **DD+ 7.1 that is not from a Blu-ray lost its extra channels in Matroska.** The frames that carry channels 7 and 8 were attached to the following frame instead of their own. They stay with their own frame now.
 
-* **MP3 could play at half or double speed.** Mono MPEG-1 and stereo MPEG-2 Layer 3 were timed wrongly, in every output. MP2 was also declared as MP3 in Matroska, and every MPEG audio track as stereo. All of this is right now.
-
-* **Removing pulldown from MPEG-2 left the frame rate at 29.97.** The help promises 24, but only the window set it; from a meta file or the command line, film then played a quarter too fast. The rate is now set to 24 whenever pulldown is removed and no rate is given.
-
 * **The duration of a Matroska file was a little too long.** It added a video frame to whichever track ended last, so a file with TrueHD came out up to 40 ms longer than its tracks really are. Each track is now measured by its own frames. An audio-only file, which came out one frame short, is right too.
 
-* **A TrueHD track rebuilt from a Matroska file did not match its source.** When the core of a TrueHD track came from inside a Matroska file, a few core frames were placed one step late. The rebuilt track matches the original byte for byte now. Both halves of the audio were always intact.
+* **A subtitle at the very start of a Matroska file delayed every track.** A subtitle at 0 seconds made every track of the file start a little late, picture and sound included. The file starts at zero now.
+
+* **Subtitle pictures in a Matroska file did not say where playback can start.** The Matroska rules ask for a mark on each block a player can start from, and subtitle blocks never had it. Each subtitle picture that stands on its own carries it now.
+
+* **A player could not seek to a subtitle, or in a file of audio alone.** The index of a Matroska file only listed video key frames. It now lists every subtitle, and in a file without video each audio track about every half second. Each entry also says where in its cluster the frame lies.
+
+* **"No chapters" gave a Matroska output with chapters anyway.** The chapters of the source were taken over whatever was chosen. They are left out now.
+
+* **Two runs of the same Matroska mux could differ in size by a byte.** An identifier was written in a varying length. It always has the same length now.
+
+### Matroska and MP4 input
+
+* **The last block of a Matroska file could be lost.** When a file ended with a block stored together with its duration, which is how subtitles are usually stored, that block was not read. It is read now.
+
+* **Joined Matroska files lost their start code record after the first part.** A Matroska file written by tsMuxeR records how its source framed the video. With "a.mkv"+"b.mkv", every part after the first was given 4-byte start codes, whatever its own record said. Each part keeps its own record now.
+
+* **Fragmented MP4 with more than one track was read from the wrong place.** The second track of each fragment was read from where the first one ended. Every track is read from its own place now.
+
+* **MP4 video could be retimed to an odd frame rate.** Without fps= on the track, a 23.976 film from MP4 could be muxed at 23.9744. The rate given by the file's own timing is used now, rounded to the standard rate it stands for.
+
+* **An MP4 whose movie header comes after its tracks was refused.** The format allows this order, and the start delay of an edit list is now timed once the whole movie box is read, with each file's own header. The entries of an edit list are also read whole now, and no more of them than the box holds.
+
+* **A text track with no time scale stopped an MP4 file.** tsMuxeR ended with a divide error, even when only listing the file. Such a track is now left out with a warning, and the other tracks are read as usual.
+
+* **An MP4 or MOV with a movie time scale of 0 ended tsMuxeR without a word.** It is refused with a message now.
+
+* **A Matroska video block with a broken NAL length could add stray bytes or hang.** A NAL unit is only taken now when its length fits inside its block.
+
+* **MPEG-2 video could be listed and muxed as FLAC.** In some MPEG-2 video, from a Matroska file or a bare .m2v, a few bytes looked like the start of FLAC audio. A FLAC frame now has to pass its own checksum, and a container that names a video codec is asked first.
+
+* **A damaged program map in a transport stream could crash the track scan.** A map that never completed ran past the room kept for it. Such a map is now dropped, and the scan goes on.
+
+### Subtitles
 
 * **Subtitles turned into pictures were split up and could land at the wrong time.** Each subtitle was cut into several pieces, and a piece could be written so far from its neighbours that its time came out wrong: a line due at 6 seconds appeared at 71. Each subtitle is one piece now, written at its own time.
 
@@ -42,33 +76,123 @@ More fixes like these will follow, because not everything can be found at once. 
 
 * **A line of dialogue with an arrow in it could break a subtitle apart.** Any line holding "-->" was taken for a timing line, so a line such as "Go --> there" after an empty line ended its subtitle and was lost. Only a line with real times around the arrow counts as a timing line now.
 
+* **Some SRT files were read as one long subtitle.** Lines that end with a CR alone, as files from the classic Mac OS do, made the whole file one line. A missing blank line between two subtitles, or a line holding only a tab, joined the next subtitle to the one before. All three are read right now.
+
+* **The encoding of a large SRT file could be judged wrongly.** It is judged from the first 2 MB. A UTF-8 file whose first 2 MB ended inside a letter was read in the code page. A code page file with plain ASCII in its first 2 MB lost its later letters when kept as text. Both are read right now.
+
 * **Subtitles that overlap in an SRT file were drawn out of order.** The end of the first one cleared the second while it was still due, and the pictures could go back in time. Subtitles that overlap are now shown together, the earlier one on top, in time order. At most four are shown at once, with a warning when a file has more.
 
 * **A subtitle could show one frame early.** At 25 and 50 fps a subtitle time can fall exactly between two frames, and it went to the earlier one. It goes to the later frame now.
 
 * **Screen positions after an SRT end time were read as part of the time.** Some SRT files carry positions such as `X1:100 X2:600 Y1:50 Y2:90` after the end time, and the end was then misread. Only the time is read now.
 
-* **A subtitle at the very start of a Matroska file delayed every track.** A subtitle at 0 seconds made every track of the file start a little late, picture and sound included. The file starts at zero now.
+* **Colour tags drew the wrong colour.** `<font color="red">` drew black, and a colour given as #RRGGBB, the form the help shows, was not read at all. Five colour names were misspelt and three had wrong values. Names, #RRGGBB and numbers all work now.
 
-* **Subtitle pictures in a Matroska file did not say where playback can start.** The Matroska rules ask for a mark on each block a player can start from, and subtitle blocks never had it. Each subtitle picture that stands on its own carries it now.
+* **On Linux and macOS, red and blue changed places.** A subtitle asked for in red came out blue there, and blue came out red. The colours are kept as they are given now.
 
-* **The last block of a Matroska file could be lost.** When a file ended with a block stored together with its duration, which is how subtitles are usually stored, that block was not read. It is read now.
+* **The words around a style tag were spaced wrongly.** "and <b>both</b>" was drawn as "andboth", and "<b>Bold</b> word" had a gap up to twice as wide as a space. Each piece of a line now moves the next one on by its real width.
+
+* **A subtitle too large for the picture was lost.** It is now drawn smaller, at the largest size that fits, and a warning says so. A subtitle that lies wholly outside the picture is named in a warning.
+
+* **A huge font size could stall the subtitle conversion.** Each step away from the default size was worked out one at a time, billions of times for a large value, and a 19-digit relative size overflowed the sum. Both are held to sizes that can be shown now.
 
 * **Subtitles from some Matroska files came out far too late.** Most files count time in milliseconds, but a file may use a finer step, which the subtitle times ignored: in a file that counts in tenths of a millisecond, a subtitle due at 0.7 seconds came out at 7. Every time uses the file's own step now.
 
 * **Subtitles without an end time in a Matroska file were cleared at a meaningless time.** A subtitle stored without a duration is shown until the next one, as the Matroska rules say, but it was given an end more than two hours later. It is now shown until the next subtitle.
 
+* **A very large PGS subtitle from a Matroska file was lost.** A segment of nearly 64 KB was measured in 16 bits, came out a few bytes long, and was dropped. It is read whole now. Such a subtitle does not fit a transport stream packet, so for TS and Blu-ray output it is refused with a message that names the track.
+
 * **Subtitles from an MP4 file were lost, and the reader could hang.** When several subtitles share one part of the file, only the first was read, at the time of the gap before it, often 0 seconds. Every subtitle comes out at its own time now, with its bold, italic and underline, and a damaged style box can no longer hang the mux.
 
 * **Times written as text were cut off instead of rounded.** A subtitle from a Matroska or MP4 file could land a frame early, and chapter times in an exported chapter file and times in the track listing could read a millisecond short. Times are rounded to the millisecond now.
 
-* **A Dolby Vision or 3D video could lose its last frames without a word.** This happened when another track in the same mux delivered nothing. All frames are written now, and the usual report is printed.
+### Audio
+
+* **MP3 could play at half or double speed.** Mono MPEG-1 and stereo MPEG-2 Layer 3 were timed wrongly, in every output. MP2 was also declared as MP3 in Matroska, and every MPEG audio track as stereo. All of this is right now.
+
+* **The AC-3 core of a 96 or 192 kHz TrueHD track was sent too early.** When a core was merged into high-resolution TrueHD, its frames went out two or four times too early. They are placed by playing time now, next to the TrueHD unit they belong to.
+
+* **A TrueHD track rebuilt from a Matroska file did not match its source.** When the core of a TrueHD track came from inside a Matroska file, a few core frames were placed one step late. The rebuilt track matches the original byte for byte now. Both halves of the audio were always intact.
+
+* **FLAC with large frames could stop a demux part way.** On the default writer of Windows, a demux of 7.1 FLAC stopped at 0.4 per cent. It runs to the end now.
+
+* **A WAV or W64 demuxed on Linux or macOS had a broken header.** The header kept placeholder sizes, and 8 stray bytes followed the audio. The file is now the same as on Windows.
+
+### Video and timing
+
+* **Removing pulldown from MPEG-2 left the frame rate at 29.97.** The help promises 24, but only the window set it; from a meta file or the command line, film then played a quarter too fast. The rate is now set to 24 whenever pulldown is removed and no rate is given.
+
+* **A cut that starts later than the beginning could give no picture.** With --cut-start, the video began on a picture that needs earlier ones, so H.264 and HEVC from Matroska decoded with errors or not at all. The video now starts on its first key frame inside the cut, with everything it needs.
+
+* **HEVC that begins on a CRA picture started 2 seconds late.** The first pictures were timed from the wrong reference. They start on time now.
+
+* **The later parts of a split HEVC or VVC output decoded with errors.** The parameter sets kept for the next part lost their last byte. They are whole now.
+
+* **Joined H.264 parts could get the wrong picture times.** A later part that counts its pictures another way was timed with the first part's step: pictures shared one time, others were spread out, and a warning was printed for every picture. Each part keeps its own step now.
 
 * **A video that opens partway through a group of pictures started before zero.** Its first few pictures were placed at negative times, and some software could not process the file at all. The file now starts at zero.
 
+* **A Dolby Vision or 3D video could lose its last frames without a word.** This happened when another track in the same mux delivered nothing. All frames are written now, and the usual report is printed.
+
+### Blu-ray, transport streams and 3D
+
+* **The time between two clock references could pass 0.1 s.** The transport stream rules allow at most 0.1 s, and some outputs, UHD among them, went up to 0.11 s. The clock is now written in time. With --maxbitrate the gap can still reach 0.12 s; that is left for a later version.
+
+* **The muxer's own tables went out as a burst on Blu-ray.** Every few seconds, four packets left within a few microseconds, far above the rate a drive can read. Such a short burst is now held at that rate.
+
+* **A disc with a default audio track could start with subtitles on.** With an audio track marked default and no default subtitle, the disc's start command could still switch subtitles on. They stay off now.
+
+* **A 3D track gave a UHD disc that plays in 2D.** A UHD disc cannot carry 3D, so a mux with a 3D track is now written as a Blu-ray 3D disc, with a warning.
+
+* **A 3D disc image split into parts was refused.** The base view lost a block of video at every split. Every block is kept now.
+
+* **A 3D playlist could pair a play item with the wrong second view.** Each play item now gets its own dependent-view clip, and one that is left out takes its second view along.
+
+* **A track that starts in a later clip of a playlist was not listed.** Its stream is now found in the clip where it starts, listed and timed.
+
+* **A disc image with many split parts could end without a word.** The room for the file names ran out when the image was finished, after "Mux successful complete". The room is now set aside for every part, and an image that cannot be finished is reported as an error, before any success line.
+
+* **--blankOffset could replace the main playlist or one of its clips.** A number that clashes is now refused.
+
+* **BDMV to ISO made an image from a file it could not read in full.** It stops with an error naming the file now.
+
+* **A 3D folder without its .ssif files gave a 2D image without a word.** With --3d-single-copy, --bdmv-to-iso rebuilds the missing .ssif files; without it, a warning says which titles play in 2D.
+
+* **A file whose end could not be written was reported as complete.** A full disk at the very end of a mux or a demux now fails the run, and the message names the file.
+
+* **The read-rate warning counted the muxer's own tables.** Packets the muxer adds itself are no longer counted against the source's rate.
+
+* **A VVC stream could stop a transport stream mux.** Without HDMV descriptors, a stream with many sub-profiles was written past the room for its descriptor, and a stream that was not recognised ended tsMuxeR. Both are handled now.
+
+* **A program stream map near its size limit did not fit its room.** The limit for a map in a VOB or MPG now includes its header.
+
 * **The track list showed a negative duration for some broadcast recordings.** The length was read from two different clocks. It is read from one now.
 
-* **Two runs of the same Matroska mux could differ in size by a byte.** An identifier was written in a varying length. It always has the same length now.
+* **Windows file errors were cut to their first letter.** They are printed whole now.
+
+### Chapters
+
+* **Joined playlists and Matroska files lost the chapters of every part after the first.** With "a"+"b", the chapters of the second part were left out, or put at the start. Every part keeps its chapters now, placed where that part begins.
+
+* **A cut kept all the chapters of the film.** With --cut-start or --cut-end, the chapters stayed at their old times. Only the chapters inside the cut are kept now, moved to the cut's own timeline.
+
+* **A Matroska chapter without a name or a language could crash tsMuxeR.** Such chapters are read correctly now.
+
+* **A chapter time of 26.5 hours or more landed near the start.** Such a time is now left out, and a time that cannot be read is refused with its place.
+
+* **A chapter file with a huge chapter number could stall tsMuxeR.** Chapter numbers are checked now, the messages name the right line, and zero-padded numbers are read.
+
+* **A long --auto-chapters step put chapters in the wrong places.** From about 1,580 minutes on, the marks wrapped round, and a very large value never finished the playlist. A step longer than the film now gives one chapter at the start, and a negative value is refused.
+
+### Window
+
+* **The window stopped a mux after 10,000 warning lines.** A mux with many warnings now runs to the end.
+
+* **Lines from tsMuxeR could be cut in two.** A line that arrived in two pieces was shown as two lines. It is shown whole now.
+
+* **The right-click menu of the track list was hard to read in some colour schemes.** It now uses the colours of the system. Selections on Windows 7 also use the Selected Items colours now.
+
+* **The chapter list and the meta line could disagree.** After a join or a removal, the meta line kept the old chapters. Chapter times taken from a source could also read a millisecond early. Both are right now.
 
 * **With Blu-ray ISO selected, the track list could look as if tracks were missing.** The Dual-layer options took their room from the track list, so with a dual layer disc chosen only three of six tracks showed at the window's normal size, and the others were taken for tracks the ISO had dropped. The options sit beside the Meta file box now, and every track shows. The output itself was never affected.
 
@@ -82,9 +206,15 @@ More fixes like these will follow, because not everything can be found at once. 
 
 ### New
 
-* **A Matroska file now says which version of tsMuxeR wrote it.** The writing application reads, for example, `tsMuxeR 2.19.0`. Until now a file only said `tsMuxeR`, so the version behind a problem could not be told from the file.
+* **An SRT subtitle can stay text in a Matroska file.** Tick "Keep SRT subtitles as text" on the Subtitles tab, which is now on by default, or add `keep-text` to the subtitle line, and each subtitle is copied as text, with its tags and its own start and end, instead of being drawn into pictures. Subtitles that overlap stay as they are. No font or picture settings are needed then. A transport stream or a Blu-ray cannot carry text subtitles, so there the subtitles are drawn as before, with a warning. A demux with `keep-text` writes the subtitles back as an SRT file.
 
-* **An SRT subtitle can stay text in a Matroska file.** Tick "Keep SRT subtitles as text" on the Subtitles tab, or add `keep-text` to the subtitle line, and each subtitle is copied as text, with its tags and its own start and end, instead of being drawn into pictures. Subtitles that overlap stay as they are. No font or picture settings are needed then. A transport stream or a Blu-ray cannot carry text subtitles, so there the subtitles are drawn as before, with a warning. A demux with `keep-text` writes the subtitles back as an SRT file.
+* **The window tells you more about 3D.** The BDMV to ISO tab recognises a 3D folder and ticks the 3D box. The mux tab says when a 3D track gives the disc its .ssif files, and asks before a 3D track is left out.
+
+* **The listing gives an AAC track its bitrate.**
+
+* **--no-chapters leaves the source's chapters out of a Matroska output.**
+
+* **A Matroska file now says which version of tsMuxeR wrote it.** The writing application reads, for example, `tsMuxeR 2.19.0`. Until now a file only said `tsMuxeR`, so the version behind a problem could not be told from the file.
 
 * **Opus in Matroska tells players how much to decode before a seek point.** The Matroska rules for Opus ask for it, and tsMuxeR now writes it.
 
