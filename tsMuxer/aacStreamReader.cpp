@@ -1,4 +1,7 @@
 #include "aacStreamReader.h"
+
+#include <cmath>
+
 #include "nalUnits.h"
 #include "vodCoreException.h"
 
@@ -20,12 +23,46 @@ void AACStreamReader::applyDiscoveryData(const StreamDiscoveryData& data)
 
 int AACStreamReader::getHeaderLen() { return AAC_HEADER_LEN; }
 
+// The listing gave every other audio format a bitrate and AAC none. AAC is usually variable, and the ten
+// frames the detection checks are a fifth of a second, so the figure is the average over every frame in
+// the data the listing reads, and it says so.
 const std::string AACStreamReader::getStreamInfo()
 {
     std::ostringstream str;
+    if (m_seenSamples > 0 && m_sample_rate > 0)
+        str << "Bitrate: " << llround(static_cast<double>(m_seenBits) * m_sample_rate / m_seenSamples / 1000.0)
+            << "Kbps (average)  ";
     str << "Sample Rate: " << m_sample_rate / 1000 << "KHz  ";
     str << "Channels: " << static_cast<int>(m_channels);
     return str.str();
+}
+
+CheckStreamRez AACStreamReader::checkStream(uint8_t* buffer, const int len, const ContainerType containerType,
+                                            const int containerDataType, const int containerStreamIndex)
+{
+    CheckStreamRez rez =
+        SimplePacketizerReader::checkStream(buffer, len, containerType, containerDataType, containerStreamIndex);
+    if (!rez.codecInfo.codecID)
+        return rez;
+    // Only the frame headers are read: each one gives its own length and its number of samples. The
+    // header itself (7 bytes, 9 with its CRC) is not part of the audio and is left out of the figure, which
+    // is how a codec's bitrate is given; an AAC read out of an MP4 or a Matroska carries that header only
+    // because the reader adds it.
+    m_seenBits = 0;
+    m_seenSamples = 0;
+    uint8_t* const end = buffer + len;
+    for (uint8_t* frame = findFrame(buffer, end); frame && end - frame >= AAC_HEADER_LEN;)
+    {
+        const int size = AACCodec::decodeFrame(frame, end) ? getFrameSize(frame) : 0;
+        if (size <= 0 || size > end - frame)
+            break;
+        const int headerSize = (frame[1] & 0x01) ? AAC_HEADER_LEN : AAC_HEADER_LEN + 2;
+        m_seenBits += static_cast<int64_t>(size > headerSize ? size - headerSize : 0) * 8;
+        m_seenSamples += m_samples;
+        frame += size;
+    }
+    rez.streamDescr = getStreamInfo();
+    return rez;
 }
 
 // Returns frame length, or zero (not a frame), or NOT_ENOUGH_BUFFER.

@@ -13,6 +13,8 @@ class AACStreamReader final : public SimplePacketizerReader, public AACCodec
     uint8_t getChannels() override { return m_channels; }
     void applyDiscoveryData(const StreamDiscoveryData& data) override;
     void fillDiscoveryData(StreamDiscoveryData& data) override;
+    CheckStreamRez checkStream(uint8_t* buffer, int len, ContainerType containerType, int containerDataType,
+                               int containerStreamIndex) override;
 
    protected:
     int getHeaderLen() override;
@@ -21,6 +23,11 @@ class AACStreamReader final : public SimplePacketizerReader, public AACCodec
     double getFrameDuration() override { return static_cast<double>(m_samples) * INTERNAL_PTS_FREQ / m_sample_rate; }
     const CodecInfo& getCodecInfo() override { return aacCodecInfo; }
     const std::string getStreamInfo() override;
+
+   private:
+    // What the listing saw: the bits and samples of every frame in the data it was given.
+    int64_t m_seenBits = 0;
+    int64_t m_seenSamples = 0;
 };
 
 #endif
