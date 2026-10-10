@@ -158,6 +158,32 @@ void TextSubtitlesRenderWin32::getTextSize(const std::string& text, SIZE* mSize)
 #endif
 }
 
+// The size above is the ink of the outline, so a space at either end of a piece has no width in it: "and <b>bold</b>"
+// was drawn "andbold", and a piece that starts with a space overlapped the one before. The advance is measured with a
+// bar set after the text: the right edges of the two outlines differ by the text's advance, whatever the layout puts
+// in front of the first character.
+int TextSubtitlesRenderWin32::getTextAdvance(const std::string& text)
+{
+#ifdef OLD_WIN32_RENDERER
+    return TextSubtitlesRender::getTextAdvance(text);
+#else
+    const int opts = m_font.m_opts & 0xf;
+    const FontFamily fontFamily(toWide(m_font.m_name).data());
+    const StringFormat strformat;
+    const auto rightEdge = [&](const std::string& s)
+    {
+        GraphicsPath path;
+        const auto wide = toWide(s);
+        path.AddString(wide.data(), static_cast<int>(wide.size()) - 1, &fontFamily, opts,
+                       static_cast<float>(m_font.m_size), Point(0, 0), &strformat);
+        RectF rect;
+        path.GetBounds(&rect);
+        return static_cast<double>(rect.X) + rect.Width;
+    };
+    return static_cast<int>(lround(rightEdge(text + "|") - rightEdge("|")));
+#endif
+}
+
 int TextSubtitlesRenderWin32::getLineSpacing()
 {
 #ifdef OLD_WIN32_RENDERER

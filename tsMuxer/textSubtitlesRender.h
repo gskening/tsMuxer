@@ -118,6 +118,8 @@ class TextSubtitlesRender
     virtual void setFont(const Font& font) = 0;
     virtual void setRenderSize(int width, int height) = 0;
     virtual void getTextSize(const std::string& text, SIZE* mSize) = 0;
+    // How far the next piece of the line starts after this one, spaces included. By default the width above.
+    virtual int getTextAdvance(const std::string& text);
     virtual int getLineSpacing() = 0;
     virtual int getBaseline() = 0;
     virtual void drawText(const std::string& text, RECT* rect) = 0;

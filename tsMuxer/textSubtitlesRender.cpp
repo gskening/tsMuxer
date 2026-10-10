@@ -400,6 +400,13 @@ vector<pair<Font, string>> TextSubtitlesRender::processTxtLine(const std::string
     return rez;
 }
 
+int TextSubtitlesRender::getTextAdvance(const std::string& text)
+{
+    SIZE size;
+    getTextSize(text, &size);
+    return size.cx;
+}
+
 bool TextSubtitlesRender::textFits(const std::string& text)
 {
     vector<Font> fontStack;
@@ -412,13 +419,16 @@ bool TextSubtitlesRender::textFits(const std::string& text)
     {
         int ySize = 0;
         int tWidth = 0;
-        for (auto& part : processTxtLine(line, fontStack))
+        const vector<pair<Font, string>> parts = processTxtLine(line, fontStack);
+        for (size_t k = 0; k < parts.size(); ++k)
         {
-            setFont(part.first);
+            setFont(parts[k].first);
             SIZE mSize;
-            getTextSize(part.second, &mSize);
+            getTextSize(parts[k].second, &mSize);
             ySize = FFMAX(ySize, mSize.cy);
-            tWidth += mSize.cx;
+            // A piece with another after it moves the next one on by its advance; the last piece counts by its size,
+            // as a line of one piece always did, so that the line is still centred on what is drawn.
+            tWidth += k + 1 == parts.size() ? mSize.cx : getTextAdvance(parts[k].second);
         }
         if (tWidth > m_width)
             fits = false;
@@ -450,16 +460,17 @@ bool TextSubtitlesRender::rasterText(const std::string& text)
         int maxHeight = 0;
         int maxBaseLine = 0;
         vector<int> xSize;
-        for (auto& j : txtParts)
+        for (size_t k = 0; k < txtParts.size(); ++k)
         {
-            setFont(j.first);
+            setFont(txtParts[k].first);
             SIZE mSize;
-            getTextSize(j.second, &mSize);
+            getTextSize(txtParts[k].second, &mSize);
             ySize = FFMAX(ySize, mSize.cy);
             maxHeight = FFMAX(maxHeight, getLineSpacing());
             maxBaseLine = FFMAX(maxBaseLine, getBaseline());
-            xSize.push_back(mSize.cx);
-            tWidth += mSize.cx;
+            // as in textFits: the advance of a piece another follows, the size of the last
+            xSize.push_back(k + 1 == txtParts.size() ? mSize.cx : getTextAdvance(txtParts[k].second));
+            tWidth += xSize.back();
         }
         const int xOffs = (m_width - tWidth) / 2;
         int curX = 0;
