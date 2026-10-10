@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <climits>
+#include <cmath>
+#include <map>
 
 #include <fs/systemlog.h>
 
@@ -1458,6 +1460,39 @@ int MovDemuxer::mov_read_ctts(MOVAtom atom)
     return 0;
 }
 
+// A track's frame rate from its whole table of sample durations: the average over every sample but the last, whose
+// duration is often only what was left. A time scale that cannot express the rate makes the durations alternate, as
+// 528 and 544 at 16000 for 29.97 or 3753 and 3754 at 90 kHz for 23.976, and only the average gives the rate. An
+// average within 0.1 % of a standard rate is that rate: a few samples one tick off, as timestamps rounded to the time
+// scale leave them, must not turn 59.94 into 59.9412, which a disc cannot carry. 0 when the table is empty.
+static double fpsFromStts(const std::vector<MOVStts>& stts, const int64_t timeScale)
+{
+    uint64_t total = 0;
+    for (const MOVStts& e : stts) total += e.count;
+    uint64_t samples = 0;
+    double ticks = 0.0;
+    for (size_t i = 0; i < stts.size(); ++i)
+    {
+        uint64_t count = stts[i].count;
+        if (i + 1 == stts.size() && count > 0 && total > 2)
+            count--;
+        if (stts[i].duration <= 0 || count == 0)
+            continue;
+        samples += count;
+        ticks += static_cast<double>(stts[i].duration) * static_cast<double>(count);
+    }
+    if (samples == 0 || ticks <= 0.0 || timeScale <= 0)
+        return 0.0;
+    const double average = static_cast<double>(timeScale) * static_cast<double>(samples) / ticks;
+    static constexpr double standardRates[] = {
+        24000.0 / 1001, 24.0, 25.0,  30000.0 / 1001,  30.0, 48000.0 / 1001, 48.0, 50.0,
+        60000.0 / 1001, 60.0, 100.0, 120000.0 / 1001, 120.0};
+    for (const double rate : standardRates)
+        if (std::fabs(average - rate) <= rate * 0.001)
+            return rate;
+    return average;
+}
+
 int MovDemuxer::mov_read_stts(MOVAtom atom)
 {
     const auto st = reinterpret_cast<MOVStreamContext*>(tracks[num_tracks - 1]);
@@ -1469,11 +1504,11 @@ int MovDemuxer::mov_read_stts(MOVAtom atom)
     {
         st->stts_data[i].count = get_be32();
         st->stts_data[i].duration = get_be32();
-        if (i == 0)
-        {
-            st->fps = st->time_scale / static_cast<double>(st->stts_data[i].duration);
-        }
     }
+    // The rate the track is muxed at when the meta line gives no fps=. It used to be the FIRST entry alone, which is
+    // not the rate wherever the durations alternate: the first entry of a 90 kHz 23.976 track gave 23.9808 or
+    // 23.9744, and a 29.97 track at 16000 gave 30.303, and every picture was retimed by it, 80 s over two hours.
+    st->fps = fpsFromStts(st->stts_data, st->time_scale);
     return 0;
 }
 

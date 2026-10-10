@@ -46,6 +46,14 @@ class MPEGStreamReader : public AbstractStreamReader
         m_pcrIncPerField = m_pcrIncPerFrame / 2;
     }
 
+    // The rate the container gives for the track, used where the meta line gives no fps=. Unlike fps=, it gives way
+    // to the stream's own rate where the two differ by no more than a container can be off by (see updateFPS).
+    void setContainerFPS(const double fps)
+    {
+        setFPS(fps);
+        m_fpsFromContainer = true;
+    }
+
     [[nodiscard]] double getFPS() const { return m_fps; }
     [[nodiscard]] VideoAspectRatio getStreamAR() const
     {
@@ -89,6 +97,7 @@ class MPEGStreamReader : public AbstractStreamReader
     int64_t m_processedBytes;
     bool m_eof;
     double m_fps;
+    bool m_fpsFromContainer = false;
     int64_t m_pcrIncPerFrame;
     int64_t m_pcrIncPerField;
     const uint8_t* m_lastDecodedPos;

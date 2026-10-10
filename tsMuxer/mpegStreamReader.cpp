@@ -330,6 +330,15 @@ void MPEGStreamReader::updateFPS(void* curNALUnit, uint8_t* buff, uint8_t* nextN
         LTRACE(LT_INFO, 2,
                getCodecInfo().displayName << " muxing fps is not set. Get fps from stream. Value: " << spsFps);
     }
+    else if (spsFps != 0.0 && m_fpsFromContainer && abs_(m_fps, spsFps) <= spsFps * 0.001)
+    {
+        // The container's rate is the stream's own as nearly as its timestamps can say it: an MP4 time scale often
+        // cannot express 29.97 or 23.976 exactly. It used to be taken as if fps= had asked for it, so the stream's
+        // timing was rewritten to it and every picture retimed. The stream's own rate is kept; a real difference,
+        // a speed change a container states on purpose, is still followed below.
+        setFPS(spsFps);
+        m_fpsFromContainer = false;
+    }
     else if (spsFps != 0.0 && abs_(m_fps, spsFps) > EPSILON)
     {
         if (m_isFirstFpsWarn)

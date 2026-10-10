@@ -946,7 +946,7 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
             {
                 const double containerFps = correctFps(demuxerIt->second.m_demuxer->getTrackFps(pid));
                 if (containerFps > 0.0)
-                    mpegReader->setFPS(containerFps);
+                    mpegReader->setContainerFPS(containerFps);
             }
         }
     }
