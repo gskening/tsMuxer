@@ -440,29 +440,31 @@ bool SingleFileMuxer::close()
                 failed();
                 continue;
             }
-            if (streamInfo->m_bufLen > 0)
+            // The end of a file is written also when nothing is left over to write. It used to be skipped then, and
+            // that is where a WAV or W64 file gets its sizes: a demux whose length came out a whole number of 64 KiB
+            // blocks kept the placeholders, 0xFFFFFFFF in a WAV. The last part of a split track kept the name it was
+            // written under, too.
+            if (!streamInfo->m_file.open(streamInfo->m_fileName.c_str(), File::ofWrite + File::ofAppend) ||
+                (streamInfo->m_bufLen > 0 &&
+                 streamInfo->m_file.write(streamInfo->m_buffer, streamInfo->m_bufLen) != streamInfo->m_bufLen) ||
+                (streamInfo->m_codecReader && !streamInfo->m_codecReader->beforeFileCloseEvent(streamInfo->m_file)))
             {
-                if (!streamInfo->m_file.open(streamInfo->m_fileName.c_str(), File::ofWrite + File::ofAppend) ||
-                    !streamInfo->m_file.write(streamInfo->m_buffer, streamInfo->m_bufLen) ||
-                    (streamInfo->m_codecReader && !streamInfo->m_codecReader->beforeFileCloseEvent(streamInfo->m_file)))
-                {
-                    streamInfo->m_file.close();
-                    failed();
-                    continue;
-                }
-                if (!streamInfo->m_file.close())
-                {
-                    failed();
-                    continue;
-                }
+                streamInfo->m_file.close();
+                failed();
+                continue;
+            }
+            if (!streamInfo->m_file.close())
+            {
+                failed();
+                continue;
+            }
 
-                if (streamInfo->m_part > 1)
-                {
-                    std::string newName = getNewName(streamInfo->m_fileName, streamInfo->m_part);
-                    deleteFile(newName);
-                    if (rename(streamInfo->m_fileName.c_str(), newName.c_str()) != 0)
-                        THROW(ERR_COMMON, "Can't rename file " << streamInfo->m_fileName << " to " << newName)
-                }
+            if (streamInfo->m_part > 1)
+            {
+                std::string newName = getNewName(streamInfo->m_fileName, streamInfo->m_part);
+                deleteFile(newName);
+                if (rename(streamInfo->m_fileName.c_str(), newName.c_str()) != 0)
+                    THROW(ERR_COMMON, "Can't rename file " << streamInfo->m_fileName << " to " << newName)
             }
         }
     return allFinished;
