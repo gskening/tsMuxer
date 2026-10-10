@@ -375,9 +375,14 @@ class MovParsedH264TrackData : public ParsedTrackPrivData
             return size * 2;
         }
 
+        // The size of exactly what extractData writes: each NAL that passes, with a 4 byte start code in place of its
+        // length field. It used to be the size of the whole sample plus the start code overhead, so where the walk
+        // stopped early, as it does in a sample cut off by the end of the file, the packet kept the bytes behind the
+        // last NAL that was written, and whatever the reused buffer held there went into the stream. Where the walk
+        // reaches the end of the sample the two sizes are the same.
         const uint8_t* cur = buff;
         const uint8_t* end = buff + size;
-        unsigned nalCnt = 0;
+        uint64_t nalBytes = 0;
         while (cur < end)
         {
             if (static_cast<size_t>(end - cur) < nal_length_size)
@@ -403,7 +408,7 @@ class MovParsedH264TrackData : public ParsedTrackPrivData
                 break;
             }
             cur += nalSize;
-            ++nalCnt;
+            nalBytes += 4 + static_cast<uint64_t>(nalSize);
         }
         unsigned spsPpsSize = 0;
         for (const auto& i : spsPpsList)
@@ -414,11 +419,10 @@ class MovParsedH264TrackData : public ParsedTrackPrivData
             spsPpsSize += entrySize;
         }
 
-        const unsigned naluOverhead = (nal_length_size < 4) ? nalCnt * (4 - nal_length_size) : 0;
-        if (size > UINT_MAX - spsPpsSize - naluOverhead)
+        if (nalBytes > UINT_MAX - spsPpsSize)
             return size * 2;  // overflow protection
 
-        return size + spsPpsSize + naluOverhead;
+        return static_cast<unsigned>(nalBytes) + spsPpsSize;
     }
 
    protected:
