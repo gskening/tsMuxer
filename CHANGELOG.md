@@ -1,6 +1,6 @@
 ## tsMuxeR 2.19.0
 
-Ninety-four changes: eighty-eight fixes and six additions, grouped below by area. Most of them are to Matroska output, to subtitles and to Blu-ray discs.
+Ninety-seven changes: ninety-one fixes and six additions, grouped below by area. Most of them are to Matroska output, to subtitles and to Blu-ray discs.
 
 **Matroska output is still young.** tsMuxeR has only been able to write MKV files since 2.7.2, earlier this year, and a new feature needs time and real use before it is mature. Several of these fixes started with your reports, and looking more closely at the files tsMuxeR writes turned up the rest. Some go back to when MKV output was first added.
 
@@ -104,6 +104,8 @@ More fixes like these will follow, because not everything can be found at once. 
 
 * **Subtitles from an MP4 file were lost, and the reader could hang.** When several subtitles share one part of the file, only the first was read, at the time of the gap before it, often 0 seconds. Every subtitle comes out at its own time now, with its bold, italic and underline, and a damaged style box can no longer hang the mux.
 
+* **A Matroska file of subtitles alone started at its first subtitle.** Every subtitle came out early by the time of the first one, a delay given to the track did nothing, and chapters no longer matched. Such a file now keeps the source's times, as every other output of the same subtitles does.
+
 * **Times written as text were cut off instead of rounded.** A subtitle from a Matroska or MP4 file could land a frame early, and chapter times in an exported chapter file and times in the track listing could read a millisecond short. Times are rounded to the millisecond now.
 
 ### Audio
@@ -117,6 +119,8 @@ More fixes like these will follow, because not everything can be found at once. 
 * **FLAC with large frames could stop a demux part way.** On the default writer of Windows, a demux of 7.1 FLAC stopped at 0.4 per cent. It runs to the end now.
 
 * **A WAV or W64 demuxed on Linux or macOS had a broken header.** The header kept placeholder sizes, and 8 stray bytes followed the audio. The file is now the same as on Windows.
+
+* **A demuxed WAV or W64 could keep placeholder sizes on any system.** This happened when the file came out a whole number of 64 KiB blocks long, so players saw it as broken or empty. Every file now gets its real sizes.
 
 ### Video and timing
 
@@ -162,7 +166,9 @@ More fixes like these will follow, because not everything can be found at once. 
 
 * **The read-rate warning counted the muxer's own tables.** Packets the muxer adds itself are no longer counted against the source's rate.
 
-* **A VVC stream could stop a transport stream mux.** Without HDMV descriptors, a stream with many sub-profiles was written past the room for its descriptor, and a stream that was not recognised ended tsMuxeR. Both are handled now.
+* **A VVC or HEVC stream could stop a transport stream mux.** Without HDMV descriptors, a VVC stream with many sub-profiles was written past the room for its descriptor, and a stream that was not recognised as VVC or HEVC ended tsMuxeR. Both are handled now.
+
+* **TS, M2TS and Blu-ray output failed on drives with 4 KB sectors.** Windows refused the writes with "The parameter is incorrect". Such a drive is now written through the system cache, with the same bytes; other drives are written as before.
 
 * **A program stream map near its size limit did not fit its room.** The limit for a map in a VOB or MPG now includes its header.
 
