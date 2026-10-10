@@ -1701,6 +1701,7 @@ static int bdmvFolderToGuardedIso(const int argc, char** argv)
         ISOFile* out = iso->createFile();
         out->open(item.rel.c_str(), File::ofWrite);
         int n;
+        int64_t copied = 0;
         while ((n = in.read(buf.data(), static_cast<uint32_t>(buf.size()))) > 0)
         {
             if (out->write(buf.data(), static_cast<uint32_t>(n)) < 0)
@@ -1708,6 +1709,7 @@ static int bdmvFolderToGuardedIso(const int argc, char** argv)
                 LTRACE(LT_ERROR, 2, "Write error on " << item.rel);
                 return -1;
             }
+            copied += n;
             written += n;
             if (total > 0)
             {
@@ -1722,6 +1724,16 @@ static int bdmvFolderToGuardedIso(const int argc, char** argv)
         out->close();
         delete out;
         in.close();
+        // A read that fails part way, a scratched disc or a mount that drops, ended the loop above as if the file had
+        // ended there: the file went into the image short and the run finished as if nothing had happened. A 3D
+        // group (writeSsifGroup) already stopped on it.
+        if (n < 0 || copied != item.size)
+        {
+            LTRACE(LT_ERROR, 2,
+                   "Error: " << item.full << " could not be read in full (" << copied << " of " << item.size
+                             << " bytes), so the image is not finished and cannot be used.");
+            return -1;
+        }
         ranges.push_back({startLbn, iso->currentImageLBA()});
     }
     // Lay down the standard BD folder skeleton (empty META/BDJO/JAR/AUXDATA, CERTIFICATE, and the BACKUP
