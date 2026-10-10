@@ -1148,26 +1148,40 @@ std::vector<AVChapter> METADemuxer::getChapters()
     // has to be walked separately. Mark times are relative to the play item they belong to, and
     // the play items run back to back, so each one's span has to be accumulated. Same arithmetic
     // the playlist listing uses in main.cpp; all values are 45 kHz ticks.
-    for (auto& [name, mpls] : m_mplsStreamMap)
+    //
+    // Playlists joined with "+" ("a.mpls"+"b.mpls") are walked in the order the line joins them,
+    // and the span keeps adding up from one playlist to the next, which is what the window adds
+    // when it shows the chapters of joined playlists. The cache of parsed playlists used to be
+    // walked instead. It is ordered by name and gave the marks of ONE playlist: the others lost
+    // theirs, and when the join did not follow the names, the second playlist's marks landed at
+    // the start (#27).
+    for (const StreamInfo& stream : m_codecInfo)
     {
-        if (mpls.m_marks.empty() || mpls.m_playItems.empty())
-            continue;
         std::vector<AVChapter> chapters;
         int64_t playItemOffset = 0;
-        size_t markIndex = 0;
-        for (size_t i = 0; i < mpls.m_playItems.size(); ++i)
+        for (const std::string& playlist : splitQuotedStr(stream.m_fullStreamName.c_str(), '+'))
         {
-            for (; markIndex < mpls.m_marks.size(); ++markIndex)
+            // The same split getMplsInfo used to fill the cache, so a playlist is found under the
+            // name it was stored with. A line that names anything else is not a playlist line.
+            const auto cached = m_mplsStreamMap.find(playlist);
+            if (cached == m_mplsStreamMap.end())
+                break;
+            const MPLSParser& mpls = cached->second;
+            size_t markIndex = 0;
+            for (size_t i = 0; i < mpls.m_playItems.size(); ++i)
             {
-                const PlayListMark& mark = mpls.m_marks[markIndex];
-                if (static_cast<size_t>(mark.m_playItemID) > i)
-                    break;
-                const int64_t ticks =
-                    static_cast<int64_t>(mark.m_markTime) - mpls.m_playItems[i].IN_time + playItemOffset;
-                if (ticks >= 0)
-                    chapters.emplace_back(ticks * 1000000000LL / 45000LL, std::string());
+                for (; markIndex < mpls.m_marks.size(); ++markIndex)
+                {
+                    const PlayListMark& mark = mpls.m_marks[markIndex];
+                    if (static_cast<size_t>(mark.m_playItemID) > i)
+                        break;
+                    const int64_t ticks =
+                        static_cast<int64_t>(mark.m_markTime) - mpls.m_playItems[i].IN_time + playItemOffset;
+                    if (ticks >= 0)
+                        chapters.emplace_back(ticks * 1000000000LL / 45000LL, std::string());
+                }
+                playItemOffset += mpls.m_playItems[i].OUT_time - mpls.m_playItems[i].IN_time;
             }
-            playItemOffset += mpls.m_playItems[i].OUT_time - mpls.m_playItems[i].IN_time;
         }
         if (!chapters.empty())
             return chapters;
