@@ -1730,7 +1730,6 @@ void MPLSParser::dropContradictingPlayItems()
 {
     if (m_playItemsToSkip.empty())
         return;
-    const bool mvcAligned = m_mvcFiles.size() == m_playItems.size();
 
     for (size_t k = m_playItemsToSkip.size(); k-- > 0;)
     {
@@ -1739,7 +1738,14 @@ void MPLSParser::dropContradictingPlayItems()
             continue;
         m_skippedClips.push_back(m_playItems[index].fileName);
         m_playItems.erase(m_playItems.begin() + index);
-        if (mvcAligned)
+        // m_mvcFiles holds each dependent clip at the play item its sub play item names
+        // (sync_PlayItem_id), so the dropped play item's entry goes with it whenever there is one.
+        // This used to be done only when the list was exactly as long as the play items, a test
+        // from when it was a flat list. A sub play item naming a play item that does not exist, or
+        // a last play item that none names, made the lengths differ; the erase was then skipped,
+        // and every play item after the dropped one got the dependent clip of the one before it
+        // (T2-F1).
+        if (index < m_mvcFiles.size())
             m_mvcFiles.erase(m_mvcFiles.begin() + index);
 
         // A mark belongs to a play item by index, so the marks of the dropped clip go with it and

@@ -187,10 +187,27 @@ bool bdReadPlaylistStereoPair(const std::string& mplsPath, std::string& baseClip
         const uint8_t subPathType = d[o + 5];
         const uint8_t itemCount = d[o + 9];
         // Type 8 is the stereoscopic dependent view. Nothing else here is of interest.
-        if (subPathType == 8 && itemCount > 0 && o + 17 <= blockEnd)
+        if (subPathType == 8)
         {
-            depClipId.assign(reinterpret_cast<const char*>(d.data() + o + 12), 5);
-            return true;
+            // The first play item's dependent view is the sub play item that names play item 0 in
+            // its sync_PlayItem_id, which need not be the first sub play item (T2-F1). Each sub
+            // play item is a two byte length, then the clip id (5), codec id (4), flags (4), STC id
+            // (1), in and out time (4 + 4) and sync_PlayItem_id (2). Extra clip entries after that
+            // belong to other angles; the first clip goes with the play item's own clip.
+            const size_t spEnd = o + 4 + spLen;
+            size_t p = o + 10;
+            for (unsigned k = 0; k < itemCount && p + 2 <= spEnd; ++k)
+            {
+                uint16_t spiLen = 0, syncPlayItem = 0;
+                if (!be16(d, p, spiLen) || spiLen < 24 || p + 2 + spiLen > spEnd || !be16(d, p + 24, syncPlayItem))
+                    break;
+                if (syncPlayItem == 0)
+                {
+                    depClipId.assign(reinterpret_cast<const char*>(d.data() + p + 2), 5);
+                    return true;
+                }
+                p += 2 + spiLen;
+            }
         }
         o += 4 + spLen;
     }
