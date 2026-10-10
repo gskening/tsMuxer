@@ -171,6 +171,10 @@ struct DetectStreamRez
     AVChapters chapters;
     std::vector<CheckStreamRez> streams;
     int64_t fileDurationNano;
+    // Where the video starts and ends on the file's own clock (AbstractDemuxer::getVideoSpanNano); the end is 0 when
+    // the container could not say.
+    int64_t videoStartNano = 0;
+    int64_t videoEndNano = 0;
 };
 
 // ISO 639-2 gives twenty languages two codes, a bibliographic one and a terminological one,

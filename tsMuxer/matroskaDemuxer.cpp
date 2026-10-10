@@ -1102,6 +1102,7 @@ void MatroskaDemuxer::openFile(const std::string& streamName)
     metadata_parsed = false;
     attachments_parsed = false;
     m_attachments.clear();
+    m_sourceName = streamName;
 
     writing_app = nullptr;
     muxing_app = nullptr;
@@ -1774,6 +1775,20 @@ struct EbmlScan
         bodyPos = pos;
         return true;
     }
+
+    // An unsigned integer element's body, big endian, at most eight bytes.
+    bool readUInt(const int64_t at, const int64_t width, uint64_t& out)
+    {
+        uint8_t raw[8] = {0};
+        if (width < 0 || width > 8)
+            return false;
+        f.seek(at);
+        if (width > 0 && f.read(raw, static_cast<uint32_t>(width)) != static_cast<int>(width))
+            return false;
+        out = 0;
+        for (int64_t i = 0; i < width; ++i) out = (out << 8) | raw[i];
+        return true;
+    }
 };
 
 // One AttachedFile: its name, and where its payload lives.
@@ -1801,6 +1816,157 @@ bool scanAttachedFile(EbmlScan& scan, const int64_t end, std::string& name, int6
         scan.pos = body + size;
     }
     return true;
+}
+
+// The same reading over bytes already in memory. The Cues are read this way, in one go: walked element by element on
+// the file, the index of a long film costs tens of thousands of reads.
+struct EbmlMem
+{
+    const uint8_t* p;
+    const uint8_t* end;
+
+    bool number(int64_t& value, const bool keepMarker)
+    {
+        if (p >= end || *p == 0)
+            return false;
+        int width = 1;
+        uint8_t mask = 0x80;
+        while (!(*p & mask))
+        {
+            mask >>= 1;
+            width++;
+        }
+        if (end - p < width)
+            return false;
+        value = keepMarker ? *p : (*p & (mask - 1));
+        for (int i = 1; i < width; ++i) value = (value << 8) | p[i];
+        p += width;
+        return true;
+    }
+
+    // One element whose body is all in memory. On success p stands at its body, and the caller steps over it.
+    bool element(uint32_t& id, int64_t& size)
+    {
+        int64_t rawId = 0;
+        if (!number(rawId, true) || !number(size, false) || size > end - p)
+            return false;
+        id = static_cast<uint32_t>(rawId);
+        return true;
+    }
+
+    [[nodiscard]] uint64_t uintBody(const int64_t size) const
+    {
+        uint64_t value = 0;
+        for (int64_t i = 0; i < size && i < 8; ++i) value = (value << 8) | p[i];
+        return value;
+    }
+};
+
+// Where one SeekHead says the Cues are, and a further SeekHead if it names one, as offsets from the start of the
+// segment's data. What it does not name is left as it was.
+void readSeekPositions(EbmlScan& scan, const int64_t body, const int64_t size, int64_t& cues, int64_t& nextSeekHead)
+{
+    scan.pos = body;
+    while (scan.pos < body + size)
+    {
+        uint32_t id = 0;
+        int64_t entrySize = 0, entry = 0;
+        if (!scan.readElement(id, entrySize, entry))
+            return;
+        uint64_t seekId = 0, seekPos = 0;
+        bool haveId = false, havePos = false;
+        while (id == MATROSKA_ID_SEEKENTRY && scan.pos < entry + entrySize)
+        {
+            uint32_t fieldId = 0;
+            int64_t fieldSize = 0, field = 0;
+            if (!scan.readElement(fieldId, fieldSize, field))
+                return;
+            if (fieldId == MATROSKA_ID_SEEKID)
+                haveId = scan.readUInt(field, fieldSize, seekId);
+            else if (fieldId == MATROSKA_ID_SEEKPOSITION)
+                havePos = scan.readUInt(field, fieldSize, seekPos);
+            scan.pos = field + fieldSize;
+        }
+        if (haveId && havePos && seekId == MATROSKA_ID_CUES)
+            cues = static_cast<int64_t>(seekPos);
+        else if (haveId && havePos && seekId == MATROSKA_ID_SEEKHEAD)
+            nextSeekHead = static_cast<int64_t>(seekPos);
+        scan.pos = entry + entrySize;
+    }
+}
+
+// The blocks of one track, from the cluster at `from` to the end of the segment or for at most `maxClusters`
+// clusters, read through their headers alone: no picture is read. onBlock gets the timestamp and the BlockDuration in
+// the file's own units (-1 where the block has none), whether it is a keyframe, and how many frames are laced into it,
+// and returns false to stop. What is not a cluster is stepped over. The walk ends quietly where the file stops making
+// sense, and at a cluster of unknown size, which only a file written live has, and such a file is rarely indexed.
+template <typename OnBlock>
+void walkTrackBlocks(EbmlScan& scan, const int64_t from, const int64_t segmentEnd, int maxClusters, const int64_t track,
+                     OnBlock onBlock)
+{
+    scan.pos = from;
+    while (scan.pos < segmentEnd)
+    {
+        uint32_t id = 0;
+        int64_t size = 0, body = 0;
+        if (!scan.readElement(id, size, body) || size > segmentEnd - body ||
+            (id == MATROSKA_ID_CLUSTER && maxClusters-- <= 0))
+            return;
+        const int64_t elementEnd = body + size;
+        uint64_t clusterTime = 0;
+        while (id == MATROSKA_ID_CLUSTER && scan.pos < elementEnd)
+        {
+            uint32_t child = 0;
+            int64_t childSize = 0, childBody = 0;
+            if (!scan.readElement(child, childSize, childBody) || childSize > elementEnd - childBody)
+                return;
+            const int64_t childEnd = childBody + childSize;
+            int64_t blockAt = child == MATROSKA_ID_SIMPLEBLOCK ? childBody : -1;
+            int64_t duration = -1;
+            bool key = true;  // a BlockGroup without a ReferenceBlock is a keyframe
+            if (child == MATROSKA_ID_CLUSTERTIMECODE && !scan.readUInt(childBody, childSize, clusterTime))
+                return;
+            while (child == MATROSKA_ID_BLOCKGROUP && scan.pos < childEnd)
+            {
+                uint32_t field = 0;
+                int64_t fieldSize = 0, fieldBody = 0;
+                uint64_t value = 0;
+                if (!scan.readElement(field, fieldSize, fieldBody))
+                    return;
+                if (field == MATROSKA_ID_BLOCK)
+                    blockAt = fieldBody;
+                else if (field == MATROSKA_ID_BLOCKDURATION && scan.readUInt(fieldBody, fieldSize, value))
+                    duration = static_cast<int64_t>(value);
+                else if (field == MATROSKA_ID_BLOCKREFERENCE)
+                    key = false;
+                scan.pos = fieldBody + fieldSize;
+            }
+            if (blockAt >= 0)
+            {
+                // The block's own header: track number, timestamp against the cluster's, flags, lace count.
+                int64_t blockTrack = 0;
+                int width = 0;
+                uint8_t head[4] = {0};
+                scan.pos = blockAt;
+                if (!scan.readNumber(blockTrack, false, width))
+                    return;
+                if (blockTrack == track)
+                {
+                    scan.f.seek(scan.pos);
+                    if (scan.f.read(head, 4) < 3)
+                        return;
+                    const auto relative = static_cast<int16_t>(head[0] << 8 | head[1]);
+                    if (child == MATROSKA_ID_SIMPLEBLOCK)
+                        key = (head[2] & 0x80) != 0;
+                    const int laces = (head[2] & 0x06) ? head[3] + 1 : 1;
+                    if (!onBlock(static_cast<int64_t>(clusterTime) + relative, duration, key, laces))
+                        return;
+                }
+            }
+            scan.pos = childEnd;
+        }
+        scan.pos = elementEnd;
+    }
 }
 }  // namespace
 
@@ -2036,6 +2202,182 @@ void MatroskaDemuxer::loadAttachments(const std::string& fileName)
     f.close();
     attachments_parsed = true;
     m_attachmentSource = fileName;
+}
+
+// --------------------------- where the video starts and ends ---------------------------
+//
+// A join ("a.mkv"+"b.mkv") puts the next file where the VIDEO of the file before it ends. The video reader counts
+// frames, so the next file's first picture follows the last picture of the one before, whatever else that file
+// carries. Its Duration is where its longest track ends, and on a DVD rip that is often a subtitle: on one joined
+// here, the second part's pictures sit 1.03 s before the place its Duration gives, measured frame by frame on the
+// output. METADemuxer::getChapters places the chapters of each part from these two numbers, and the listing prints
+// them for the window, which does the same.
+//
+// Neither needs the media read. The start is the earliest timestamp among the first group of pictures, which is not
+// always the first block: an open group begins with an I-frame that is shown after the B-frames stored behind it.
+// The end is the latest time a picture is still shown. The Cues say where the cluster of the last keyframe is, and
+// only the clusters from there on are read, a few hundred KB on the files measured. A file without Cues gives false,
+// and the callers keep to its Duration, as before.
+//
+// On a handle of its own, for the reason given for the attachments above.
+bool MatroskaDemuxer::getVideoSpanNano(int64_t& startNano, int64_t& endNano)
+{
+    static constexpr int64_t MAX_CUES_SIZE = 64 * 1024 * 1024;
+    static constexpr int FIRST_GROUP_BLOCKS = 64;
+    // The first group is in the first cluster or two. The bound keeps a track that hardly ever has a picture from
+    // making this walk the whole file.
+    static constexpr int FIRST_GROUP_CLUSTERS = 16;
+
+    const MatroskaTrack* video = nullptr;
+    for (int i = 0; i < num_tracks && video == nullptr; i++)
+        if (tracks[i]->type == MatroskaTrackType::VIDEO)
+            video = tracks[i];
+    File f;
+    if (video == nullptr || m_sourceName.empty() || !f.open(m_sourceName.c_str(), File::ofRead))
+        return false;
+    const int64_t fileSize = f.size();
+    const auto scale = static_cast<int64_t>(time_scale > 0 ? time_scale : 1000000);  // nanoseconds per unit
+    EbmlScan scan(f);
+
+    // The segment, and in its head where the Cues are and where the first cluster begins.
+    int64_t segmentData = -1;
+    int64_t segmentEnd = fileSize;
+    while (segmentData < 0 && scan.pos < fileSize)
+    {
+        uint32_t id = 0;
+        int64_t size = 0, body = 0;
+        if (!scan.readElement(id, size, body))
+            return false;
+        if (id == MATROSKA_ID_SEGMENT)
+        {
+            segmentData = body;
+            segmentEnd = (size > 0 && size <= fileSize - body) ? body + size : fileSize;
+        }
+        scan.pos = body + size;
+    }
+    int64_t cues = -1, nextSeekHead = -1, firstCluster = -1;
+    scan.pos = segmentData;
+    while (segmentData >= 0 && scan.pos < segmentEnd)
+    {
+        const int64_t at = scan.pos;
+        uint32_t id = 0;
+        int64_t size = 0, body = 0;
+        if (!scan.readElement(id, size, body))
+            break;
+        if (id == MATROSKA_ID_CLUSTER)
+        {
+            firstCluster = at;
+            break;
+        }
+        if (id == MATROSKA_ID_CUES)
+            cues = at - segmentData;
+        else if (id == MATROSKA_ID_SEEKHEAD)
+            readSeekPositions(scan, body, size, cues, nextSeekHead);
+        scan.pos = body + size;
+    }
+    if (cues < 0 && nextSeekHead > 0)  // one level of "the index you want is over there", as for the attachments
+    {
+        scan.pos = segmentData + nextSeekHead;
+        uint32_t id = 0;
+        int64_t size = 0, body = 0;
+        int64_t ignored = -1;
+        if (scan.readElement(id, size, body) && id == MATROSKA_ID_SEEKHEAD)
+            readSeekPositions(scan, body, size, cues, ignored);
+    }
+    if (firstCluster < 0 || cues < 0)
+        return false;
+
+    // The start: the earliest picture of the first group, up to the second keyframe.
+    int64_t start = 0;
+    int blocks = 0, keyframes = 0;
+    walkTrackBlocks(scan, firstCluster, segmentEnd, FIRST_GROUP_CLUSTERS, video->num,
+                    [&](const int64_t time, int64_t, const bool key, int)
+                    {
+                        if (key && ++keyframes == 2)
+                            return false;
+                        if (blocks == 0 || time * scale < start)
+                            start = time * scale;
+                        return ++blocks < FIRST_GROUP_BLOCKS;
+                    });
+
+    // The cluster of the last keyframe the Cues give for the video track.
+    std::vector<uint8_t> index;
+    {
+        scan.pos = segmentData + cues;
+        uint32_t id = 0;
+        int64_t size = 0, body = 0;
+        if (blocks == 0 || !scan.readElement(id, size, body) || id != MATROSKA_ID_CUES || size <= 0 ||
+            size > MAX_CUES_SIZE || size > segmentEnd - body)
+            return false;
+        index.resize(static_cast<size_t>(size));
+        f.seek(body);
+        if (f.read(index.data(), static_cast<uint32_t>(size)) != static_cast<int>(size))
+            return false;
+    }
+    int64_t lastKeyCluster = -1;
+    EbmlMem cuesBody{index.data(), index.data() + index.size()};
+    uint32_t pointId = 0;
+    int64_t pointSize = 0;
+    while (cuesBody.element(pointId, pointSize))
+    {
+        EbmlMem point{cuesBody.p, cuesBody.p + pointSize};
+        cuesBody.p += pointSize;
+        uint32_t positionsId = 0;
+        int64_t positionsSize = 0;
+        while (pointId == MATROSKA_ID_POINTENTRY && point.element(positionsId, positionsSize))
+        {
+            EbmlMem positions{point.p, point.p + positionsSize};
+            point.p += positionsSize;
+            int64_t track = -1, cluster = -1;
+            uint32_t fieldId = 0;
+            int64_t fieldSize = 0;
+            while (positionsId == MATROSKA_ID_CUETRACKPOSITION && positions.element(fieldId, fieldSize))
+            {
+                if (fieldId == MATROSKA_ID_CUETRACK)
+                    track = static_cast<int64_t>(positions.uintBody(fieldSize));
+                else if (fieldId == MATROSKA_ID_CUECLUSTERPOSITION)
+                    cluster = static_cast<int64_t>(positions.uintBody(fieldSize));
+                positions.p += fieldSize;
+            }
+            if (track == video->num && cluster > lastKeyCluster)
+                lastKeyCluster = cluster;
+        }
+    }
+    if (lastKeyCluster < 0)
+        return false;
+
+    // The end: from that cluster on, the latest time a picture is still shown. A block without a BlockDuration lasts
+    // the track's DefaultDuration; where there is neither, the shortest step between two pictures stands in.
+    std::vector<std::pair<int64_t, int64_t>> pictures;  // timestamp and duration in nanoseconds, -1 when not known
+    walkTrackBlocks(scan, segmentData + lastKeyCluster, segmentEnd, INT_MAX, video->num,
+                    [&](const int64_t time, const int64_t duration, bool, const int laces)
+                    {
+                        int64_t lasts = -1;
+                        if (duration >= 0)
+                            lasts = duration * scale;
+                        else if (video->default_duration > 0)
+                            lasts = static_cast<int64_t>(video->default_duration) * laces;
+                        pictures.emplace_back(time * scale, lasts);
+                        return true;
+                    });
+    if (pictures.empty())
+        return false;
+    std::vector<int64_t> times;
+    for (const auto& picture : pictures) times.push_back(picture.first);
+    std::sort(times.begin(), times.end());
+    int64_t step = 0;
+    for (size_t i = 1; i < times.size(); ++i)
+        if (times[i] > times[i - 1] && (step == 0 || times[i] - times[i - 1] < step))
+            step = times[i] - times[i - 1];
+    int64_t end = 0;
+    for (const auto& [time, lasts] : pictures)
+        if (time + (lasts >= 0 ? lasts : step) > end)
+            end = time + (lasts >= 0 ? lasts : step);
+    if (end <= start)
+        return false;
+    startNano = start > 0 ? start : 0;
+    endNano = end;
+    return true;
 }
 
 /* Seek to a given offset.

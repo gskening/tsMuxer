@@ -1195,26 +1195,53 @@ std::vector<AVChapter> METADemuxer::getChapters()
         std::vector<AVChapter> chapters = demuxerData.m_demuxer->getChapters();
         // A join ("a.mkv"+"b.mkv") is read through one demuxer that moves on from file to file, and only the file it
         // had open was asked, so every part after the first lost its chapters (#27). Each part is opened on its own
-        // here, and its chapters are moved by the length of the parts before it: the length the listing prints, which
-        // is also what the window adds when it shows the chapters of joined files. A part of unknown length ends it,
-        // because the chapters after it could not be placed.
+        // here, and its chapters are moved to where the join puts that part.
+        //
+        // That is where the VIDEO of the part before it ends: the video reader counts frames, and the next part's
+        // first picture follows the last picture of the one before. The parts' Durations were added up instead, and a
+        // Duration is where the longest track ends. On a DVD rip whose subtitle runs past the picture, that put the
+        // second part's chapters 1.03 s late, and 0.096 s late where the audio ran past it (both measured frame by
+        // frame on the output). A part's own clock may also start late, as the parts of a linked split do, so its
+        // chapters are moved by the end of the video before it less the start of its own video. These are the
+        // numbers the listing prints as "Video start" and "Video end", and the window places the chapters it shows
+        // the same way. A part whose video cannot be measured (no Cues) counts by its Duration, as before; a part with
+        // neither ends the list, because the chapters after it could not be placed, and that is said.
         const auto* join = dynamic_cast<const FileListIterator*>(demuxerData.m_iterator);
         if (join && join->getFiles().size() > 1 && dynamic_cast<MatroskaDemuxer*>(demuxerData.m_demuxer))
         {
             chapters.clear();
+            const std::vector<std::string>& parts = join->getFiles();
             int64_t offsetNano = 0;
-            for (const std::string& part : join->getFiles())
+            int64_t prevEndNano = 0;
+            for (size_t i = 0; i < parts.size(); ++i)
             {
                 MatroskaDemuxer partDemuxer(m_readManager);
-                partDemuxer.openFile(part);
+                partDemuxer.openFile(parts[i]);
+                int64_t startNano = 0, endNano = 0;
+                if (!partDemuxer.getVideoSpanNano(startNano, endNano))
+                {
+                    startNano = 0;
+                    endNano = partDemuxer.getFileDurationNano();
+                }
+                if (i > 0)
+                    offsetNano += prevEndNano - startNano;
                 for (AVChapter chapter : partDemuxer.getChapters())
                 {
                     chapter.start += offsetNano;
-                    chapters.push_back(std::move(chapter));
+                    if (chapter.start >= 0)
+                        chapters.push_back(std::move(chapter));
                 }
-                if (partDemuxer.getFileDurationNano() <= 0)
+                if (endNano <= 0)
+                {
+                    if (i + 1 < parts.size())
+                        LTRACE(LT_WARN, 2,
+                               "Warning: the length of "
+                                   << parts[i]
+                                   << " cannot be read (it has no Duration and no Cues), so the chapters of the "
+                                      "files joined after it are left out.");
                     break;
-                offsetNano += partDemuxer.getFileDurationNano();
+                }
+                prevEndNano = endNano;
             }
         }
         if (!chapters.empty())
@@ -1598,6 +1625,7 @@ DetectStreamRez METADemuxer::DetectStreamReader(const BufferedReaderManager& rea
 {
     AVChapters chapters;
     int64_t fileDuration = 0;
+    int64_t videoStart = 0, videoEnd = 0;
     vector<CheckStreamRez> streams, Vstreams;
     std::unique_ptr<AbstractDemuxer> demuxer;
     auto unquoted = unquoteStr(fileName);
@@ -1716,7 +1744,12 @@ DetectStreamRez METADemuxer::DetectStreamReader(const BufferedReaderManager& rea
         }
         chapters = demuxer->getChapters();
         if (calcDuration)
+        {
             fileDuration = demuxer->getFileDurationNano();
+            // Where a join would put the file after this one (see getChapters).
+            if (!demuxer->getVideoSpanNano(videoStart, videoEnd))
+                videoStart = videoEnd = 0;
+        }
     }
     else
     {
@@ -1744,6 +1777,8 @@ DetectStreamRez METADemuxer::DetectStreamReader(const BufferedReaderManager& rea
     DetectStreamRez rez;
     rez.chapters = chapters;
     rez.fileDurationNano = fileDuration;
+    rez.videoStartNano = videoStart;
+    rez.videoEndNano = videoEnd;
     rez.streams = Vstreams;
     return rez;
 }

@@ -412,10 +412,18 @@ void detectStreamReader(const char* fileName, MPLSParser* mplsParser, bool isSub
     }
 
     AVChapters& chapters = streamInfo.chapters;
-    if (!chapters.empty() || streamInfo.fileDurationNano > 0)
+    const bool timeLines = !chapters.empty() || streamInfo.fileDurationNano > 0 || streamInfo.videoEndNano > 0;
+    if (timeLines)
         LTRACE(LT_INFO, 2, "");
     if (streamInfo.fileDurationNano)
         LTRACE(LT_INFO, 2, "Duration: " << floatToTime((double)streamInfo.fileDurationNano / 1e9));
+    // Where the video starts and ends on the file's own clock. A join puts the next file where the video ends, which
+    // is not always where the Duration ends, and the window places the chapters of joined files by these two lines.
+    if (streamInfo.videoEndNano > 0)
+    {
+        LTRACE(LT_INFO, 2, "Video start: " << floatToTime((double)streamInfo.videoStartNano / 1e9));
+        LTRACE(LT_INFO, 2, "Video end: " << floatToTime((double)streamInfo.videoEndNano / 1e9));
+    }
     for (size_t j = 0; j < chapters.size(); j++)
     {
         uint64_t time = chapters[j].start;
@@ -426,7 +434,7 @@ void detectStreamReader(const char* fileName, MPLSParser* mplsParser, bool isSub
         }
         LTRACE2(LT_INFO, floatToTime((double)time / 1e9) << " ")
     }
-    if (!chapters.empty() || streamInfo.fileDurationNano > 0)
+    if (timeLines)
         LTRACE(LT_INFO, 2, "");
 }
 

@@ -161,6 +161,10 @@ class AbstractDemuxer
     void setPidFilter(const int pid, SubTrackFilter* pidFilter) { m_pidFilters[pid] = pidFilter; }
     [[nodiscard]] virtual bool isPidFilterSupported() const { return false; }
     [[nodiscard]] virtual int64_t getFileDurationNano() const { return 0; }
+    // Where the video starts and where it ends on the file's own clock, in nanoseconds, for a container that can say
+    // without reading the whole file. A join puts the next file where the video ends, not where the file's Duration
+    // ends (see METADemuxer::getChapters). False when the file has no video or the container cannot say.
+    virtual bool getVideoSpanNano(int64_t& startNano, int64_t& endNano) { return false; }
 
    protected:
     int64_t m_timeOffset;

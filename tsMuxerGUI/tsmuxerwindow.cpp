@@ -228,7 +228,9 @@ enum FileCustomData
     MplsItemRole = Qt::UserRole,
     FileNameRole,
     ChaptersRole,
-    FileDurationRole
+    FileDurationRole,
+    VideoStartRole,  // the listing's "Video start" and "Video end", set only when it printed them
+    VideoEndRole
 };
 
 static const QString FILE_JOIN_PREFIX(" ++ ");
@@ -2209,6 +2211,7 @@ void TsMuxerWindow::onTsMuxerCodecInfoReceived()
     mplsFileList.clear();
     chapters.clear();
     fileDuration = 0;
+    videoStart = videoEnd = 0;
     for (int i = 0; i < procStdOutput.size(); ++i)
     {
         p = procStdOutput[i].indexOf("Track ID:    ");
@@ -2379,6 +2382,16 @@ void TsMuxerWindow::onTsMuxerCodecInfoReceived()
             {
                 fileDuration = timeToFloat(tmpStr);
             }
+        }
+        else if (procStdOutput[i].startsWith("Video start: "))
+        {
+            // Format: "Video start: <time>", offset 13 = len("Video start: ")
+            videoStart = timeToFloat(QtCompat::strMid(procStdOutput[i], 13));
+        }
+        else if (procStdOutput[i].startsWith("Video end: "))
+        {
+            // Format: "Video end: <time>", offset 11 = len("Video end: ")
+            videoEnd = timeToFloat(QtCompat::strMid(procStdOutput[i], 11));
         }
         else if (procStdOutput[i].startsWith("Base view: "))
         {
@@ -3357,8 +3370,14 @@ void TsMuxerWindow::continueAddFile()
     fileItem->setData(FileNameRole, newFileName);
     fileItem->setData(ChaptersRole, QVariant::fromValue(chapters));
     fileItem->setData(FileDurationRole, fileDuration);
+    if (videoEnd > 0)
+    {
+        fileItem->setData(VideoStartRole, videoStart);
+        fileItem->setData(VideoEndRole, videoEnd);
+    }
     chapters.clear();
     fileDuration = 0.0;
+    videoStart = videoEnd = 0.0;
 
     ui->inputFilesLV->setCurrentItem(fileItem);
     if (mplsFileList.size() > 0)
@@ -3390,23 +3409,41 @@ void TsMuxerWindow::updateCustomChapters()
     if (ui->radioButtonCustomChapters->isChecked() && m_customChaptersUserOverride)
         return;
 
+    // A joined file's chapters are moved to where the join puts it, which is after the VIDEO of the file before it: the
+    // listing's "Video end" of that file, less the "Video start" of this one. The command line places them the same
+    // way (METADemuxer::getChapters). The Durations were added up before, and a Duration is where the longest track
+    // ends: a subtitle running past the picture put the next file's chapters a second late. A file the listing gave
+    // no video times for counts by its Duration, as before, and a playlist always does. After a file with neither,
+    // the chapters of the files joined to it are left out, as the command line leaves them out: they used to be put
+    // at the join's start, a wrong place that looks right.
     QSet<qint64> chaptersSet;
-    double prevDuration = 0.0;
+    double prevEnd = 0.0;
     double offset = 0.0;
+    bool placeable = true;
     for (int i = 0; i < ui->inputFilesLV->count(); ++i)
     {
         QListWidgetItem* item = ui->inputFilesLV->item(i);
         if (item->data(MplsItemRole).toInt() == MPLS_M2TS)
             continue;
         if (QtCompat::strLeft(item->text(), 4) == FILE_JOIN_PREFIX)
-            offset += prevDuration;
+        {
+            placeable = placeable && prevEnd > 0.0;
+            offset += prevEnd - item->data(VideoStartRole).toDouble();
+        }
         else
+        {
             offset = 0;
+            placeable = true;
+        }
 
         ChapterList chapters = item->data(ChaptersRole).value<ChapterList>();
+        if (!placeable)
+            chapters.clear();
+        chapters.removeIf([offset](double chapter) { return chapter + offset < 0.0; });
         // In whole milliseconds, rounded: the box shows milliseconds, so two marks that show the same are one mark.
         for (double chapter : chapters) chaptersSet << qRound64((chapter + offset) * 1000.0);
-        prevDuration = item->data(FileDurationRole).toDouble();
+        const QVariant listedEnd = item->data(VideoEndRole);
+        prevEnd = listedEnd.isValid() ? listedEnd.toDouble() : item->data(FileDurationRole).toDouble();
     }
     const QSignalBlocker blocker(ui->memoChapters);
     ui->memoChapters->clear();
@@ -3673,6 +3710,11 @@ void TsMuxerWindow::doAppendInt(const QString& fileName, const QString& parentFi
     item->setData(FileNameRole, fileName);
     if (duration > 0)
         item->setData(FileDurationRole, duration);
+    if (mplsRole != MPLS_M2TS && videoEnd > 0)
+    {
+        item->setData(VideoStartRole, videoStart);
+        item->setData(VideoEndRole, videoEnd);
+    }
     item->setData(ChaptersRole, QVariant::fromValue(chapters));
 
     ui->inputFilesLV->setCurrentItem(item);

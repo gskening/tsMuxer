@@ -41,6 +41,7 @@ class MatroskaDemuxer final : public IOContextDemuxer
     const uint8_t* getTrackCodecPrivate(int32_t pid, int& size) override;
 
     [[nodiscard]] int64_t getFileDurationNano() const override { return fileDuration; }
+    bool getVideoSpanNano(int64_t& startNano, int64_t& endNano) override;
 
     // Fetch an attached file by name. The bytes are read from the file when asked for, not held
     // from the header parse: one of these attachments is the preserved Dolby Vision metadata of a
@@ -101,6 +102,7 @@ class MatroskaDemuxer final : public IOContextDemuxer
     };
     std::vector<MatroskaAttachment> m_attachments;
     std::string m_attachmentSource;  // the file the payloads are read back from
+    std::string m_sourceName;        // the file openFile opened: getVideoSpanNano reads it on a handle of its own
     void loadAttachments(const std::string& fileName);
     void applyStartCodeRule();
     std::vector<std::string> m_joinFiles;  // the files of a joined input, in order; empty for a single file

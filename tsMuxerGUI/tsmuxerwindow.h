@@ -225,6 +225,9 @@ class TsMuxerWindow : public QWidget
     QList<QtvCodecInfo> codecList;
     ChapterList chapters;
     double fileDuration;
+    // The listing's "Video start" and "Video end": where a join puts the file after this one. 0 when not listed.
+    double videoStart = 0.0;
+    double videoEnd = 0.0;
     bool runInMuxMode;
     QString lastInputDir;
     QString lastOutputDir;
