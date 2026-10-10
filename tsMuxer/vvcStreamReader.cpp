@@ -321,9 +321,12 @@ int VVCStreamReader::toFullPicOrder(const VvcSliceHeader* slice, const int pic_b
     return slice->pic_order_cnt_lsb + m_picOrderMsb + m_picOrderBase;
 }
 
+// dataEnd is where the start code of the next NAL begins, so the NAL is everything before it, less the zero bytes a
+// stream may put in front of a start code. It used to step back one byte first, as if dataEnd were past the next
+// start code, and so every stored parameter set and SEI lost its last byte: the VPS, SPS and PPS written at the
+// start of a split part or a cut, and the HDR metadata repeated at every IRAP, could not be read.
 void VVCStreamReader::storeBuffer(MemoryBlock& dst, const uint8_t* data, const uint8_t* dataEnd)
 {
-    dataEnd--;
     while (dataEnd > data && dataEnd[-1] == 0) dataEnd--;
     if (dataEnd > data)
     {
