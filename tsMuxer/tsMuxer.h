@@ -121,6 +121,7 @@ class TSMuxer final : public AbstractMuxer
     void processM2TSPCR(int64_t pcrVal, int64_t pcrGAP);
     [[nodiscard]] inline int calcM2tsFrameCnt() const;
     [[nodiscard]] int64_t pcrForMaxRate(int64_t newPCR, int64_t extraFrames, int64_t pcrGAP) const;
+    [[nodiscard]] bool nextPCRChanceTooLate(int tsIndex, int64_t dts) const;
     static void writeM2TSHeader(uint8_t* buffer, const int64_t m2tsPCR)
     {
         const auto cur = reinterpret_cast<uint32_t*>(buffer);
@@ -230,6 +231,8 @@ class TSMuxer final : public AbstractMuxer
             m_tsCnt = 0;
             m_mpegReader = nullptr;
             m_definesDuration = false;
+            m_dtsStep = 0;
+            m_steadyPace = false;
         }
         int64_t m_pts;
         int64_t m_dts;
@@ -240,6 +243,10 @@ class TSMuxer final : public AbstractMuxer
         // a primary video stream, the kind that gets PID 0x1011: neither secondary nor a
         // Dolby Vision enhancement layer. These are the streams a title is measured by.
         bool m_definesDuration;
+        // For the PCR timing: the step between the stream's last two PES, in the internal clock, and
+        // whether its PES come at a steady pace, which video and audio do and subtitles do not.
+        int64_t m_dtsStep;
+        bool m_steadyPace;
     };
 
     int64_t m_minDts;

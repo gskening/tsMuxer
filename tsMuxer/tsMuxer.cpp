@@ -85,6 +85,12 @@ static double atsGapFloor(const double bitsPerSecond) { return TS_PACKET_BITS * 
 // SIT and the PCR packet), not the streams. See pcrForMaxRate and processM2TSPCR.
 static constexpr int TABLE_BURST_PACKETS = 5;
 
+// H.222.0 2.7.2: the time between two PCRs shall be 0.1 s or less, 9000 ticks of the 90 kHz base.
+static constexpr int64_t PCR_MAX_INTERVAL = 9000;
+// Kept free below that limit for what can still be added to a PCR after it is chosen: pcrForMaxRate holds a short
+// pass of tables at the read-rate floor, which moves the PCR by a few 90 kHz ticks at most.
+static constexpr int64_t PCR_INTERVAL_MARGIN = 90;
+
 static double atsGapToRate(const double gap) { return TS_PACKET_BITS * 27000000.0 / gap; }
 
 static constexpr int PAT_PID = 0;
@@ -553,6 +559,7 @@ void TSMuxer::intAddStream(const std::string& streamName, const std::string& cod
     // AVPacket/PES and previously paid a dynamic_cast each time
     m_streamInfo[tsStreamIndex].m_mpegReader = dynamic_cast<MPEGStreamReader*>(codecReader);
     m_streamInfo[tsStreamIndex].m_definesDuration = isPrimaryVideo;
+    m_streamInfo[tsStreamIndex].m_steadyPace = codecName[0] == 'V' || codecName[0] == 'A';
     const auto itPid = m_pmt.pidList.find(tsStreamIndex);
     if (itPid != m_pmt.pidList.end())
     {
@@ -1565,7 +1572,10 @@ bool TSMuxer::muxPacket(AVPacket& avPacket)
             m_pcr_delta = M_CBR_PCR_DELTA;
         else
             m_pcr_delta = M_PCR_DELTA;
-        m_patPmtDelta = m_m2tsMode ? M_PCR_DELTA : PCR_FREQUENCY / 4;
+        // In an M2TS the PAT and the PMT go out with every PCR. That was always so, because a PCR came at
+        // least M_PCR_DELTA after the one before; a PCR that has to come sooner (see nextPCRChanceTooLate)
+        // takes them along as well, so they too stay within 0.1 s of each other.
+        m_patPmtDelta = m_m2tsMode ? 0 : PCR_FREQUENCY / 4;
     }
 
     if (m_minDts == -1)
@@ -1584,6 +1594,8 @@ bool TSMuxer::muxPacket(AVPacket& avPacket)
     {
         writePESPacket();
         newPES = true;
+        if (streamInfo.m_dts != static_cast<int64_t>(ULLONG_MAX) && avPacket.dts > streamInfo.m_dts)
+            streamInfo.m_dtsStep = avPacket.dts - streamInfo.m_dts;
     }
 
     m_lastTSIndex = tsIndex;
@@ -1603,7 +1615,8 @@ bool TSMuxer::muxPacket(AVPacket& avPacket)
     {
         finishFileBlock(avPacket.pts, newPCR, false);  // interleave SSIF here
     }
-    else if (newPCR - m_lastPCR >= m_pcr_delta)
+    else if (newPCR - m_lastPCR >= m_pcr_delta ||
+             (newPES && m_cbrBitrate == -1 && newPCR > m_lastPCR && nextPCRChanceTooLate(tsIndex, avPacket.dts)))
     {
         if (m_interliaveBlockSize == 0 || avPacket.stream_index == m_mainStreamIndex)
         {
@@ -1656,6 +1669,41 @@ bool TSMuxer::muxPacket(AVPacket& avPacket)
         m_endStreamDTS = avPacket.dts;
 
     return true;
+}
+
+// A variable rate mux writes a PCR only where a PES begins, once M_PCR_DELTA has passed since the last one. Where the
+// PES come far apart, the first one past that point can be too late: video alone at 29.97 fps gave a PCR every three
+// frames, 100.1 ms, and the next PCR after a 3D interleaving block that began on an audio frame could take 113 ms.
+// So at each PES that may carry a PCR, this asks where the next such PES is due: for each stream with a steady pace,
+// its last PES plus the step it has been taking, and in an interleaved 3D mux only the main stream, the only one that
+// writes PCRs there. If even the earliest of them would put the next PCR more than 0.1 s after the last one, the PCR
+// is written now. Its value is the one it always had, so nothing is clamped and no lag builds up; it only comes at an
+// earlier PES.
+bool TSMuxer::nextPCRChanceTooLate(const int tsIndex, const int64_t dts) const
+{
+    int mainTSIndex = 0;  // 0 is no PID: every stream counts
+    if (m_interliaveBlockSize > 0)
+    {
+        const auto main = m_extIndexToTSIndex.find(m_mainStreamIndex);
+        if (main == m_extIndexToTSIndex.end())
+            return false;
+        mainTSIndex = main->second;
+    }
+    int64_t nextDts = -1;
+    for (const auto& [pid, info] : m_streamInfo)
+    {
+        if (!info.m_steadyPace || info.m_dtsStep <= 0 || (mainTSIndex != 0 && pid != mainTSIndex))
+            continue;
+        // The stream of the packet being muxed has not recorded its DTS yet. A PES due at this very DTS is the
+        // next chance, right after this packet; one due earlier has stopped or paused, and says nothing.
+        const int64_t due = (pid == tsIndex ? dts : info.m_dts) + info.m_dtsStep;
+        if (due >= dts && (nextDts == -1 || due < nextDts))
+            nextDts = due;
+    }
+    if (nextDts == -1)
+        return false;
+    const int64_t nextPCR = (nextDts - m_minDts) / INT_FREQ_TO_TS_FREQ + m_fixed_pcr_offset;
+    return nextPCR - m_lastPCR > PCR_MAX_INTERVAL - PCR_INTERVAL_MARGIN;
 }
 
 int TSMuxer::writeTSFrames(const int pid, const uint8_t* buffer, const int64_t len, const bool priorityData,
