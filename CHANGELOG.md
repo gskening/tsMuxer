@@ -132,7 +132,7 @@ More fixes like these will follow, because not everything can be found at once. 
 
 * **The later parts of a split HEVC or VVC output decoded with errors.** The parameter sets kept for the next part lost their last byte. They are whole now.
 
-* **Joined H.264 parts could get the wrong picture times.** A later part that counts its pictures another way was timed with the first part's step: pictures shared one time, others were spread out, and a warning was printed for every picture. Each part keeps its own step now.
+* **Joined H.264 parts could get the wrong picture times.** A later part that counts its pictures another way was timed with the first part's step: pictures shared one time, others were spread out, and a warning was printed for every second picture. Each part keeps its own step now.
 
 * **A video that opens partway through a group of pictures started before zero.** Its first few pictures were placed at negative times, and some software could not process the file at all. The file now starts at zero.
 

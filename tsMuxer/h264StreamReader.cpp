@@ -1180,9 +1180,9 @@ int H264StreamReader::processSliceNal(uint8_t* buff)
     // Whether the picture order counts step by one or by two was decided only at the start of the track,
     // so a later part that counts the other way was read with the first part's step. Counts that step by
     // one, halved, gave every second picture the time of the picture before it, left the second half of
-    // every IDR period without a picture, put times before the decoding times and printed a warning per
-    // picture (#301; a joined sample: 12,662 repeated times, 527 s of standing picture). Counts that step
-    // by two, not halved, spread the times out with no warning at all.
+    // every IDR period without a picture, put times before the decoding times and printed a warning for
+    // every second picture (#301; a joined sample: 12,662 repeated times, 527 s of standing picture). Counts
+    // that step by two, not halved, spread the times out with no warning at all.
     // A new stream begins at an IDR whose SPS is not the one of the IDR before, and there the step is
     // decided again from that IDR period's own pictures. A stream whose SPS stays the same never gets
     // past the comparison, so it is muxed exactly as before.
