@@ -135,6 +135,7 @@ class MuxerManager final
     bool m_reproducibleIsoHeader = false;
     int64_t m_discSizeLimit = 0;         // --disc-size: target disc capacity in bytes (0 = guard off)
     bool m_allowOversize = false;        // --allow-oversize: warn instead of abort on an over-capacity image
+    bool m_noChapters = false;           // --no-chapters: the source's own chapters are not taken over
     int m_layerBreakGuardMB = -1;        // --layer-break-guard: MB of zero-fill each side of the DL break (-1 = off)
     int m_layerBreakGuardBeforeMB = -1;  // --layer-break-guard-before: MB before the break on its own (-1 = derived)
     std::vector<int> m_layerBreakLbns;   // --layer-break-lbn: break sector(s); empty = BD-R/RE DL default

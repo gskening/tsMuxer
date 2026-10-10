@@ -824,6 +824,10 @@ All parameters in this group start with two dashes:
                       Matroska XML as mkvextract writes it. Unlike
                       --custom-chapters these carry the chapter NAMES, which
                       Matroska output then keeps.
+--no-chapters         Do not take over the chapters of the source. A Matroska
+                      output then has none, and a demux writes no chapter
+                      files. Chapters given with --custom-chapters or
+                      --chapters-file still go into a Matroska output.
 --demux               Run in demux mode : the selected audio and video tracks are
                       stored as separate files. The output name must be a folder
                       name. All selected effects (such as changing the level of

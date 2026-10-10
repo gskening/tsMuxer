@@ -3887,6 +3887,11 @@ QString TsMuxerWindow::getMuxOpts()
         }
         rez += QString(" --custom-chapters=") + custChapStr;
     }
+    // With nothing about chapters on the meta line, a Matroska output takes over the source's own chapters. That is
+    // right for the other two choices and wrong for "No chapters", which therefore has to be said. A disc needs no
+    // such word: its marks come only from the two options above.
+    if (ui->radioButtonMKV->isChecked() && ui->radioButtonNoChapters->isChecked())
+        rez += " --no-chapters";
     // Only write these where they can be honoured. The tick is remembered either way, so choosing
     // an output that cannot split hides the option rather than discarding what was set.
     if (outputCanSplit())

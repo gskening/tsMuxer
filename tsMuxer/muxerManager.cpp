@@ -153,12 +153,12 @@ void MuxerManager::preinitMux(const std::string& outFileName, FileFactory* fileF
                 // Now that the muxer exists it can be given the chapter list main() supplied.
                 // With no --custom-chapters, fall back to whatever the source container carries,
                 // the same way a source language fills in for a missing lang=. An MKV with its
-                // own chapter list used to lose every mark on a remux.
+                // own chapter list used to lose every mark on a remux. --no-chapters turns this
+                // off (see sourceChapters).
                 if (m_chapters.empty())
                 {
-                    // The name comes along with the time. It used to be dropped here, and a
-                    // nameless chapter is one this program cannot read back: see
-                    // matroskaDemuxer.cpp, which requires a title before it keeps a chapter.
+                    // The name comes along with the time. It used to be dropped here, and the
+                    // chapters then came out numbered instead of named.
                     m_chapterInfo = sourceChapters();
                     for (const auto& chapter : m_chapterInfo)
                         m_chapters.push_back(static_cast<double>(chapter.start) / 1e9);
@@ -318,6 +318,10 @@ void MuxerManager::checkTrackList(const vector<StreamInfo>& ci) const
 // now, moved back by the cut start, and the chapter that is already playing where the cut starts opens the output at 0.
 std::vector<AVChapter> MuxerManager::sourceChapters()
 {
+    // Asked for an output without the source's chapters. Nothing else said so: with no chapter option at all the
+    // source's own were taken over, so a Matroska output got them although the window's "No chapters" was chosen.
+    if (m_noChapters)
+        return {};
     std::vector<AVChapter> chapters = m_metaDemuxer.getChapters();
     if (m_cutStart <= 0 && m_cutEnd <= 0)
         return chapters;
@@ -704,6 +708,8 @@ void MuxerManager::parseMuxOpt(const string& opts)
                 THROW(ERR_COMMON, "Invalid --layer-break-guard-before value '" << paramPair[1]
                                                                                << "'. Expected 0..1024 (megabytes).");
         }
+        else if (paramPair[0] == "--no-chapters")
+            m_noChapters = true;
         else if (paramPair[0] == "--layer-break-lbn")
         {
             if (paramPair.size() < 2)
