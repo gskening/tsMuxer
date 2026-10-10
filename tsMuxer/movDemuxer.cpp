@@ -1397,7 +1397,23 @@ int MovDemuxer::mov_read_trak(MOVAtom atom)
     num_tracks++;
     st->type = IOContextTrackType::DATA;
     sc->ffindex = num_tracks;  // st->index;
-    return mov_read_default(atom);
+    const int result = mov_read_default(atom);
+    // Every subtitle time of a text track is a count of its media header's time scale, so a text track whose scale
+    // is 0, or that has no media header, cannot be timed. It refused the whole file, even when the track was left
+    // out of the mux and when the file was only listed, and the arm64 build, where a division by 0 does not stop
+    // the program, read such files. The track is left out now, on every build, and the other tracks are read as
+    // usual. Checked once the whole track is read, as the boxes inside it may come in any order.
+    if (st->type == IOContextTrackType::SUBTITLE && sc->time_scale == 0 && sc->parsed_priv_data)
+    {
+        LTRACE(LT_WARN, 2,
+               "Warning: text track #" << sc->ffindex
+                                       << " has no time scale in its media header (mdhd), so its subtitles cannot "
+                                          "be timed. The track is left out.");
+        delete sc->parsed_priv_data;
+        sc->parsed_priv_data = nullptr;
+        st->type = IOContextTrackType::DATA;
+    }
+    return result;
 }
 
 int MovDemuxer::mov_read_tfhd(MOVAtom atom)
