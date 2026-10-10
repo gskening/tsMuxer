@@ -273,13 +273,17 @@ bool isVideoCodec(const QString& displayName)
 
 QString floatToTime(double time, char msSeparator = '.')
 {
-    int iTime = (int)time;
-    int hour = iTime / 3600;
-    iTime -= hour * 3600;
-    int min = iTime / 60;
-    iTime -= min * 60;
-    int sec = iTime;
-    int msec = (int)((time - (int)time) * 1000.0);
+    // To the nearest millisecond, as the command line writes times. The fraction used to be cut off, and a time is
+    // rarely exact in a double: a chapter at 3:54.080 is held as 234.0799999 and was listed as 3:54.079, so a disc
+    // made from the chapter box got the mark a millisecond early. Counting whole milliseconds also carries 59.9996 s
+    // over to the next minute.
+    qint64 msTotal = qRound64(time * 1000.0);
+    const int hour = static_cast<int>(msTotal / 3600000);
+    msTotal -= static_cast<qint64>(hour) * 3600000;
+    const int min = static_cast<int>(msTotal / 60000);
+    msTotal -= static_cast<qint64>(min) * 60000;
+    const int sec = static_cast<int>(msTotal / 1000);
+    const int msec = static_cast<int>(msTotal - static_cast<qint64>(sec) * 1000);
     QString str;
     str += QString::number(hour).rightJustified(2, '0');
     str += ':';
@@ -293,13 +297,12 @@ QString floatToTime(double time, char msSeparator = '.')
 
 QTime qTimeFromFloat(double secondsF)
 {
-    int seconds = (int)secondsF;
-    int ms = (secondsF - seconds) * 1000.0;
-    int hours = seconds / 3600;
-    seconds -= hours * 3600;
-    int minute = seconds / 60;
-    seconds -= minute * 60;
-    return QTime(hours, minute, seconds, ms);
+    // To the nearest millisecond, as floatToTime above: cut off, a start time of 1.080 s showed as 1.079.
+    const qint64 msTotal = qRound64(secondsF * 1000.0);
+    const int hours = static_cast<int>(msTotal / 3600000);
+    const int minute = static_cast<int>(msTotal / 60000 % 60);
+    const int seconds = static_cast<int>(msTotal / 1000 % 60);
+    return QTime(hours, minute, seconds, static_cast<int>(msTotal % 1000));
 }
 
 int qTimeToMsec(const QTime& time)
@@ -3401,7 +3404,8 @@ void TsMuxerWindow::updateCustomChapters()
             offset = 0;
 
         ChapterList chapters = item->data(ChaptersRole).value<ChapterList>();
-        for (double chapter : chapters) chaptersSet << qint64((chapter + offset) * 1000000);
+        // In whole milliseconds, rounded: the box shows milliseconds, so two marks that show the same are one mark.
+        for (double chapter : chapters) chaptersSet << qRound64((chapter + offset) * 1000.0);
         prevDuration = item->data(FileDurationRole).toDouble();
     }
     const QSignalBlocker blocker(ui->memoChapters);
@@ -3409,7 +3413,7 @@ void TsMuxerWindow::updateCustomChapters()
     QList<qint64> mergedChapterList = chaptersSet.values();
     std::sort(std::begin(mergedChapterList), std::end(mergedChapterList));
     for (auto chapter : mergedChapterList)
-        ui->memoChapters->insertPlainText(floatToTime(chapter / 1000000.0) + QString('\n'));
+        ui->memoChapters->insertPlainText(floatToTime(chapter / 1000.0) + QString('\n'));
 }
 
 void splitLines(const QString& str, QList<QString>& strList)
