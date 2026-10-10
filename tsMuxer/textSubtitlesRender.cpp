@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <climits>
 #include <cmath>
 #include <cstdlib>
@@ -16,8 +17,20 @@ using namespace std;
 
 namespace
 {
+// The colour names of CSS, which an HTML font tag in a subtitle uses. Five names were misspelt here (tea, cora,
+// lightcora, seashel, mediumauqamarine) and three values were wrong (mediumpurple, olivedrab, palevioletred); the
+// names CSS spells two ways are there both ways, and cyan, lightgray and rebeccapurple were missing.
 const std::unordered_map<std::string, uint32_t> defaultPallette = {
     make_pair("black", 0x000000),
+    make_pair("cyan", 0x00ffff),
+    make_pair("lightgray", 0xd3d3d3),
+    make_pair("grey", 0x808080),
+    make_pair("darkgrey", 0xa9a9a9),
+    make_pair("dimgrey", 0x696969),
+    make_pair("slategrey", 0x708090),
+    make_pair("lightslategrey", 0x778899),
+    make_pair("darkslategrey", 0x2f4f4f),
+    make_pair("rebeccapurple", 0x663399),
     make_pair("aqua", 0x00ffff),
     make_pair("red", 0xff0000),
     make_pair("green", 0x008000),
@@ -30,7 +43,7 @@ const std::unordered_map<std::string, uint32_t> defaultPallette = {
     make_pair("olive", 0x808000),
     make_pair("purple", 0x800080),
     make_pair("silver", 0xc0c0c0),
-    make_pair("tea", 0x008080),
+    make_pair("teal", 0x008080),
     make_pair("white", 0xffffff),
     make_pair("yellow", 0xffff00),
     make_pair("orange", 0xffa500),
@@ -49,7 +62,7 @@ const std::unordered_map<std::string, uint32_t> defaultPallette = {
     make_pair("cadetblue", 0x5f9ea0),
     make_pair("chartreuse", 0x7fff00),
     make_pair("chocolate", 0xd2691e),
-    make_pair("cora", 0xff7f50),
+    make_pair("coral", 0xff7f50),
     make_pair("cornflowerblue", 0x6495ed),
     make_pair("cornsilk", 0xfff8dc),
     make_pair("crimson", 0xdc143c),
@@ -93,7 +106,7 @@ const std::unordered_map<std::string, uint32_t> defaultPallette = {
     make_pair("lawngreen", 0x7cfc00),
     make_pair("lemonchiffon", 0xfffacd),
     make_pair("lightblue", 0xadd8e6),
-    make_pair("lightcora", 0xf08080),
+    make_pair("lightcoral", 0xf08080),
     make_pair("lightcyan", 0xe0ffff),
     make_pair("lightgoldenrodyellow", 0xfafad2),
     make_pair("lightgreen", 0x90ee90),
@@ -108,10 +121,10 @@ const std::unordered_map<std::string, uint32_t> defaultPallette = {
     make_pair("limegreen", 0x32cd32),
     make_pair("linen", 0xfaf0e6),
     make_pair("magenta", 0xff00ff),
-    make_pair("mediumauqamarine", 0x66cdaa),
+    make_pair("mediumaquamarine", 0x66cdaa),
     make_pair("mediumblue", 0x0000cd),
     make_pair("mediumorchid", 0xba55d3),
-    make_pair("mediumpurple", 0x9370d8),
+    make_pair("mediumpurple", 0x9370db),
     make_pair("mediumseagreen", 0x3cb371),
     make_pair("mediumslateblue", 0x7b68ee),
     make_pair("mediumspringgreen", 0x00fa9a),
@@ -123,13 +136,13 @@ const std::unordered_map<std::string, uint32_t> defaultPallette = {
     make_pair("moccasin", 0xffe4b5),
     make_pair("navajowhite", 0xffdead),
     make_pair("oldlace", 0xfdf5e6),
-    make_pair("olivedrab", 0x688e23),
+    make_pair("olivedrab", 0x6b8e23),
     make_pair("orangered", 0xff4500),
     make_pair("orchid", 0xda70d6),
     make_pair("palegoldenrod", 0xeee8aa),
     make_pair("palegreen", 0x98fb98),
     make_pair("paleturquoise", 0xafeeee),
-    make_pair("palevioletred", 0xd87093),
+    make_pair("palevioletred", 0xdb7093),
     make_pair("papayawhip", 0xffefd5),
     make_pair("peachpuff", 0xffdab9),
     make_pair("peru", 0xcd853f),
@@ -142,7 +155,7 @@ const std::unordered_map<std::string, uint32_t> defaultPallette = {
     make_pair("salmon", 0xfa8072),
     make_pair("sandybrown", 0xf4a460),
     make_pair("seagreen", 0x2e8b57),
-    make_pair("seashel", 0xfff5ee),
+    make_pair("seashell", 0xfff5ee),
     make_pair("sienna", 0xa0522d),
     make_pair("skyblue", 0x87ceeb),
     make_pair("slateblue", 0x6a5acd),
@@ -158,6 +171,13 @@ const std::unordered_map<std::string, uint32_t> defaultPallette = {
     make_pair("whitesmoke", 0xf5f5f5),
     make_pair("yellowgreen", 0x9acd32),
 };
+
+// Whether s is a number, in hexadecimal or decimal digits.
+bool isNumber(const string& s, const bool hex)
+{
+    return !s.empty() && std::all_of(s.begin(), s.end(),
+                                     [hex](const unsigned char c) { return hex ? isxdigit(c) != 0 : isdigit(c) != 0; });
+}
 
 size_t findUnquotedStr(const string& str, const string& substr)
 {
@@ -315,18 +335,20 @@ vector<pair<Font, string>> TextSubtitlesRender::processTxtLine(const std::string
                 size_t colorPos = findUnquotedStr(ltagStr, "color");
                 if (colorPos != string::npos)
                 {
-                    auto arg = unquoteStr(findFontArg(ltagStr, colorPos));
-                    auto it = defaultPallette.find(arg);
+                    // A name, #RRGGBB (or xRRGGBB, 0xRRGGBB), or a decimal number. The number was read only when the
+                    // value was a known name, and then replaced the name's colour: color="red" drew black, and
+                    // color="#806040", the form the help shows, was never read at all. A value that is none of these
+                    // leaves the colour as it was.
+                    const auto arg = unquoteStr(findFontArg(ltagStr, colorPos));
+                    const auto it = defaultPallette.find(arg);
                     if (it != std::end(defaultPallette))
-                    {
                         curFont.m_color = it->second;
-                        if (!arg.empty() && (arg[0] == '#' || arg[0] == 'x'))
-                            curFont.m_color = strToInt32u(arg.substr(1, 16384).c_str(), 16);
-                        else if (arg.size() > 1 && (arg[0] == '0' || arg[1] == 'x'))
-                            curFont.m_color = strToInt32u(arg.substr(2, 16384).c_str(), 16);
-                        else
-                            curFont.m_color = strToInt32u(arg.c_str(), 10);
-                    }
+                    else if (!arg.empty() && (arg[0] == '#' || arg[0] == 'x') && isNumber(arg.substr(1), true))
+                        curFont.m_color = strToInt32u(arg.substr(1).c_str(), 16);
+                    else if (arg.size() > 2 && arg[0] == '0' && arg[1] == 'x' && isNumber(arg.substr(2), true))
+                        curFont.m_color = strToInt32u(arg.substr(2).c_str(), 16);
+                    else if (isNumber(arg, false))
+                        curFont.m_color = strToInt32u(arg.c_str(), 10);
                     if ((curFont.m_color & 0xff000000u) == 0)
                         curFont.m_color |= 0xff000000u;
                 }
