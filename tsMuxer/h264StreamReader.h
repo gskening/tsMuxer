@@ -115,6 +115,9 @@ class H264StreamReader final : public MPEGStreamReader
     std::map<uint32_t, PPSUnit*> m_ppsMap;
     std::set<uint32_t> updatedSPSList;
     std::vector<uint8_t> m_lastSeiMvcHeader;
+    // The SPS of the last IDR, as stored in m_spsMap. An IDR with a different one begins a new stream,
+    // and processSliceNal decides the picture order count step again there.
+    std::vector<uint8_t> m_idrSps;
     int64_t m_lastDtsInc;
     bool orig_hrd_parameters_present_flag;
     bool orig_vcl_parameters_present_flag;
@@ -126,6 +129,7 @@ class H264StreamReader final : public MPEGStreamReader
     void additionalStreamCheck(uint8_t* buff, uint8_t* end);
     int calcPicOrder(const SliceUnit& slice);
     int getIdrPrevFrames(uint8_t* buff, const uint8_t* bufEnd);
+    int lsbDivOfIdrPeriod(const SliceUnit& idrSlice, uint8_t* buff);
     int processSliceNal(uint8_t* buff);
     int processSPS(uint8_t* buff);
     int processPPS(uint8_t* buff);

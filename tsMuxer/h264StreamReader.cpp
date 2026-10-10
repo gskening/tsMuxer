@@ -784,6 +784,57 @@ int H264StreamReader::getIdrPrevFrames(uint8_t* buff, const uint8_t* bufEnd)
     return -1;
 }
 
+// The picture order count step of the IDR period that begins with idrSlice (its NAL at buff), read from
+// that period's own pictures by the rule additionalStreamCheck applies at the start of a track: 1 (halve
+// the counts) for coded fields and for frames whose counts are all even, 0 when a coded frame has an odd
+// count. Returns the step in use when the data cannot tell, and -1 when more data is needed and can come.
+int H264StreamReader::lsbDivOfIdrPeriod(const SliceUnit& idrSlice, uint8_t* buff)
+{
+    // With steps of one, the picture with count 1 is shown right after the IDR, and a decoder holds back
+    // at most 16 frames to reorder them, so that picture is among the next 17.
+    static constexpr int PICTURES_TO_BE_SURE = 17;
+    // More data is asked for only while it fits: what is kept from this picture on, plus the next block
+    // of input, has to stay inside TMP_BUFFER_SIZE, or setBuffer throws.
+    static constexpr int MAX_LOOKAHEAD = TMP_BUFFER_SIZE / 2;
+
+    if (idrSlice.getSPS()->frame_mbs_only_flag == 0 && idrSlice.m_field_pic_flag)
+        return 1;  // coded fields (and the second field of this IDR would look like the next IDR below)
+
+    int pictures = 0;
+    for (uint8_t* nal = NALUnit::findNextNAL(buff, m_bufEnd); nal < m_bufEnd;
+         nal = NALUnit::findNextNAL(nal, m_bufEnd))
+    {
+        const auto nalType = static_cast<NALUnit::NALType>(*nal & 0x1f);
+        if (nalType != NALUnit::NALType::nuSliceIDR && nalType != NALUnit::NALType::nuSliceNonIDR &&
+            nalType != NALUnit::NALType::nuSliceA && nalType != NALUnit::NALType::nuSliceB &&
+            nalType != NALUnit::NALType::nuSliceC && nalType != NALUnit::NALType::nuSliceExt)
+            continue;
+        SliceUnit slice;
+        int rez = slice.deserializeSliceType(nal, m_bufEnd);
+        if (rez == 0)
+        {
+            if (slice.first_mb_in_slice != 0)
+                continue;  // a further slice of a picture already looked at
+            if (slice.isIDR())
+                return pictures > 0 ? 1 : m_forceLsbDiv;  // the next period begins: every count was even
+            rez = deserializeSliceHeader(slice, nal, m_bufEnd);
+        }
+        if (rez == NOT_ENOUGH_BUFFER)
+            break;  // the data buffered so far ends inside this slice header
+        if (rez != 0)
+            return m_forceLsbDiv;
+        if (slice.getSPS()->frame_mbs_only_flag == 0 && slice.m_field_pic_flag)
+            return 1;
+        if (slice.pic_order_cnt_lsb % 2 == 1)
+            return 0;
+        if (++pictures >= PICTURES_TO_BE_SURE)
+            return 1;
+    }
+    if (m_eof)
+        return pictures > 0 ? 1 : m_forceLsbDiv;
+    return m_bufEnd - buff < MAX_LOOKAHEAD ? -1 : m_forceLsbDiv;
+}
+
 int H264StreamReader::intDecodeNAL(uint8_t* buff)
 {
     const auto nal_unit_type = static_cast<NALUnit::NALType>(*buff & 0x1f);
@@ -1119,6 +1170,33 @@ int H264StreamReader::processSliceNal(uint8_t* buff)
 
     if (detectPrimaryPicType(slice, buff) != 0)
         return NOT_ENOUGH_BUFFER;
+
+    // One track can carry more than one stream: parts joined end to end, or the two discs of one film.
+    // Whether the picture order counts step by one or by two was decided only at the start of the track,
+    // so a later part that counts the other way was read with the first part's step. Counts that step by
+    // one, halved, gave every second picture the time of the picture before it, left the second half of
+    // every IDR period without a picture, put times before the decoding times and printed a warning per
+    // picture (#301; a joined sample: 12,662 repeated times, 527 s of standing picture). Counts that step
+    // by two, not halved, spread the times out with no warning at all.
+    // A new stream begins at an IDR whose SPS is not the one of the IDR before, and there the step is
+    // decided again from that IDR period's own pictures. A stream whose SPS stays the same never gets
+    // past the comparison, so it is muxed exactly as before.
+    if (slice.isIDR() && slice.getSPS()->pic_order_cnt_type == 0)
+    {
+        const SPSUnit* sps = slice.getSPS();
+        if (m_idrSps.size() != sps->m_nalBufferLen ||
+            memcmp(m_idrSps.data(), sps->m_nalBuffer, sps->m_nalBufferLen) != 0)
+        {
+            if (!m_idrSps.empty())  // the first IDR: the step was decided by additionalStreamCheck
+            {
+                const int lsbDiv = lsbDivOfIdrPeriod(slice, buff);
+                if (lsbDiv == -1)
+                    return NOT_ENOUGH_BUFFER;
+                m_forceLsbDiv = lsbDiv;
+            }
+            m_idrSps.assign(sps->m_nalBuffer, sps->m_nalBuffer + sps->m_nalBufferLen);
+        }
+    }
 
     // forceLsbDiv check
     if (slice.getSPS()->frame_mbs_only_flag && m_forceLsbDiv != 0)
