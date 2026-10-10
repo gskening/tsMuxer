@@ -416,24 +416,45 @@ bool SingleFileMuxer::doFlush()
     return true;
 }
 
+static void reportUnfinished(const std::string& fileName)
+{
+    LTRACE(LT_ERROR, 2, "Error: the end of " << fileName << " could not be written.");
+}
+
+// Every track is finished, also after one of them failed: the first failure used to end the loop, and the end of
+// every track after it was never written, while the run went on as if all were done. Each file that cannot be
+// finished is named, and the result says whether all were.
 bool SingleFileMuxer::close()
 {
+    bool allFinished = true;
     for (const auto& [fst, outputs] : m_streamInfo)
         for (StreamInfo* streamInfo : outputs)
         {
+            const auto failed = [&]
+            {
+                reportUnfinished(streamInfo->m_fileName);
+                allFinished = false;
+            };
             if (!streamInfo->m_file.close())
-                return false;
+            {
+                failed();
+                continue;
+            }
             if (streamInfo->m_bufLen > 0)
             {
-                if (!streamInfo->m_file.open(streamInfo->m_fileName.c_str(), File::ofWrite + File::ofAppend))
-                    return false;
-                if (!streamInfo->m_file.write(streamInfo->m_buffer, streamInfo->m_bufLen))
-                    return false;
-                if (streamInfo->m_codecReader)
-                    if (!streamInfo->m_codecReader->beforeFileCloseEvent(streamInfo->m_file))
-                        return false;
+                if (!streamInfo->m_file.open(streamInfo->m_fileName.c_str(), File::ofWrite + File::ofAppend) ||
+                    !streamInfo->m_file.write(streamInfo->m_buffer, streamInfo->m_bufLen) ||
+                    (streamInfo->m_codecReader && !streamInfo->m_codecReader->beforeFileCloseEvent(streamInfo->m_file)))
+                {
+                    streamInfo->m_file.close();
+                    failed();
+                    continue;
+                }
                 if (!streamInfo->m_file.close())
-                    return false;
+                {
+                    failed();
+                    continue;
+                }
 
                 if (streamInfo->m_part > 1)
                 {
@@ -444,7 +465,7 @@ bool SingleFileMuxer::close()
                 }
             }
         }
-    return true;
+    return allFinished;
 }
 
 void SingleFileMuxer::parseMuxOpt(const std::string& opts)

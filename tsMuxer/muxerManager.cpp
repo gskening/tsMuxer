@@ -467,9 +467,10 @@ void MuxerManager::doMux(const string& outFileName, FileFactory* fileFactory)
 
     waitForWriting();
 
-    m_mainMuxer->close();
-    if (m_subMuxer)
-        m_subMuxer->close();
+    // What close reports was not looked at, so a file whose end could not be written was reported as a finished mux.
+    bool closed = m_mainMuxer->close();
+    if (m_subMuxer && !m_subMuxer->close())
+        closed = false;
 
     // Drain any writes the muxers queued during flush/close, then surface a failed
     // async write (e.g. disk full at the tail of a large image) instead of silently
@@ -483,6 +484,8 @@ void MuxerManager::doMux(const string& outFileName, FileFactory* fileFactory)
     }
 
     m_fileWriter.reset();
+    if (!closed)
+        throw std::runtime_error("Failed to write the end of the output (disk full or I/O error)");
 }
 
 int MuxerManager::addStream(const string& codecName, const string& fileName, const map<string, string>& addParams)
