@@ -4744,6 +4744,19 @@ void TsMuxerWindow::onTrackContextMenu(const QPoint& pos)
         return;
 
     QMenu menu(this);
+#ifdef Q_OS_WIN
+    // The Windows styles paint a menu's ground from the visual theme but its text in the colour scheme's menu text
+    // colour. With a colour scheme the user chose, which Windows 7 still offers, that can be white text on the
+    // theme's near-white ground, and the items of this menu could not be read (#27). Taking ground and text from
+    // the same palette gives the scheme's own pair, whatever it is; on the default scheme the menu looks the same
+    // but for a flatter frame.
+    menu.setStyleSheet(QStringLiteral(
+        "QMenu { background-color: palette(window); color: palette(window-text); border: 1px solid palette(mid); }"
+        "QMenu::item { padding: 3px 24px 3px 20px; }"
+        "QMenu::item:selected { background-color: palette(highlight); color: palette(highlighted-text); }"
+        "QMenu::item:disabled { color: palette(mid); }"
+        "QMenu::separator { height: 1px; background: palette(mid); margin: 3px 6px; }"));
+#endif
     QAction* checkType = menu.addAction(tr("Check all tracks of this type"));
     QAction* uncheckType = menu.addAction(tr("Uncheck all tracks of this type"));
     menu.addSeparator();
