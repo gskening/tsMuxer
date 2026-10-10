@@ -1,20 +1,42 @@
 #include <io.h>
 #include <windows.h>
+
+#include <stdexcept>
+#include <string>
 #include <winioctl.h>  // FSCTL_SET_SPARSE
 
 #include "../directory.h"
 #include "../file.h"
 
+// FormatMessage is FormatMessageW in this build, so the text came back in UTF-16 and was read as 8-bit
+// characters: every message stopped after its first letter, and a write Windows refused said only "T"
+// (W1-6(d)). The text is asked for in UTF-16 on purpose now and turned into UTF-8, which is what tsMuxeR
+// prints everywhere, and the error number goes with it. The buffer Windows allocates is given back.
 [[noreturn]] void throwFileError()
 {
-    LPVOID msgBuf = nullptr;
     const DWORD dw = GetLastError();
-
-    FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM, nullptr, dw,
-                  MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), reinterpret_cast<LPTSTR>(&msgBuf), 0, nullptr);
-
-    const std::string str(static_cast<char*>(msgBuf));
-    throw std::runtime_error(str);
+    LPWSTR msgBuf = nullptr;
+    const DWORD len =
+        FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                       nullptr, dw, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), reinterpret_cast<LPWSTR>(&msgBuf), 0,
+                       nullptr);
+    std::string text;
+    if (len > 0 && msgBuf)
+    {
+        const int bytes = WideCharToMultiByte(CP_UTF8, 0, msgBuf, static_cast<int>(len), nullptr, 0, nullptr, nullptr);
+        if (bytes > 0)
+        {
+            text.resize(bytes);
+            WideCharToMultiByte(CP_UTF8, 0, msgBuf, static_cast<int>(len), text.data(), bytes, nullptr, nullptr);
+        }
+        while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' '))
+            text.pop_back();
+    }
+    if (msgBuf)
+        LocalFree(msgBuf);
+    if (text.empty())
+        text = "Windows could not complete a file operation.";
+    throw std::runtime_error(text + " (Windows error " + std::to_string(dw) + ")");
 }
 
 void makeWin32OpenFlags(const unsigned int oflag, DWORD* const dwDesiredAccess, DWORD* const dwCreationDisposition,
