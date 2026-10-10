@@ -18,6 +18,7 @@ class FileListIterator final : public FileNameIterator
     std::string getNextName() override { return ++m_index < m_files.size() ? m_files[m_index] : ""; }
 
     void addFile(const std::string& fileName) { m_files.push_back(fileName); }
+    [[nodiscard]] const std::vector<std::string>& getFiles() const { return m_files; }
 
    private:
     std::vector<std::string> m_files;

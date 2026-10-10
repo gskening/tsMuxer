@@ -1177,7 +1177,32 @@ std::vector<AVChapter> METADemuxer::getChapters()
     {
         if (!demuxerData.m_demuxer)
             continue;
-        if (std::vector<AVChapter> chapters = demuxerData.m_demuxer->getChapters(); !chapters.empty())
+        std::vector<AVChapter> chapters = demuxerData.m_demuxer->getChapters();
+        // A join ("a.mkv"+"b.mkv") is read through one demuxer that moves on from file to file, and only the file it
+        // had open was asked, so every part after the first lost its chapters (#27). Each part is opened on its own
+        // here, and its chapters are moved by the length of the parts before it: the length the listing prints, which
+        // is also what the window adds when it shows the chapters of joined files. A part of unknown length ends it,
+        // because the chapters after it could not be placed.
+        const auto* join = dynamic_cast<const FileListIterator*>(demuxerData.m_iterator);
+        if (join && join->getFiles().size() > 1 && dynamic_cast<MatroskaDemuxer*>(demuxerData.m_demuxer))
+        {
+            chapters.clear();
+            int64_t offsetNano = 0;
+            for (const std::string& part : join->getFiles())
+            {
+                MatroskaDemuxer partDemuxer(m_readManager);
+                partDemuxer.openFile(part);
+                for (AVChapter chapter : partDemuxer.getChapters())
+                {
+                    chapter.start += offsetNano;
+                    chapters.push_back(std::move(chapter));
+                }
+                if (partDemuxer.getFileDurationNano() <= 0)
+                    break;
+                offsetNano += partDemuxer.getFileDurationNano();
+            }
+        }
+        if (!chapters.empty())
             return chapters;
     }
     return {};
