@@ -1929,6 +1929,14 @@ void MatroskaMuxer::replayBufferedPackets()
     if (!haveMin)
         minPts = m_preHeaderPackets[0].pts;
 
+    // A file of nothing but subtitles keeps the source's own times. Every reader hands its packets over on the
+    // source's clock, whose zero is where the source starts (an SRT file's 00:00:00,000, a disc clip's first picture),
+    // and a file with video keeps them because its video starts there. Subtitles alone started at their first
+    // subtitle instead: one due at 1 s came out at 0, every later one as early, and a delay on the track did nothing.
+    // The origin is now the source's zero, or the start of a --cut-start, when the first subtitle comes after it.
+    if (tracksNeedingFirstPacket() == 0 && m_owner != nullptr)
+        minPts = (std::min)(minPts, (std::max)(int64_t{0}, m_owner->getCutStart()));
+
     m_firstTimecode = minPts;
     m_firstTimecodeSet = true;
 

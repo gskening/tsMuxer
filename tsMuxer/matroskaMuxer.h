@@ -388,7 +388,7 @@ class MatroskaMuxer final : public AbstractMuxer
     static constexpr int VOID_MIN_BYTES = 3;      // one byte of ID plus a two byte size
 
     // Timecode tracking
-    int64_t m_firstTimecode;  // first PTS seen (in INTERNAL_PTS_FREQ units) – used as reference
+    int64_t m_firstTimecode;  // the timeline's origin in INTERNAL_PTS_FREQ units (see replayBufferedPackets)
     bool m_firstTimecodeSet;
     int64_t m_durationValueFilePos;  // absolute file position of the Duration float64 value
 
@@ -429,7 +429,7 @@ class MatroskaMuxer final : public AbstractMuxer
     void openDestination();
     // Write the deferred header (SegmentInfo + Tracks)
     void writeDeferredHeader();
-    // Replay buffered pre-header packets (sets m_firstTimecode to min PTS)
+    // Replay buffered pre-header packets; sets m_firstTimecode (the earliest PTS, or 0 for subtitles alone)
     void replayBufferedPackets();
     [[nodiscard]] size_t tracksNeedingFirstPacket() const;
 
