@@ -101,6 +101,8 @@ class MuxerManager final
     void writeChapterFile(const std::string& outDirName);
     // The source's chapters on the output's timeline: only those inside a --cut-start/--cut-end, moved by the start.
     std::vector<AVChapter> sourceChapters();
+    // --cut-start: whether a packet the cut start has not dropped by its time is kept (see doMux).
+    bool keptAfterCutStart(AVPacket& avPacket);
     std::unique_ptr<AbstractMuxer> createMuxer();
     void asyncWriteBlock(const WriterData& data) const;
     void checkTrackList(const std::vector<StreamInfo>& ci) const;
@@ -117,6 +119,12 @@ class MuxerManager final
     METADemuxer m_metaDemuxer;
     int64_t m_cutStart;
     int64_t m_cutEnd;
+    // --cut-start: for each video stream already begun, the time of its first picture; the streams that only add to
+    // another (a 3D second view, a Dolby Vision enhancement layer); and the time the main video begins at.
+    std::map<int, int64_t> m_cutVideoFrom;
+    std::set<int> m_cutLayers;
+    bool m_cutLayersKnown = false;
+    int64_t m_cutVideoStart = -1;
     std::unique_ptr<BufferedFileWriter> m_fileWriter;
     AbstractMuxerFactory& m_factory;
     bool m_allowStereoMux;

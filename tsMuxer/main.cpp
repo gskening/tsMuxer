@@ -1915,17 +1915,19 @@ static void reportSplitWithoutParameterSets(const MuxerManager& muxerManager)
 
     for (const StreamInfo& si : muxerManager.getStreamInfo())
     {
+        // Every other H.264 stream now gets its parameter sets at the start of each part (h264StreamReader.cpp,
+        // newFileNeedsSpsPps). The second view of a 3D stream keeps the old rule, so only it can still be affected.
         const auto reader = dynamic_cast<H264StreamReader*>(si.m_streamReader);
-        if (reader == nullptr || reader->spsPpsRepeatedInStream())
+        if (reader == nullptr || !reader->isSubStream() || reader->spsPpsRepeatedInStream())
             continue;
         const std::string name = si.m_fullStreamName.empty() ? ("\"" + si.m_streamName + "\"") : si.m_fullStreamName;
         LTRACE(LT_WARN, 2,
                "Warning: " << name
-                           << " was split, and its H.264 parameter sets appear only once at the start, so "
-                              "every part after the first refers to a parameter set it does not contain and "
-                              "will not decode on its own. Add contSPS to that line to repeat them before each "
-                              "key frame. The parts already written are affected; this is not a warning about "
-                              "the next run.");
+                           << " (the second view of a 3D stream) was split, and its parameter sets appear only "
+                              "once at the start, so every part after the first refers to a parameter set it does "
+                              "not contain and will not decode on its own. Add contSPS to that line to repeat them "
+                              "before each key frame. The parts already written are affected; this is not a "
+                              "warning about the next run.");
     }
 }
 

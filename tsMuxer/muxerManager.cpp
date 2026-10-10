@@ -10,6 +10,7 @@
 #include "chapterFile.h"
 #include "h264StreamReader.h"
 #include "iso_writer.h"
+#include "mpegStreamReader.h"
 #include "tsMuxer.h"
 #include "vodCoreException.h"
 
@@ -424,7 +425,7 @@ void MuxerManager::doMux(const string& outFileName, FileFactory* fileFactory)
             break;
         if (m_cutStart > 0)
         {
-            if (avPacket.pts < m_cutStart)
+            if (avPacket.pts < m_cutStart || !keptAfterCutStart(avPacket))
                 continue;
         }
         if (m_cutEnd > 0 && avPacket.pts >= m_cutEnd)
@@ -731,6 +732,60 @@ void MuxerManager::parseMuxOpt(const string& opts)
             }
         }
     }
+}
+
+// A cut that does not start at the beginning kept every packet from the cut time on, so its video began with whatever
+// picture came next. A picture other than an I-frame cannot be decoded without the ones before it, and a stream from
+// MP4 or Matroska holds its parameter sets once, ahead of its first picture, which the cut had dropped: such a cut
+// gave sound but no picture at all. Each video now begins with its first I-frame at or after the cut, and that picture
+// is told it opens a new file, the way the first picture of a split part is, so the reader writes the parameter sets
+// in front of it when its group has none. The pictures between the cut and that I-frame, and the ones shown before
+// it, are left out: none of them could be shown. A layer that only adds to another video (the second view of a 3D
+// stream, a Dolby Vision enhancement layer) begins at the same picture as the main video rather than at an I-frame of
+// its own. Audio and subtitles keep to the cut time, as before.
+bool MuxerManager::keptAfterCutStart(AVPacket& avPacket)
+{
+    auto* video = dynamic_cast<MPEGStreamReader*>(avPacket.codec);
+    if (video == nullptr)
+        return true;
+    if (!m_cutLayersKnown)
+    {
+        // In the order of the meta file, the order the transport stream muxer tells the layers apart in: a Dolby
+        // Vision stream is an enhancement layer only when a main video came before it (profiles 5 and 8 have one
+        // stream, and it is the main video).
+        m_cutLayersKnown = true;
+        int mainVideos = 0;
+        for (const StreamInfo& si : m_metaDemuxer.getStreamInfo())
+        {
+            const auto* reader = dynamic_cast<MPEGStreamReader*>(si.m_streamReader);
+            if (reader == nullptr)
+                continue;
+            const auto* h264 = dynamic_cast<const H264StreamReader*>(reader);
+            if (si.m_isSubStream || (h264 != nullptr && h264->isSubStream()) ||
+                (reader->getStreamHDR() == 4 && mainVideos > 0))
+                m_cutLayers.insert(si.m_streamReader->getStreamIndex());
+            else if (!si.m_streamReader->isSecondary())
+                mainVideos++;
+        }
+    }
+    const auto begun = m_cutVideoFrom.find(avPacket.stream_index);
+    if (begun != m_cutVideoFrom.end())
+        return avPacket.pts >= begun->second;
+    if (m_cutLayers.count(avPacket.stream_index) > 0)
+    {
+        if (m_cutVideoStart < 0 || avPacket.pts < m_cutVideoStart)
+            return false;
+    }
+    else
+    {
+        if (!(avPacket.flags & AVPacket::IS_IFRAME))
+            return false;
+        if (m_cutVideoStart < 0 && !video->isSecondary())
+            m_cutVideoStart = avPacket.pts;
+    }
+    m_cutVideoFrom[avPacket.stream_index] = avPacket.pts;
+    video->onSplitEvent();
+    return true;
 }
 
 void MuxerManager::waitForWriting() const

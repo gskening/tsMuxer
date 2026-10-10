@@ -332,10 +332,16 @@ int H264StreamReader::writeAdditionData(uint8_t* dstBuffer, uint8_t* dstEnd, AVP
 
     bool needInsTimingSEI = m_needSeiCorrection && m_lastSliceSPS != UINT_MAX;
     bool srcSpsPpsFound = avPacket.flags & AVPacket::IS_SPS_PPS_IN_GOP;
+    // The first picture of a new file, the next part of a split or the first picture of a cut, carries the parameter
+    // sets when its group has none, as HEVC already does. A stream from MP4 or Matroska holds them once, ahead of its
+    // first picture, so without them nothing in that file decoded: this used to be done only with contSPS. The
+    // dependent view of a 3D stream keeps the old rule.
+    const bool newFileNeedsSpsPps = m_firstFileFrame && !srcSpsPpsFound && !m_mvcSubStream;
     bool spsDiscontinue =
-        m_h264SPSCont &&
-        ((m_spsCounter < 2 && ((m_totalFrameNum > 1 && m_lastSliceIDR) || (m_totalFrameNum > 250 && isIFrame()))) ||
-         (m_firstFileFrame && !srcSpsPpsFound));
+        newFileNeedsSpsPps ||
+        (m_h264SPSCont &&
+         ((m_spsCounter < 2 && ((m_totalFrameNum > 1 && m_lastSliceIDR) || (m_totalFrameNum > 250 && isIFrame()))) ||
+          (m_firstFileFrame && !srcSpsPpsFound)));
     bool needInsSpsPps = false;
     if (isIFrame() && m_lastSliceSPS != UINT_MAX && m_lastSlicePPS != UINT_MAX)
     {
