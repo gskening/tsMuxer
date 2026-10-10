@@ -25,9 +25,9 @@ class AACStreamReader final : public SimplePacketizerReader, public AACCodec
     const std::string getStreamInfo() override;
 
    private:
-    // What the listing saw: the bits and samples of every frame in the data it was given.
+    // What the listing saw: the audio bits and the playing time of every frame in the data it was given.
     int64_t m_seenBits = 0;
-    int64_t m_seenSamples = 0;
+    double m_seenSeconds = 0;
 };
 
 #endif

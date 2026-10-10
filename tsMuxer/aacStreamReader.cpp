@@ -29,9 +29,8 @@ int AACStreamReader::getHeaderLen() { return AAC_HEADER_LEN; }
 const std::string AACStreamReader::getStreamInfo()
 {
     std::ostringstream str;
-    if (m_seenSamples > 0 && m_sample_rate > 0)
-        str << "Bitrate: " << llround(static_cast<double>(m_seenBits) * m_sample_rate / m_seenSamples / 1000.0)
-            << "Kbps (average)  ";
+    if (m_seenSeconds > 0)
+        str << "Bitrate: " << llround(static_cast<double>(m_seenBits) / m_seenSeconds / 1000.0) << "Kbps (average)  ";
     str << "Sample Rate: " << m_sample_rate / 1000 << "KHz  ";
     str << "Channels: " << static_cast<int>(m_channels);
     return str.str();
@@ -48,17 +47,26 @@ CheckStreamRez AACStreamReader::checkStream(uint8_t* buffer, const int len, cons
     // header itself (7 bytes, 9 with its CRC) is not part of the audio and is left out of the figure, which
     // is how a codec's bitrate is given; an AAC read out of an MP4 or a Matroska carries that header only
     // because the reader adds it.
+    //
+    // ** THE HEADERS ARE READ INTO A CODEC OF THEIR OWN, NOT INTO THIS READER. ** Read into the reader, they
+    // left it with the LAST frame's sample rate and channels, so the line no longer showed what the detection
+    // had found: a stream that changes from mono to stereo inside the data was listed as stereo, and a 48 kHz
+    // stereo AAC followed by a 96 kHz 5.1 one was listed as 96 kHz 5.1 at 1313 Kbps, every frame timed by the
+    // last frame's rate, where the average is 821. Each frame is now timed by its own sample rate.
+    AACCodec walker;
     m_seenBits = 0;
-    m_seenSamples = 0;
+    m_seenSeconds = 0;
     uint8_t* const end = buffer + len;
     for (uint8_t* frame = findFrame(buffer, end); frame && end - frame >= AAC_HEADER_LEN;)
     {
-        const int size = AACCodec::decodeFrame(frame, end) ? getFrameSize(frame) : 0;
-        if (size <= 0 || size > end - frame)
+        if (!walker.decodeFrame(frame, end))
             break;
+        const int size = getFrameSize(frame);
         const int headerSize = (frame[1] & 0x01) ? AAC_HEADER_LEN : AAC_HEADER_LEN + 2;
-        m_seenBits += static_cast<int64_t>(size > headerSize ? size - headerSize : 0) * 8;
-        m_seenSamples += m_samples;
+        if (size <= headerSize || size > end - frame)
+            break;  // no room for audio behind its own header, so not a frame; or cut off by the end of the data
+        m_seenBits += static_cast<int64_t>(size - headerSize) * 8;
+        m_seenSeconds += static_cast<double>(walker.m_samples) / walker.m_sample_rate;
         frame += size;
     }
     rez.streamDescr = getStreamInfo();
