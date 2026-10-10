@@ -2232,8 +2232,18 @@ void TSMuxer::openDstFile()
 
     int systemFlags = 0;
 #ifdef _WIN32
+    // An unbuffered write has to be a whole number of the volume's sectors, and this writer works in units of
+    // PHYSICAL_SECTOR_SIZE (2,048 bytes). On a volume with larger sectors, 4,096 bytes on a drive with native 4 KB
+    // sectors, Windows refused the first block of a .ts ("The parameter is incorrect", error 87), and the last block
+    // of some .m2ts files and the blocks of a 3D disc. There the file is written through the system cache instead,
+    // as --no-asyncio does; the bytes written are the same.
     if (m_owner->isAsyncMode())
-        systemFlags += FILE_FLAG_NO_BUFFERING;
+    {
+        const uint32_t sector =
+            m_fileFactory && m_fileFactory->isVirtualFS() ? 0 : File::volumeSectorSize(m_outFileName.c_str());
+        if (sector == 0 || MuxerManager::PHYSICAL_SECTOR_SIZE % sector == 0)
+            systemFlags += FILE_FLAG_NO_BUFFERING;
+    }
 #endif
     if (!m_muxFile->open(m_outFileName.c_str(), File::ofWrite, systemFlags))
         THROW(ERR_CANT_CREATE_FILE, "Can't create file " << m_outFileName)

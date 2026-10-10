@@ -253,3 +253,19 @@ bool File::setSparse() const
     DWORD bytesReturned = 0;
     return DeviceIoControl(m_impl, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &bytesReturned, nullptr) != 0;
 }
+
+// The volume of a path, found by its full name, and the size of that volume's sectors as the file system uses them:
+// the logical size, 512 on most drives, 4,096 on a drive with native 4 KB sectors.
+uint32_t File::volumeSectorSize(const char* fName)
+{
+    const auto name = toWide(fName);
+    wchar_t full[MAX_PATH * 4];
+    wchar_t volume[MAX_PATH * 4];
+    const DWORD len = GetFullPathNameW(name.data(), MAX_PATH * 4, full, nullptr);
+    if (len == 0 || len >= MAX_PATH * 4 || !GetVolumePathNameW(full, volume, MAX_PATH * 4))
+        return 0;
+    DWORD sectorsPerCluster = 0, bytesPerSector = 0, freeClusters = 0, totalClusters = 0;
+    if (!GetDiskFreeSpaceW(volume, &sectorsPerCluster, &bytesPerSector, &freeClusters, &totalClusters))
+        return 0;
+    return bytesPerSector;
+}

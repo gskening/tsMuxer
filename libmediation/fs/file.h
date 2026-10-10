@@ -132,6 +132,14 @@ class File : public AbstractOutputStream
     */
     bool setSparse() const;
 
+    //! The size of a sector of the volume a file is on, or would be created on.
+    /*!
+            A write with FILE_FLAG_NO_BUFFERING has to be a whole number of these. Asked of the volume, so the file
+            need not exist yet.
+            \return The size in bytes, or 0 when it cannot be told (and always 0 outside Windows).
+    */
+    static uint32_t volumeSectorSize(const char* fName);
+
     std::string getName() { return m_name; }
 
     uint64_t pos() const { return m_pos; }

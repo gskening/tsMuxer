@@ -171,6 +171,9 @@ bool File::truncate(const uint64_t newFileSize) const { return ftruncate(to_fd(m
 // keeps earlier gaps as holes. Nothing to enable, so just report that sparse behaviour is available.
 bool File::setSparse() const { return isOpen(); }
 
+// Only Windows writes unbuffered (FILE_FLAG_NO_BUFFERING), so only there does the sector size matter.
+uint32_t File::volumeSectorSize(const char*) { return 0; }
+
 void File::sync() { ::sync(); }
 
 #endif
