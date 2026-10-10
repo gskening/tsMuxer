@@ -66,6 +66,8 @@ class SRTStreamReader final : public AbstractStreamReader
 
    private:
     UtfConverter::SourceFormat m_srcFormat;
+    // Judged UTF-8 only because the start of the file is plain ASCII, which every 8 bit code page shares with UTF-8.
+    bool m_utf8Guessed = false;
     double m_inTime;
     double m_outTime;
     bool m_untilNext = false;  // the timing line has no end: shown until the next subtitle
@@ -160,6 +162,7 @@ class SRTStreamReader final : public AbstractStreamReader
     static bool hasVisibleText(const std::string& text);
     int blankLineEndsCue() const;
     int nextCueFollows() const;
+    void checkUtf8Guess(const uint8_t* line, ptrdiff_t len);
 };
 
 #endif

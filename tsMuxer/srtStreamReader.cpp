@@ -83,14 +83,48 @@ void SRTStreamReader::setBuffer(uint8_t* data, const uint32_t dataLen, const boo
     }
 }
 
+// The encoding is judged from the first block of the file, up to 2 MB. When that is plain ASCII it reads the same as
+// UTF-8 and as any 8 bit code page, and UTF-8 was taken for the rest of the file as well: a code page file whose first
+// letter beyond ASCII came later had every such letter drawn wrong, or replaced in a Matroska text track. The first
+// line beyond ASCII decides it now: valid UTF-8 keeps UTF-8, anything else is read in the active code page from that
+// line on, as a file that shows it at once already was. Only Windows has a code page to fall back to.
+void SRTStreamReader::checkUtf8Guess(const uint8_t* line, const ptrdiff_t len)
+{
+    if (std::all_of(line, line + len, [](const uint8_t c) { return c < 0x80; }))
+        return;
+    m_utf8Guessed = false;
+    if (convertUTF::isLegalUTF8String(line, static_cast<size_t>(len)))
+        return;
+#ifdef _WIN32
+    m_srcFormat = UtfConverter::SourceFormat::sfANSI;
+    LTRACE(LT_INFO, 2,
+           "Line " << m_linesRead + 1
+                   << " of the SRT file is not UTF-8, so the file is read in the active code page from that line on. "
+                      "Its start is plain ASCII, which reads the same both ways.");
+#endif
+}
+
 bool SRTStreamReader::detectSrcFormat(const uint8_t* dataStart, const size_t len, int& prefixLen)
 {
     prefixLen = 0;
     if (len < 4)
         return false;
     // detect UTF-8/UTF-16/UTF-32 format
+    // The first block read can end inside a character, and a UTF-8 file was then judged not to be UTF-8 at all, and
+    // read in the code page. A character cut by the end of the block is left out of the check.
+    size_t checkLen = len;
+    for (size_t back = 1; back <= 3 && back <= len; ++back)
+    {
+        const uint8_t c = dataStart[len - back];
+        if ((c & 0xC0) == 0x80)
+            continue;  // a continuation byte: its lead byte is further back
+        const size_t needed = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+        if (needed > back)
+            checkLen = len - back;
+        break;
+    }
     const bool hasUtf8Bom = dataStart[0] == 0xEF && dataStart[1] == 0xBB && dataStart[2] == 0xBF;
-    if (hasUtf8Bom || convertUTF::isLegalUTF8String(dataStart, len))
+    if (hasUtf8Bom || convertUTF::isLegalUTF8String(dataStart, checkLen))
     {
         m_charSize = 1;
         m_srcFormat = UtfConverter::SourceFormat::sfUTF8;
@@ -99,6 +133,8 @@ bool SRTStreamReader::detectSrcFormat(const uint8_t* dataStart, const size_t len
         // front of it. Every other branch here already sets prefixLen only on a mark it matched.
         if (hasUtf8Bom)
             prefixLen = 3;
+        m_utf8Guessed =
+            !hasUtf8Bom && std::all_of(dataStart, dataStart + len, [](const uint8_t c) { return c < 0x80; });
     }
     else if (dataStart[0] == 0 && dataStart[1] == 0 && dataStart[2] == 0xFE && dataStart[3] == 0xFF)
     {
@@ -194,6 +230,8 @@ int SRTStreamReader::parseText(uint8_t* dataStart, const size_t len)
         else
             continue;
 
+        if (m_utf8Guessed)
+            checkUtf8Guess(lastProcessedLine, textEnd - lastProcessedLine);
         m_sourceText.emplace_back(UtfConverter::toUtf8(lastProcessedLine, textEnd - lastProcessedLine, m_srcFormat));
         std::string& tmp = m_sourceText.back();
         if (strOnlySpace(tmp))
