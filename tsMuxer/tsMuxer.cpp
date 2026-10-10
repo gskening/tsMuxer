@@ -1514,13 +1514,23 @@ void TSMuxer::finishFileBlock(const int64_t newPts, const int64_t newPCR, const 
         m_prevM2TSPCROffset = 0;
     }
 
+    // In a 3D image the base view's block waits until the second view has finished its own, because the second
+    // view's block comes first on the disc (MuxerManager::asyncWriteBuffer). When the base view began a new part, it
+    // closed its file before the second view had finished, and its last block of the part was then written to a
+    // closed file and lost: the two views of the part no longer matched and the image was refused ("5 pieces against
+    // 6"). The second view now finishes its block first, so the waiting block lands while the part is still open. When
+    // the second view begins the new part, this was already the order.
+    const bool otherViewFirst = doChangeFile && recursive && m_masterMode && m_sublingMuxer;
+    if (otherViewFirst)
+        m_sublingMuxer->finishFileBlock(newPts, newPCR, doChangeFile, false);
+
     if (doChangeFile)
         gotoNextFile(newPts);
 
     writePATPMT(newPCR, true);
     writePCR(newPCR);
 
-    if (m_sublingMuxer && recursive)
+    if (m_sublingMuxer && recursive && !otherViewFirst)
         m_sublingMuxer->finishFileBlock(newPts, newPCR, doChangeFile, false);
 }
 
