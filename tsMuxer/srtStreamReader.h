@@ -80,10 +80,10 @@ class SRTStreamReader final : public AbstractStreamReader
     };
     std::deque<TextCue> m_textCues;
     std::vector<uint8_t> m_textPacket;
-    int m_lengthlessCues = 0;    // kept as text: subtitles left out because they have no length
-    int m_invalidUtf8Cues = 0;   // kept as text: subtitles whose bytes were not all valid UTF-8
-    int m_unseenCues = 0;        // drawn: subtitles with text, none of which lands inside the picture
-    int m_shrunkCues = 0;        // drawn: subtitles too large for the picture, drawn at the largest size that fits
+    int m_lengthlessCues = 0;   // kept as text: subtitles left out because they have no length
+    int m_invalidUtf8Cues = 0;  // kept as text: subtitles whose bytes were not all valid UTF-8
+    int m_unseenCues = 0;       // drawn: subtitles with text, none of which lands inside the picture
+    int m_shrunkCues = 0;       // drawn: subtitles too large for the picture, drawn at the largest size that fits
     bool m_unseenReported = false;
     int m_srtRecords = 0;        // demux: SRT records written so far, which numbers the next
     int64_t m_cuesRead = 0;      // subtitles read from the file

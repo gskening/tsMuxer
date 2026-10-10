@@ -351,7 +351,8 @@ std::vector<BdSsifGroup> bdFindSsifGroups(const std::string& srcRoot)
             if (g.ssifMissing)
                 LTRACE(LT_WARN, 2,
                        "Warning: 3D: " << g.ssifRel << " is missing, and the clip info of " << g.baseRel << " and "
-                                       << g.depRel << " does not describe how to rebuild it, so that title plays in 2D");
+                                       << g.depRel
+                                       << " does not describe how to rebuild it, so that title plays in 2D");
             continue;
         }
         // The two views interleave one chunk for one. Unequal counts mean this is not the layout

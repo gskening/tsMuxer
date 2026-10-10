@@ -164,10 +164,11 @@ void ParsedH264TrackData::extractData(AVPacket* pkt, uint8_t* buff, const int si
             for (int i = 0; i < m_nalSize; ++i) declared = (declared << 8) | curPos[i];
             LTRACE(LT_WARN, 2,
                    "Matroska: a NAL unit declares " << declared << " bytes but its block holds "
-                                                     << (end - curPos) - m_nalSize << ", so it is left out");
+                                                    << (end - curPos) - m_nalSize << ", so it is left out");
         }
         else
-            LTRACE(LT_WARN, 2, "Matroska: " << end - curPos << " stray byte(s) after the last NAL unit of a block left out");
+            LTRACE(LT_WARN, 2,
+                   "Matroska: " << end - curPos << " stray byte(s) after the last NAL unit of a block left out");
     }
     // Sized for a four byte start code on every NAL, which is the largest this can write. Where the
     // source's own framing was three, one byte per NAL goes unused and the packet is sized below
@@ -214,7 +215,8 @@ bool ParsedH265TrackData::spsppsExists(uint8_t* buff, const int size)
     uint32_t elSize = 0;
     while (nextNal(curPos, end, elSize))
     {
-        const auto nalUnitType = static_cast<HevcUnit::NalType>(nalTypeOf(curPos + m_nalSize, static_cast<int>(elSize)));
+        const auto nalUnitType =
+            static_cast<HevcUnit::NalType>(nalTypeOf(curPos + m_nalSize, static_cast<int>(elSize)));
         if (nalUnitType == HevcUnit::NalType::VPS)
             vpsFound = true;
         else if (nalUnitType == HevcUnit::NalType::SPS)

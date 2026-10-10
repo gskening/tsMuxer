@@ -1077,13 +1077,13 @@ TsMuxerWindow::TsMuxerWindow()
                "the data stays off the weak outer edge. The image is padded to the full disc, so the burn writes "
                "the whole disc. The layer-break guard is sized automatically; needs the disc Free Sectors set.")));
         auto* singleCopy3dCheck = new QCheckBox(tr("3D disc: store the video once, not twice"), bdmvTab);
-        singleCopy3dCheck->setToolTip(
-            wrapTip(tr("A 3D disc stores its video once and gives it three names: the .ssif and the two .m2ts are the "
-                       "same sectors seen three ways. Copying all three by name writes the video twice and "
-                       "roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back "
-                       "onto one. It is ticked by itself when the folder holds a 3D disc: the video is then stored once, the "
-                       "way the source disc holds it, and a missing .ssif is rebuilt from the two views. Unticked, the "
-                       "folder is copied as it is, both views and any .ssif files, and the disc stays 3D.")));
+        singleCopy3dCheck->setToolTip(wrapTip(
+            tr("A 3D disc stores its video once and gives it three names: the .ssif and the two .m2ts are the "
+               "same sectors seen three ways. Copying all three by name writes the video twice and "
+               "roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back "
+               "onto one. It is ticked by itself when the folder holds a 3D disc: the video is then stored once, the "
+               "way the source disc holds it, and a missing .ssif is rebuilt from the two views. Unticked, the "
+               "folder is copied as it is, both views and any .ssif files, and the disc stays 3D.")));
         singleCopy3dCheck->setEnabled(false);  // until a 3D folder is chosen (see updateFolderStatus)
         auto* discLabelLabel = new QLabel(tr("Disc label (optional):"), bdmvTab);
         auto* labelEdit = new QLineEdit(bdmvTab);
@@ -1346,10 +1346,9 @@ TsMuxerWindow::TsMuxerWindow()
                 folderStatusLabel->setStyleSheet(
                     QStringLiteral("color:%1; font-weight:bold;")
                         .arg(themedInk(folderStatusLabel, QLatin1String("#1565c0"), QLatin1String("#4da3ff"))));
-                folderStatusLabel->setText(
-                    tr("BDMV disc detected (read-only). The output ISO cannot be written to the "
-                       "disc, so choose a writable output location.") +
-                    info3d);
+                folderStatusLabel->setText(tr("BDMV disc detected (read-only). The output ISO cannot be written to the "
+                                              "disc, so choose a writable output location.") +
+                                           info3d);
             }
             else
             {
@@ -1613,9 +1612,10 @@ TsMuxerWindow::TsMuxerWindow()
                     tr("A 3D disc stores its video once and gives it three names: the .ssif and the two .m2ts are the "
                        "same sectors seen three ways. Copying all three by name writes the video twice and "
                        "roughly doubles the image, which is why a 3D disc taken from a BD50 will not fit back "
-                       "onto one. It is ticked by itself when the folder holds a 3D disc: the video is then stored once, the "
-                       "way the source disc holds it, and a missing .ssif is rebuilt from the two views. Unticked, the "
-                       "folder is copied as it is, both views and any .ssif files, and the disc stays 3D.")));
+                       "onto one. It is ticked by itself when the folder holds a 3D disc: the video is then stored "
+                       "once, the way the source disc holds it, and a missing .ssif is rebuilt from the two views. "
+                       "Unticked, the folder is copied as it is, both views and any .ssif files, and the disc "
+                       "stays 3D.")));
                 discLabelLabel->setText(tr("Disc label (optional):"));
                 labelEdit->setToolTip(
                     wrapTip(tr("Volume label written into the ISO. Leave empty to keep the default.")));
@@ -5587,14 +5587,16 @@ void TsMuxerWindow::updateMux3dLabel()
     }
     const bool iso = ui->radioButtonBluRayISO->isChecked();
     if (!mvcTicked)
-        m_mux3dLabel->setText(tr("3D track unticked: the disc is made in 2D from the left-eye view, without the "
-                                 "right-eye view or .ssif files."));
+        m_mux3dLabel->setText(
+            tr("3D track unticked: the disc is made in 2D from the left-eye view, without the "
+               "right-eye view or .ssif files."));
     else if (iso)
         m_mux3dLabel->setText(tr("3D video (MVC) detected: the Blu-ray disc gets its .ssif files, so it plays in 3D."));
     else
-        m_mux3dLabel->setText(tr("3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made "
-                                 "from it plays in 3D only if the .ssif files are added. Choose Blu-ray ISO, or make "
-                                 "the folder into an image on the BDMV folder -> ISO tab, which adds them."));
+        m_mux3dLabel->setText(
+            tr("3D video (MVC) detected: a Blu-ray folder gets no .ssif files, so a disc made "
+               "from it plays in 3D only if the .ssif files are added. Choose Blu-ray ISO, or make "
+               "the folder into an image on the BDMV folder -> ISO tab, which adds them."));
     m_mux3dLabel->setVisible(m_3dMode && (iso || ui->radioButtonBluRay->isChecked()) && !ui->groupBox_4->isHidden());
 }
 

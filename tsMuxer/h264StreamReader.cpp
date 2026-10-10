@@ -801,8 +801,7 @@ int H264StreamReader::lsbDivOfIdrPeriod(const SliceUnit& idrSlice, uint8_t* buff
         return 1;  // coded fields (and the second field of this IDR would look like the next IDR below)
 
     int pictures = 0;
-    for (uint8_t* nal = NALUnit::findNextNAL(buff, m_bufEnd); nal < m_bufEnd;
-         nal = NALUnit::findNextNAL(nal, m_bufEnd))
+    for (uint8_t* nal = NALUnit::findNextNAL(buff, m_bufEnd); nal < m_bufEnd; nal = NALUnit::findNextNAL(nal, m_bufEnd))
     {
         const auto nalType = static_cast<NALUnit::NALType>(*nal & 0x1f);
         if (nalType != NALUnit::NALType::nuSliceIDR && nalType != NALUnit::NALType::nuSliceNonIDR &&

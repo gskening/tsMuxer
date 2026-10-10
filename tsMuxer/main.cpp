@@ -84,8 +84,8 @@ DiskType checkBluRayMux(const char* metaFileName, int& autoChapterLen, vector<do
                     // the most the seconds can take.
                     const int64_t minutes = strToInt64(paramPair[1].c_str());
                     if (minutes < 0)
-                        THROW(ERR_COMMON, "The value of --auto-chapters is a number of minutes, 0 or more, not "
-                                              << paramPair[1])
+                        THROW(ERR_COMMON,
+                              "The value of --auto-chapters is a number of minutes, 0 or more, not " << paramPair[1])
                     autoChapterLen = static_cast<int>(std::min<int64_t>(minutes, INT_MAX / 60) * 60);
                 }
                 else if (paramPair[0] == "--custom-chapters" && paramPair.size() > 1)
@@ -211,13 +211,15 @@ static void addTracksFromLaterClips(vector<CheckStreamRez>& streams, const MPLSP
             }
         for (const int pid : found) wanted.erase(pid);
     }
-    std::stable_sort(streams.begin(), streams.end(), [](const CheckStreamRez& a, const CheckStreamRez& b) {
-        const bool videoA = strStartWith(a.codecInfo.programName, "V_");
-        const bool videoB = strStartWith(b.codecInfo.programName, "V_");
-        if (videoA != videoB)
-            return videoA;
-        return a.trackID < b.trackID;
-    });
+    std::stable_sort(streams.begin(), streams.end(),
+                     [](const CheckStreamRez& a, const CheckStreamRez& b)
+                     {
+                         const bool videoA = strStartWith(a.codecInfo.programName, "V_");
+                         const bool videoB = strStartWith(b.codecInfo.programName, "V_");
+                         if (videoA != videoB)
+                             return videoA;
+                         return a.trackID < b.trackID;
+                     });
 }
 
 void detectStreamReader(const char* fileName, MPLSParser* mplsParser, bool isSubMode,
@@ -2204,8 +2206,7 @@ int main(int argc, char** argv)
                             itemName = ssifName;  // if m2ts file absent then swith to ssif
                     }
                     vector<LaterClip> laterClips;
-                    const string clipInfoDir =
-                        streamDir + ".." + getDirSeparator() + "CLIPINF" + getDirSeparator();
+                    const string clipInfoDir = streamDir + ".." + getDirSeparator() + "CLIPINF" + getDirSeparator();
                     for (size_t i = 1; i < mplsParser.m_playItems.size(); ++i)
                     {
                         const string& name = mplsParser.m_playItems[i].fileName;

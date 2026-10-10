@@ -1,9 +1,9 @@
 #include <io.h>
 #include <windows.h>
 
+#include <winioctl.h>  // FSCTL_SET_SPARSE
 #include <stdexcept>
 #include <string>
-#include <winioctl.h>  // FSCTL_SET_SPARSE
 
 #include "../directory.h"
 #include "../file.h"
@@ -16,10 +16,9 @@
 {
     const DWORD dw = GetLastError();
     LPWSTR msgBuf = nullptr;
-    const DWORD len =
-        FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                       nullptr, dw, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), reinterpret_cast<LPWSTR>(&msgBuf), 0,
-                       nullptr);
+    const DWORD len = FormatMessageW(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, dw,
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), reinterpret_cast<LPWSTR>(&msgBuf), 0, nullptr);
     std::string text;
     if (len > 0 && msgBuf)
     {
@@ -29,8 +28,7 @@
             text.resize(bytes);
             WideCharToMultiByte(CP_UTF8, 0, msgBuf, static_cast<int>(len), text.data(), bytes, nullptr, nullptr);
         }
-        while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' '))
-            text.pop_back();
+        while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ')) text.pop_back();
     }
     if (msgBuf)
         LocalFree(msgBuf);

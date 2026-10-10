@@ -110,7 +110,8 @@ static uint8_t flac_crc8(const uint8_t* data, int len)
 // CRC-16 of a whole frame (polynomial 0x8005, initial value 0), stored in the last two bytes of every FLAC frame.
 static uint16_t flac_crc16(const uint8_t* data, const size_t len)
 {
-    static const std::array<uint16_t, 256> table = [] {
+    static const std::array<uint16_t, 256> table = []
+    {
         std::array<uint16_t, 256> t{};
         for (int i = 0; i < 256; ++i)
         {
@@ -482,7 +483,8 @@ int FLACStreamReader::testFrameLength(uint8_t* buff, uint8_t* end, const FrameFi
 
     if (m_testPrevValid)
     {
-        const uint64_t next = m_testPrev.variableBlocks ? m_testPrev.number + m_testPrev.blockSize : m_testPrev.number + 1;
+        const uint64_t next =
+            m_testPrev.variableBlocks ? m_testPrev.number + m_testPrev.blockSize : m_testPrev.number + 1;
         if (fields.variableBlocks != m_testPrev.variableBlocks || fields.sampleRateCode != m_testPrev.sampleRateCode ||
             fields.channels != m_testPrev.channels || fields.sampleSizeCode != m_testPrev.sampleSizeCode ||
             fields.number != next)

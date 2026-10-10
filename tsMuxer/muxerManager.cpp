@@ -312,10 +312,10 @@ void MuxerManager::checkTrackList(const vector<StreamInfo>& ci) const
 // A source with no chapters writes no file rather than an empty one, and a file that cannot be
 // opened is a warning and not a failure: the tracks are the point of the run and they are already
 // on disk by then.
-// The chapters a source carries are times on the source's own timeline. A cut (--cut-start, --cut-end) keeps only a part
-// of it, and the output begins at the cut start, so they were written where they no longer belong: a three-minute cut
-// out of a film carried all 81 chapters of the film, at their old times. Only the chapters inside the cut are kept now,
-// moved back by the cut start, and the chapter that is already playing where the cut starts opens the output at 0.
+// The chapters a source carries are times on the source's own timeline. A cut (--cut-start, --cut-end) keeps only a
+// part of it, and the output begins at the cut start, so they were written where they no longer belong: a three-minute
+// cut out of a film carried all 81 chapters of the film, at their old times. Only the chapters inside the cut are kept
+// now, moved back by the cut start, and the chapter that is already playing where the cut starts opens the output at 0.
 std::vector<AVChapter> MuxerManager::sourceChapters()
 {
     std::vector<AVChapter> chapters = m_metaDemuxer.getChapters();

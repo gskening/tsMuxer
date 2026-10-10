@@ -571,8 +571,8 @@ class MovParsedSRTTrackData final : public ParsedTrackPrivData
         // The text track's own time scale, from its media header. Zero ended the program on the spot
         // (a hardware divide error), even when the file was only being listed.
         if (m_sc->time_scale == 0)
-            THROW(ERR_MOV_PARSE, "MP4/MOV error: text track #" << m_sc->ffindex
-                                                            << " has a time scale of 0 in its media header (mdhd)")
+            THROW(ERR_MOV_PARSE,
+                  "MP4/MOV error: text track #" << m_sc->ffindex << " has a time scale of 0 in its media header (mdhd)")
         return m_sc->stts_data[sttsPos].duration * 1000 / m_sc->time_scale;
     }
 
