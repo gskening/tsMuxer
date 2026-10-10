@@ -335,6 +335,7 @@ CheckStreamRez HEVCStreamReader::checkStream(uint8_t* buffer, const int len)
     }
     m_totalFrameNum = m_frameNum = m_fullPicOrder = 0;
     m_curDts = m_curPts = 0;
+    m_picOrderStarted = false;  // the check above counted pictures that are read again from the start
 
     // Set HDR10 flag if PQ detected
     if (m_vps && m_sps && m_pps && m_sps->vps_id == m_vps->vps_id && m_pps->sps_id == m_sps->sps_id)
@@ -980,21 +981,33 @@ void HEVCStreamReader::incTimings()
     m_frameNum++;
     m_firstFrame = false;
 
+    // How far a picture can be presented before it would be decoded, which is how far the decoding times are moved
+    // back. It was held at 4 frames, and a stream that begins on a CRA picture needs more: the leading pictures behind
+    // that CRA are decoded after it but shown before it, which adds their number to every later picture, and the
+    // pictures past 4 were presented before they were decoded. 16 is the most pictures an HEVC decoder holds.
     if (delta > m_frameDepth)
     {
-        m_frameDepth = FFMIN(4, delta);
+        m_frameDepth = FFMIN(16, delta);
         LTRACE(LT_INFO, 2,
                "B-pyramid level " << m_frameDepth - 1 << " detected. Shift DTS to " << m_frameDepth << " frames");
     }
 }
 
+// The picture order count, on a scale where the first picture of the stream is at its own position. The count starts
+// again at an IDR picture, whose count is 0, and at a BLA picture, whose count is its pic_order_cnt_lsb alone. It
+// used to start only at an IDR, so a stream that begins on another picture, as a broadcast capture that begins on a
+// CRA picture does, kept that picture's count as an offset in every presentation time until the first IDR, and to
+// the end where there is none: on a stream measured here every picture was presented before it was decoded.
 int HEVCStreamReader::toFullPicOrder(const HevcSliceHeader* slice, const unsigned pic_bits)
 {
-    if (slice->isIDR())
+    const bool bla =
+        slice->nal_unit_type >= HevcUnit::NalType::BLA_W_LP && slice->nal_unit_type <= HevcUnit::NalType::BLA_N_LP;
+    if (slice->isIDR() || bla || !m_picOrderStarted)
     {
-        m_picOrderBase = m_frameNum;
+        m_picOrderStarted = true;
+        m_picOrderBase = m_frameNum - static_cast<int>(slice->pic_order_cnt_lsb);
         m_picOrderMsb = 0;
-        m_prevPicOrder = 0;
+        m_prevPicOrder = static_cast<int>(slice->pic_order_cnt_lsb);
     }
     else
     {

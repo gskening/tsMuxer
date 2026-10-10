@@ -96,6 +96,7 @@ class HEVCStreamReader final : public MPEGStreamReader
 
     int m_picOrderMsb;
     int m_prevPicOrder;
+    bool m_picOrderStarted = false;  // the first picture of the stream has set m_picOrderBase
     bool m_lastIFrame;
 
     MemoryBlock m_vpsBuffer;
