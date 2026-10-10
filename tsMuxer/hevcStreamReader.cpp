@@ -440,6 +440,13 @@ int HEVCStreamReader::getTSDescriptor(uint8_t* dstBuff, const bool blurayMode, c
         *dstBuff++ = static_cast<uint8_t>(video_format << 4 | frame_rate_index);
         *dstBuff++ = static_cast<uint8_t>(aspect_ratio_index << 4 | 0xf);
     }
+    else if (m_sps == nullptr)
+    {
+        // The HEVC descriptor is built from the sequence parameter set. A stream in which none was found, because
+        // it is not HEVC or not a kind tsMuxeR reads, has nothing to describe: it used to stop the program on the
+        // spot. It gets no HEVC descriptor, and the mux goes on to the warning that the track produced no frames.
+        return lenDoviDesc;
+    }
     else
     {
         uint8_t tmpBuffer[512];
