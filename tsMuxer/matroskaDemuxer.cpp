@@ -2077,6 +2077,15 @@ int MatroskaDemuxer::matroska_parse_chapters()
                 switch (id)
                 {
                 case MATROSKA_ID_CHAPTERATOM:
+                    // Everything read below belongs to this chapter alone. Left over from the chapter before,
+                    // its values stood in for any this chapter lacks: a chapter without a name took the name
+                    // of the one before from memory already freed, then freed it a second time, which ended
+                    // the program; a chapter without a ChapterUID replaced the one before it.
+                    start = end = AV_NOPTS_VALUE;
+                    uid = 0;
+                    uidFound = false;
+                    title = nullptr;
+                    chapLanguage = nullptr;
                     if ((res = ebml_read_master(&id)) < 0)
                         break;
 
@@ -2104,9 +2113,14 @@ int MatroskaDemuxer::matroska_parse_chapters()
                             break;
 
                         case MATROSKA_ID_CHAPTERDISPLAY:
+                        {
                             if ((res = ebml_read_master(&id)) < 0)
                                 break;
 
+                            // One name and the language it is written in. A chapter can carry several, one
+                            // per language; the last one with a name is kept, always with its own language.
+                            char* displayTitle = nullptr;
+                            char* displayLanguage = nullptr;
                             while (res == 0)
                             {
                                 if ((id = ebml_peek_id(&level_up)) == 0)
@@ -2123,12 +2137,19 @@ int MatroskaDemuxer::matroska_parse_chapters()
                                 switch (id)
                                 {
                                 case MATROSKA_ID_CHAPSTRING:
-                                    res = ebml_read_utf8(&id, &title);
+                                    if (displayTitle == nullptr)
+                                        res = ebml_read_utf8(&id, &displayTitle);
+                                    else
+                                        res = ebml_read_skip();
                                     break;
                                 case MATROSKA_ID_CHAPTERLANGUAGE:
                                     // Kept so a remux can write the name back in the language the
                                     // source gave it rather than marking everything undetermined.
-                                    res = ebml_read_ascii(&id, &chapLanguage);
+                                    // A name valid in several languages lists them all; the first is kept.
+                                    if (displayLanguage == nullptr)
+                                        res = ebml_read_ascii(&id, &displayLanguage);
+                                    else
+                                        res = ebml_read_skip();
                                     break;
                                 case EBML_ID_VOID:
                                 case EBML_ID_CRC32:
@@ -2146,7 +2167,17 @@ int MatroskaDemuxer::matroska_parse_chapters()
                                     break;
                                 }
                             }
+                            if (displayTitle != nullptr)
+                            {
+                                delete[] title;
+                                delete[] chapLanguage;
+                                title = displayTitle;
+                                chapLanguage = displayLanguage;
+                            }
+                            else
+                                delete[] displayLanguage;
                             break;
+                        }
 
                         case MATROSKA_ID_CHAPTERUID:
                             res = ebml_read_uint(&id, &uid);
@@ -2170,9 +2201,12 @@ int MatroskaDemuxer::matroska_parse_chapters()
                             break;
                         }
                     }
-                    if (start != AV_NOPTS_VALUE && uidFound && title != nullptr)
+                    // A chapter without a name is still a chapter: Matroska makes the name optional, and a
+                    // file whose chapters have none showed no chapters at all. The writers name it.
+                    if (start != AV_NOPTS_VALUE && uidFound)
                     {
-                        const AVChapter chapter(start, title, chapLanguage != nullptr ? chapLanguage : "");
+                        const AVChapter chapter(start, title != nullptr ? title : "",
+                                                chapLanguage != nullptr ? chapLanguage : "");
                         chapters[uid] = chapter;
                     }
                     delete[] title;

@@ -1809,10 +1809,10 @@ void MatroskaMuxer::writeChapters()
         if (startSec < 0)
             continue;
 
-        // EVERY chapter gets a name. Without one this program cannot read its own output back:
-        // the Matroska reader keeps a chapter only if it has a title, so a nameless chapter
-        // survives one mux and disappears on the next. A source that named its chapters gets
-        // those names; anything else is numbered the way every other tool numbers them.
+        // EVERY chapter gets a name. Versions of this program before 2.19.0 keep a chapter only if
+        // it has a title, so a nameless chapter written here would vanish when one of them reads
+        // the file back. A source that named its chapters gets those names; anything else is
+        // numbered the way every other tool numbers them.
         std::string name;
         std::string language;
         if (index < m_chapterInfo.size())
