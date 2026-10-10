@@ -156,6 +156,12 @@ int VVCStreamReader::getTSDescriptor(uint8_t* dstBuff, bool blurayMode, const bo
         return 10;  // total descriptor length
     }
 
+    // The VVC descriptor is built from the sequence parameter set. A stream in which none was found, because it is
+    // not VVC or not a kind tsMuxeR reads, has nothing to describe; it used to stop the program on the spot. It gets
+    // no descriptor, and the mux goes on to the warning that the track produced no frames.
+    if (m_sps == nullptr)
+        return 0;
+
     const uint8_t* descStart = dstBuff;
 
     // ITU-T Rec.H.222 Table 2-133 - VVC video descriptor
