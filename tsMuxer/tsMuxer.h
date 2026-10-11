@@ -73,6 +73,7 @@ class TSMuxer final : public AbstractMuxer
     void openDstFile() override;
     void setVBVBufferLen(int value);
     [[nodiscard]] const PIDListMap& getPidList() const { return m_pmt.pidList; }
+    [[nodiscard]] int getPcrPid() const { return m_pmt.pcr_pid; }
     [[nodiscard]] std::vector<int64_t> getFirstPts() const;
     void alignPTS(TSMuxer* otherMuxer);
     [[nodiscard]] std::vector<int64_t> getLastPts() const;

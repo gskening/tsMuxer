@@ -485,6 +485,7 @@ bool BlurayHelper::createCLPIFile(TSMuxer* muxer, int clpiNum, bool doLog) const
     else
         clpiParser.application_type = 1;  // 1 - Main TS for a main-path of Movie
     clpiParser.is_ATC_delta = false;
+    clpiParser.pcr_pid = static_cast<uint16_t>(muxer->getPcrPid());
     if (doLog)
     {
         if (m_dt == DiskType::BLURAY)

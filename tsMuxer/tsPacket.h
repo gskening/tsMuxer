@@ -489,6 +489,7 @@ class CLPIParser
     char format_identifier[5];
     uint32_t presentation_start_time;
     uint32_t presentation_end_time;
+    uint16_t pcr_pid = DEFAULT_PCR_PID;  // the PID that carries the clock in the clip, written into SequenceInfo
     size_t m_clpiNum;
     std::vector<uint32_t> SPN_extent_start;
     std::vector<int32_t> interleaveInfo;

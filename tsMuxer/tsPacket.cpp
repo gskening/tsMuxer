@@ -805,7 +805,9 @@ void CLPIParser::composeSequenceInfo(BitStreamWriter& writer) const
         writer.putBits(8, 0);   // offset_STC_id
         // for (int stc_id=offset_STC_id; stc_id < number_of_STC_sequences + offset_STC_id; stc_id++)
         {
-            writer.putBits(16, DEFAULT_PCR_PID);
+            // The clip's own clock PID. It was always 4097, also when the clock rides on the video PID, which is the
+            // command line's default.
+            writer.putBits(16, pcr_pid);
             writer.putBits(32, 0);  // SPN_STC_start
             writer.putBits(32, presentation_start_time);
             writer.putBits(32, presentation_end_time);
