@@ -45,6 +45,7 @@
 #include <QTime>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <unordered_set>
 
 #include "checkboxedheaderview.h"
@@ -3607,6 +3608,31 @@ void TsMuxerWindow::onProcessFinished(int exitCode, QProcess::ExitStatus exitSta
     inputFilesLVChanged();
     if (processExitCode == 0)
         emit tsMuxerSuccessFinished();
+    else if (!runInMuxMode && exitStatus == QProcess::NormalExit)
+        showProbeRefusal();
+}
+
+// tsMuxeR examined a file that was being added and ended with an error. Nothing at all appeared: the file was simply
+// not added, and the reason tsMuxeR gave was never shown, so a damaged recording looked like a window that ignored
+// the click. tsMuxeR's own words are shown now, with the file's name.
+void TsMuxerWindow::showProbeRefusal()
+{
+    QStringList lines;
+    for (const QString& line : procErrOutput)
+        if (!line.trimmed().isEmpty())
+            lines << line.trimmed();
+    if (lines.isEmpty())  // no error text: the last lines it printed are the best clue
+        for (int i = (std::max)(0, static_cast<int>(procStdOutput.size()) - 5); i < procStdOutput.size(); ++i)
+            if (!procStdOutput[i].trimmed().isEmpty())
+                lines << procStdOutput[i].trimmed();
+    QMessageBox msgBox(this);
+    msgBox.setWindowTitle(tr("File not added"));
+    msgBox.setText(tr("tsMuxeR could not read the file \"%1\" (error code %2).").arg(newFileName).arg(processExitCode));
+    if (!lines.isEmpty())
+        msgBox.setInformativeText(lines.join('\n'));
+    msgBox.setIcon(QMessageBox::Warning);
+    msgBox.setStandardButtons(QMessageBox::Ok);
+    msgBox.exec();
 }
 
 void TsMuxerWindow::onProcessError(QProcess::ProcessError error)

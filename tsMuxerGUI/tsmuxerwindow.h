@@ -65,6 +65,7 @@ class TsMuxerWindow : public QWidget
     void readFromStderr();
     void onProcessFinished(int exitCode, QProcess::ExitStatus exitStatus);
     void onProcessError(QProcess::ProcessError error);
+    void showProbeRefusal();
     void trackLVItemSelectionChanged();
     void inputFilesLVChanged();
     void trackLVItemChanged(QTableWidgetItem* item);
