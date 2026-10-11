@@ -59,7 +59,9 @@ DiskType checkBluRayMux(const char* metaFileName, int& autoChapterLen, vector<do
     DiskType result = DiskType::NONE;
     while (str.length() > 0)
     {
-        if (strStartWith(str, "MUXOPT"))
+        // A MUXOPT line written with spaces or tabs in front lost every option on it without a word: this test and
+        // MuxerManager's looked at the raw line, while the track reader trims it and then skips it as MUXOPT.
+        if (strStartWith(str.substr((std::min)(str.find_first_not_of(" 	"), str.size())), "MUXOPT"))
         {
             vector<string> params = splitQuotedStr(str.c_str(), ' ');
             for (const auto& param : params)

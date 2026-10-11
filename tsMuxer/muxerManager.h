@@ -53,6 +53,7 @@ class MuxerManager final
     void muxBlockFinished(const AbstractMuxer* muxer);
 
     void parseMuxOpt(const std::string& opts);
+    static void warnUnknownMuxOpts(const std::string& opts);
     int getTrackCnt() { return static_cast<int>(m_metaDemuxer.getCodecInfo().size()); }
 
     /// The tracks and their readers, for a caller that wants to ask them what they did.

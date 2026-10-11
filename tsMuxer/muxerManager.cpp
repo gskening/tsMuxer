@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -570,9 +571,12 @@ bool MuxerManager::openMetaFile(const string& fileName)
     file.readLine(str);
     while (str.length() > 0)
     {
-        if (strStartWith(str, "MUXOPT"))
+        // Spaces or tabs in front of MUXOPT are allowed, as they are on a track line (see checkBluRayMux).
+        const size_t start = str.find_first_not_of(" 	");
+        if (start != string::npos && strStartWith(str.substr(start), "MUXOPT"))
         {
-            m_muxOpts = str;
+            m_muxOpts = str.substr(start);
+            warnUnknownMuxOpts(m_muxOpts);
             // Refuse a bad option HERE, while the meta is still being read and no destination
             // exists. Raised any later it replaced the user existing output image with a stub.
             validateMuxOptsEarly(m_muxOpts);
@@ -692,6 +696,66 @@ int64_t parseDiscSizeValue(const string& raw)
     return static_cast<int64_t>(num * mult);
 }
 }  // namespace
+
+// An option this program does not know was ignored without a word, so a misspelt one (--no-pcr-on-vide-pid) changed
+// nothing and nobody was told. Each option of a MUXOPT line is checked against the ones a meta file can carry; one
+// that is not among them is named. Options of --bdmv-to-iso and --lang-codes belong on the command line.
+void MuxerManager::warnUnknownMuxOpts(const string& opts)
+{
+    static const std::set<std::string> metaOptions = {"--allow-oversize",
+                                                      "--auto-chapters",
+                                                      "--avchd",
+                                                      "--bitrate",
+                                                      "--blankOffset",
+                                                      "--blu-ray",
+                                                      "--blu-ray-v3",
+                                                      "--cbr",
+                                                      "--chapters-file",
+                                                      "--constant-iso-hdr",
+                                                      "--custom-chapters",
+                                                      "--cut-end",
+                                                      "--cut-start",
+                                                      "--demux",
+                                                      "--disc-size",
+                                                      "--dv-profile",
+                                                      "--extra-iso-space",
+                                                      "--insertBlankPL",
+                                                      "--label",
+                                                      "--layer-break-guard",
+                                                      "--layer-break-guard-before",
+                                                      "--layer-break-lbn",
+                                                      "--m2tsOffset",
+                                                      "--maxbitrate",
+                                                      "--minbitrate",
+                                                      "--mplsOffset",
+                                                      "--new-audio-pes",
+                                                      "--no-asyncio",
+                                                      "--no-chapters",
+                                                      "--no-hdmv-descriptors",
+                                                      "--no-pcr-on-video-pid",
+                                                      "--right-eye",
+                                                      "--split-chapters",
+                                                      "--split-duration",
+                                                      "--split-size",
+                                                      "--start-time",
+                                                      "--vbr",
+                                                      "--vbv-len"};
+    static const std::set<std::string> commandLineOptions = {
+        "--3d-single-copy",   "--bdmv-to-iso", "--disc-capacity", "--inner-only",
+        "--keep-extra-files", "--lang-codes",  "--no-layer-fit",  "--original-order"};
+    for (const auto& token : splitQuotedStr(opts.c_str(), ' '))
+    {
+        const string name = trimStr(token).substr(0, trimStr(token).find('='));
+        if (name.empty() || name == "MUXOPT" || metaOptions.count(name))
+            continue;
+        if (commandLineOptions.count(name))
+            LTRACE(
+                LT_WARN, 2,
+                "Warning: " << name << " is a command line option and has no effect in a meta file. It was ignored.");
+        else
+            LTRACE(LT_WARN, 2, "Warning: unknown option " << name << " in the MUXOPT line. It was ignored.");
+    }
+}
 
 void MuxerManager::parseMuxOpt(const string& opts)
 {

@@ -488,7 +488,7 @@ void METADemuxer::openFile(const string& streamName)
             file.readLine(str);
             continue;
         }
-        if (strStartWith(str, "MUXOPT"))
+        if (strStartWith(str.substr((std::min)(str.find_first_not_of('	'), str.size())), "MUXOPT"))
         {
             file.readLine(str);
             continue;
