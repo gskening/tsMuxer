@@ -1205,7 +1205,15 @@ int MovDemuxer::mov_read_default(MOVAtom atom)
         if ((!found_moof && m_mdat_pos && found_moov) || (found_moof && m_processedBytes + left >= m_fileSize))
             return 0;
 
-        skip_bytes(left);
+        // A movie whose index (moov) follows its media data (mdat) had every byte of the media read just to step
+        // over it, and the mux then read it all again: minutes for a large file on a network drive (#718, #733,
+        // #779). A long step inside the file is a seek now. A short one, and one that would end past the end of
+        // the file, are read as before.
+        static constexpr int64_t SEEK_RATHER_THAN_READ = 4 * 1024 * 1024;
+        if (left > SEEK_RATHER_THAN_READ && m_fileSize > 0 && m_processedBytes + left < m_fileSize)
+            url_fseek(m_processedBytes + left);
+        else
+            skip_bytes(left);
 
         a.offset += a.size;
         total_size += a.size;
