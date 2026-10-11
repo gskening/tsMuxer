@@ -1070,6 +1070,24 @@ static bool isTimingLine(const std::string& line)
     return isSrtTime(rest.substr(first, rest.find_first_of(" \t", first) - first));
 }
 
+// A line meant as a timing line that is not a readable one: it starts with a time (h:mm:ss and a separator), as
+// "00:00:05,000 -> 00:00:07,000" or "00:00:05:000 --> 00:00:07:000". Dialogue rarely starts that way; an arrow
+// alone is not taken as a sign, because dialogue may hold one.
+static bool looksLikeTimingLine(const std::string& line)
+{
+    size_t p = line.find_first_not_of(" \t");
+    if (p == std::string::npos)
+        return false;
+    auto digits = [&](size_t minN, size_t maxN)
+    {
+        size_t n = 0;
+        while (p < line.size() && line[p] >= '0' && line[p] <= '9' && n < maxN) ++p, ++n;
+        return n >= minN;
+    };
+    return digits(1, 2) && p < line.size() && line[p++] == ':' && digits(2, 2) && p < line.size() && line[p++] == ':' &&
+           digits(2, 2) && p < line.size() && (line[p] == ',' || line[p] == '.' || line[p] == ':');
+}
+
 int SRTStreamReader::blankLineEndsCue() const
 {
     size_t i = 0;
@@ -1086,8 +1104,16 @@ int SRTStreamReader::blankLineEndsCue() const
     // any other text means the blank line belongs to it.
     for (; i < m_sourceText.size(); ++i)
     {
-        const std::string& next = m_sourceText[i];
+        // A counter that carries a byte order mark, left by two files joined byte for byte, is still a counter.
+        std::string next = m_sourceText[i];
+        if (next.size() >= 3 && next.compare(0, 3, "\xEF\xBB\xBF") == 0)
+            next.erase(0, 3);
         if (isTimingLine(next))
+            return 1;
+        // A timing line that cannot be read (a mistyped arrow, a colon for the comma) used to make the blank line part
+        // of the subtitle, and the broken block, its counter and its text were drawn inside the subtitle before it
+        // without a word. The subtitle ends here instead; the broken block is then skipped and named in a warning.
+        if (looksLikeTimingLine(next))
             return 1;
         const bool counterOrBlank =
             std::all_of(next.begin(), next.end(), [](const char c) { return (c >= '0' && c <= '9') || c == ' '; });
