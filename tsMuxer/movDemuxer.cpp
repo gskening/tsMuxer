@@ -1210,7 +1210,19 @@ int MovDemuxer::mov_read_default(MOVAtom atom)
         // #779). A long step inside the file is a seek now. A short one, and one that would end past the end of
         // the file, are read as before.
         static constexpr int64_t SEEK_RATHER_THAN_READ = 4 * 1024 * 1024;
-        if (left > SEEK_RATHER_THAN_READ && m_fileSize > 0 && m_processedBytes + left < m_fileSize)
+        // A box whose parser read more than the box holds (a size written too small) left a negative rest, which
+        // the skip took as a huge unsigned count: it read to the end of the file, and every box after it, the
+        // later tracks included, was lost. The walk goes back to where the box says it ends.
+        if (left < 0)
+        {
+            if (m_overreadWarnings++ == 0)
+                LTRACE(LT_WARN, 2,
+                       "Warning: the MP4 box '" << std::string(reinterpret_cast<const char*>(&a.type), 4)
+                                                << "' at byte " << start_pos - 8 << " holds less than its contents; "
+                                                << "reading goes on where the box says it ends.");
+            url_fseek(start_pos + a.size);
+        }
+        else if (left > SEEK_RATHER_THAN_READ && m_fileSize > 0 && m_processedBytes + left < m_fileSize)
             url_fseek(m_processedBytes + left);
         else
             skip_bytes(left);
