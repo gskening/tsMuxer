@@ -805,8 +805,10 @@ Additional parameters for SRT tracks:
                     character set for font rendering.
 - bottom-offset     Distance from the lower edge while displaying text.
 - font-border       Outline width.
-- fadein-time       Time in ms for smooth subtitle appearance.
-- fadeout-time      Time in ms for smooth subtitle disappearance.
+- fadein-time       Time in seconds for smooth subtitle appearance, for
+                    example 0.25.
+- fadeout-time      Time in seconds for smooth subtitle disappearance, for
+                    example 0.25.
 - line-spacing      Interval between subtitle lines. Default value is 1.0.
 - keep-text         Keep the subtitles as text instead of drawing them into
                     pictures: each one is copied with its text, its tags and

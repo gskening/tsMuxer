@@ -246,8 +246,8 @@ font-strike-out   | Strikethrough text.
 font-charset      | Font character set (numeric). Allows selection of a specific character set for font rendering.
 bottom-offset     | Distance from the lower edge while displaying text.
 font-border       | Outline width. 
-fadein-time       | Time in ms for smooth subtitle appearance. 
-fadeout-time      | Time in ms for smooth subtitle disappearance. 
+fadein-time       | Time in seconds for smooth subtitle appearance, for example 0.25.
+fadeout-time      | Time in seconds for smooth subtitle disappearance, for example 0.25.
 line-spacing      | Interval between subtitle lines. Default value is 1.0.
 keep-text         | Keep the subtitles as text instead of drawing them into pictures. Each subtitle is copied into the track as text, with its tags and its own start and end, and the font and picture parameters are not needed. For Matroska output, and for a demux, which then writes an SRT file (UTF-8, numbered from 1). Other outputs draw the subtitles as usual, with a warning, which needs `video-width`, `video-height` and `fps`.
 
