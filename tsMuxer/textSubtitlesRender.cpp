@@ -407,6 +407,20 @@ int TextSubtitlesRender::getTextAdvance(const std::string& text)
     return size.cx;
 }
 
+std::vector<int> TextSubtitlesRender::fittedSizes(const std::string& text)
+{
+    vector<Font> fontStack;
+    const vector<string> lines = splitStr(text.c_str(), '\n');
+    m_initFont = m_font;
+    std::vector<int> sizes;
+    for (auto& line : lines)
+    {
+        for (const auto& part : processTxtLine(line, fontStack)) sizes.push_back(part.first.m_size);
+        sizes.push_back(0);  // the end of a line: two lines are not the same as one line with both pieces
+    }
+    return sizes;
+}
+
 bool TextSubtitlesRender::textFits(const std::string& text)
 {
     vector<Font> fontStack;

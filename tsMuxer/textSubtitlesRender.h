@@ -5,6 +5,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include "windows.h"
@@ -111,6 +112,9 @@ class TextSubtitlesRender
     bool rasterText(const std::string& text);  // return true if text was forced
     // Whether every line of the text, measured the way rasterText draws it, fits inside the picture.
     bool textFits(const std::string& text);
+    // The font size of every piece of the text at the current m_fitScale, line by line. textFits depends on nothing
+    // else, so two scales with the same sizes give the same answer.
+    std::vector<int> fittedSizes(const std::string& text);
     // Every font size is multiplied by this before drawing; 1.0 leaves the subtitle as written. Used to draw a
     // subtitle that does not fit at the largest size that does.
     double m_fitScale = 1.0;

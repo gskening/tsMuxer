@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <iterator>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string>
@@ -972,14 +973,21 @@ uint8_t* SRTStreamReader::drawNext(uint32_t& renderedLen)
     // cut off at the edges or, when none of it landed inside, left out. It is drawn at the largest size that fits
     // instead. A subtitle that fits is drawn exactly as written.
     text_subtitles::TextSubtitlesRender* render = m_srtRender->m_textRender;
+    // A font size is a whole number, so most of the search's steps give sizes an earlier step already measured, and
+    // each measurement sets every font of the text. A measured set of sizes is answered from memory: the search takes
+    // the same steps to the same size as before, with less than half the measuring.
     if (hasVisibleText(piece.text) && !render->textFits(piece.text))
     {
         double lo = 0.0;
         double hi = 1.0;
+        std::map<std::vector<int>, bool> measured;
         for (int step = 0; step < 24; ++step)
         {
             render->m_fitScale = (lo + hi) / 2;
-            if (render->textFits(piece.text))
+            auto [known, isNew] = measured.try_emplace(render->fittedSizes(piece.text), false);
+            if (isNew)
+                known->second = render->textFits(piece.text);
+            if (known->second)
                 lo = render->m_fitScale;
             else
                 hi = render->m_fitScale;
