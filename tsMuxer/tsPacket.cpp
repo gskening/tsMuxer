@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -2064,18 +2065,29 @@ void MPLSParser::parseStnTableSS(uint8_t* data, uint32_t dataLength)
             if (idx != -1)
                 m_streamInfo[idx].offsetId = PG_textST_offset_sequence_id;
 
+            // An entry that is not a PG stream (a text subtitle shares this list) has no place in m_streamInfo, and
+            // the eye entries below were written to the element before the first one. They are still read, so
+            // that everything after them stays in step, and kept only when the entry has a place.
             reader.skipBits(5);  // reserved, dialog_region_offset_valid
-            m_streamInfo[idx].isSSPG = reader.getBit();
+            const bool isSSPG = reader.getBit();
             bool isTopAS = reader.getBit();
             bool isBottomAS = reader.getBit();
-            if (m_streamInfo[idx].isSSPG)
+            if (idx != -1)
+                m_streamInfo[idx].isSSPG = isSSPG;
+            if (isSSPG)
             {
-                m_streamInfo[idx].leftEye = new MPLSStreamInfo();
-                m_streamInfo[idx].leftEye->parseStreamEntry(reader);  // left eye
-                m_streamInfo[idx].rightEye = new MPLSStreamInfo();
-                m_streamInfo[idx].rightEye->parseStreamEntry(reader);  // right eye
-                reader.skipBits(8);                                    // reserved
-                m_streamInfo[idx].SS_PG_offset_sequence_id = reader.getBits<uint8_t>(8);
+                auto leftEye = std::make_unique<MPLSStreamInfo>();
+                leftEye->parseStreamEntry(reader);  // left eye
+                auto rightEye = std::make_unique<MPLSStreamInfo>();
+                rightEye->parseStreamEntry(reader);  // right eye
+                reader.skipBits(8);                  // reserved
+                const auto ssOffsetId = reader.getBits<uint8_t>(8);
+                if (idx != -1)
+                {
+                    m_streamInfo[idx].leftEye = leftEye.release();
+                    m_streamInfo[idx].rightEye = rightEye.release();
+                    m_streamInfo[idx].SS_PG_offset_sequence_id = ssOffsetId;
+                }
             }
             if (isTopAS)
             {
