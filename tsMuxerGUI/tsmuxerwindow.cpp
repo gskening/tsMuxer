@@ -3333,6 +3333,11 @@ void TsMuxerWindow::continueAddFile()
         ui->trackLV->setRowHeight(newTrackRowIdx, 18);
         QTableWidgetItem* item = new QTableWidgetItem("");
         item->setCheckState(info.enabledByDefault ? Qt::Checked : Qt::Unchecked);
+        // A new track takes the SEI and SPS choice the window shows, which is the saved one. Every track started with
+        // insertSEI and contSPS switched on instead, and kept them unless it was clicked, so a file added with those
+        // turned off still muxed with them on (#666).
+        info.addSEIMethod = ui->comboBoxSEI->currentIndex();
+        info.addSPS = ui->checkBoxSPS->isChecked();
         item->setData(Qt::UserRole, reinterpret_cast<qlonglong>(new QtvCodecInfo(info)));
         ui->trackLV->setCurrentItem(item);
         ui->trackLV->setItem(newTrackRowIdx, 0, item);
