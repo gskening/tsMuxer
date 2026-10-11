@@ -406,6 +406,10 @@ class MatroskaMuxer final : public AbstractMuxer
     // Pictures each video track has delivered before the header, counted by distinct timestamp
     std::map<int, std::pair<int64_t, int>> m_preHeaderPictures;
     static constexpr int PRE_HEADER_PICTURES = 16;
+    // ... or, for a video track with fewer pictures than that, until the held packets span this long
+    static constexpr int64_t PRE_HEADER_MAX_SPAN = 10 * INTERNAL_PTS_FREQ;
+    bool m_preHeaderSpanStarted = false;
+    int64_t m_preHeaderMinPts = 0;
 
     // Buffered packets accumulated before the header is written.
     struct BufferedPacket

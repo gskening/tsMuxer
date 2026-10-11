@@ -2771,6 +2771,17 @@ bool MatroskaMuxer::muxPacket(AVPacket& avPacket)
                 const auto pic = m_preHeaderPictures.find(idx);
                 videoReady &= pic != m_preHeaderPictures.end() && pic->second.second >= PRE_HEADER_PICTURES;
             }
+        // Leading pictures come a few frames late, never seconds. A video track with fewer pictures than that
+        // (a short picture-in-picture, a still or a slide show) held the header back to the end of the mux, with
+        // every packet of every track copied into memory meanwhile. Ten seconds of held packets are enough.
+        if (!videoReady)
+        {
+            if (!m_preHeaderSpanStarted || avPacket.pts < m_preHeaderMinPts)
+                m_preHeaderMinPts = avPacket.pts;
+            m_preHeaderSpanStarted = true;
+            if (avPacket.pts - m_preHeaderMinPts >= PRE_HEADER_MAX_SPAN)
+                videoReady = true;
+        }
         if (m_seenStreams.size() >= tracksNeedingFirstPacket() && videoReady)
         {
             writeDeferredHeader();
