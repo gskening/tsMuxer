@@ -11,18 +11,6 @@
 #include "vodCoreException.h"
 #include "vod_common.h"
 
-namespace
-{
-// Sample count to internal clock ticks. The clock runs at 5.292 GHz, so the single product
-// samples x clock passes the 64-bit range after 1,742,889,652 samples: two and a half hours at
-// 192 kHz, after which every timestamp came out wrong. Whole seconds and the rest are converted
-// apart, which gives the same value to the tick and cannot overflow for any real length.
-int64_t samplesToInternal(const int64_t samples, const int64_t rate)
-{
-    return samples / rate * INTERNAL_PTS_FREQ + samples % rate * INTERNAL_PTS_FREQ / rate;
-}
-}  // namespace
-
 TrueHDAC3MergeReader::TrueHDAC3MergeReader(const std::map<std::string, std::string>& addParams)
     : m_mergeAc3Pid(0),
       m_useNewStyleAudioPES(false),

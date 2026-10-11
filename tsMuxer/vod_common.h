@@ -170,6 +170,15 @@ bool defaultParamMeansNo(const std::string& value);
 std::string checkLayerBreakLbn(int lbn, std::string& warning);
 
 static int64_t internalClockToPts(const int64_t value) { return value / INT_FREQ_TO_TS_FREQ; }
+
+// Sample count to internal clock ticks. The clock runs at 5.292 GHz, so the single product samples x clock passes the
+// 64-bit range after 1,742,889,652 samples: two and a half hours at 192 kHz, after which every timestamp came out
+// wrong. Whole seconds and the rest are converted apart, which gives the same value to the tick and cannot overflow
+// for any real length.
+static int64_t samplesToInternal(const int64_t samples, const int64_t rate)
+{
+    return samples / rate * INTERNAL_PTS_FREQ + samples % rate * INTERNAL_PTS_FREQ / rate;
+}
 static int64_t ptsToInternalClock(const int64_t value) { return value * INT_FREQ_TO_TS_FREQ; }
 
 struct PIPParams

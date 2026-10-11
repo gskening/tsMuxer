@@ -111,7 +111,7 @@ int MLPStreamReader::readPacket(AVPacket& avPacket)
         // m_samplerate stays 0 until a major sync decodes; a stream that never produces one
         // must not divide by it.
         if (m_samplerate)
-            avPacket.dts = avPacket.pts = m_totalTHDSamples * INTERNAL_PTS_FREQ / m_samplerate;
+            avPacket.dts = avPacket.pts = samplesToInternal(m_totalTHDSamples, m_samplerate);
 
         m_totalTHDSamples += m_samples;
         m_demuxedTHDSamples += m_samples;
@@ -130,7 +130,7 @@ int MLPStreamReader::flushPacket(AVPacket& avPacket)
     {
         if (!(avPacket.flags & AVPacket::PRIORITY_DATA) && m_samplerate)
             avPacket.pts = avPacket.dts =
-                m_totalTHDSamples * INTERNAL_PTS_FREQ / m_samplerate;  // replace time to a next HD packet
+                samplesToInternal(m_totalTHDSamples, m_samplerate);  // replace time to a next HD packet
     }
     return rez;
 }

@@ -250,9 +250,9 @@ int AC3StreamReader::flushPacket(AVPacket& avPacket)
             avPacket.flags |= AVPacket::IS_CORE_PACKET;
             m_nextAc3Time += m_frameDuration;
         }
-        else if (!(avPacket.flags & AVPacket::PRIORITY_DATA))
+        else if (!(avPacket.flags & AVPacket::PRIORITY_DATA) && mlp.m_samplerate)
             avPacket.pts = avPacket.dts =
-                m_totalTHDSamples * INTERNAL_PTS_FREQ / mlp.m_samplerate;  // replace time to a next HD packet
+                samplesToInternal(m_totalTHDSamples, mlp.m_samplerate);  // replace time to a next HD packet
     }
     return rez;
 }
@@ -302,7 +302,10 @@ int AC3StreamReader::readPacketTHD(AVPacket& avPacket)
         else
         {
             // thg packet
-            avPacket.dts = avPacket.pts = m_totalTHDSamples * INTERNAL_PTS_FREQ / mlp.m_samplerate;
+            // The plain TrueHD reader and the merge reader had the same overflow after two and a half hours at
+            // 192 kHz; the conversion is shared now. A rate of 0 means no major sync was decoded yet.
+            if (mlp.m_samplerate)
+                avPacket.dts = avPacket.pts = samplesToInternal(m_totalTHDSamples, mlp.m_samplerate);
 
             m_totalTHDSamples += mlp.m_samples;
             m_demuxedTHDSamples += mlp.m_samples;
