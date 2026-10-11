@@ -7,7 +7,9 @@ static constexpr int aac_sample_rates[16] = {
     96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
 };
 
-static constexpr uint8_t aac_channels[8] = {0, 1, 2, 3, 4, 5, 6, 8};
+// Channels per channel configuration. 8 to 15 were read past the end of an 8-entry table; 11 to 14 are 6.1, 7.1,
+// 22.2 and 7.1 (ISO/IEC 14496-3 table 1.19), the others are reserved.
+static constexpr uint8_t aac_channels[16] = {0, 1, 2, 3, 4, 5, 6, 8, 0, 0, 0, 7, 8, 24, 8, 0};
 
 // Is there a second ADTS header exactly one frame after this one, agreeing on the fields a stream
 // does not change?
@@ -213,5 +215,18 @@ void AACCodec::readConfig(uint8_t* buff, const int size)
     m_sample_rate = m_sample_rates_index == 0x0f ? reader.getBits<int>(24) : aac_sample_rates[m_sample_rates_index];
     m_channels_index = reader.getBits<uint8_t>(4);
     m_channels = aac_channels[m_channels_index];
+    // HE-AAC (5, SBR) and HE-AAC v2 (29, PS) signalled explicitly: the frames are the core codec named after the
+    // output sample rate, usually LC, and an ADTS header describes the core. 5 & 3 is 1 and 29 & 3 is 1, so these were
+    // given profile 0, AAC Main, which no decoder of HE-AAC expects.
+    if (object_type == 5 || object_type == 29)
+    {
+        if (reader.getBits<uint8_t>(4) == 0x0f)  // extensionSamplingFrequencyIndex
+            reader.skipBits(24);
+        auto core = reader.getBits<uint8_t>(5);
+        if (core == 31)
+            core = 32 + reader.getBits<uint8_t>(6);
+        if (core >= 1 && core <= 4)
+            m_profile = core - 1;
+    }
     // return specific_config_bitindex;
 }
