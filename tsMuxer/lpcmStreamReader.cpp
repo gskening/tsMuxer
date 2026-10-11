@@ -547,22 +547,58 @@ int LPCMStreamReader::decodeWaveHeader(uint8_t* buff, uint8_t* end)
         curPos += fmtSize;
     }
 
-    // in case there is a 'FLLR' (IPhone filler), skip it
-    if (curPos[0] == 'F' && curPos[1] == 'L' && curPos[2] == 'L' && curPos[3] == 'R')
+    // The chunks between the format and the audio are stepped over by their own sizes: a LIST
+    // chunk of tags, a bext chunk, an iPhone FLLR filler or a JUNK pad. The audio used to be looked
+    // for only in the first 192 bytes after the format, so behind a larger chunk the header itself
+    // was taken for audio: a WAV with a 1 KB tag chunk began with 1,076 bytes of noise. A chunk is
+    // only stepped over when its name is four printable characters; anything else is searched as
+    // before.
+    const bool wave64 = m_headerType == LPCMHeaderType::htWAVE64;
+    const int chunkHeaderSize = wave64 ? static_cast<int>(sizeof(GUID)) + 8 : 8;
+    bool walked = false;
+    while (true)
     {
-        curPos += 4;
-        int64_t fllrSize = *reinterpret_cast<int64_t*>(curPos);
-        curPos += 4;
-        if (end - curPos < fllrSize)
+        if (end - curPos < chunkHeaderSize)
             return NOT_ENOUGH_BUFFER;
-        curPos += fllrSize;
+        if (memcmp(curPos, "data", 4) == 0)
+        {
+            walked = true;
+            break;
+        }
+        bool printable = true;
+        for (int i = 0; i < 4; ++i) printable = printable && curPos[i] >= 0x20 && curPos[i] < 0x7f;
+        if (!printable)
+            break;
+        uint64_t chunkSize;  // the whole chunk, its header included
+        if (wave64)
+        {
+            chunkSize = *reinterpret_cast<uint64_t*>(curPos + sizeof(GUID));
+            if (chunkSize < static_cast<uint64_t>(chunkHeaderSize))
+                break;
+            chunkSize = (chunkSize + 7) & ~static_cast<uint64_t>(7);
+        }
+        else
+        {
+            const uint32_t bodySize = *reinterpret_cast<uint32_t*>(curPos + 4);
+            chunkSize = 8 + static_cast<uint64_t>(bodySize) + (bodySize & 1);
+        }
+        if (chunkSize > static_cast<uint64_t>(DEFAULT_FILE_BLOCK_SIZE))
+            THROW(ERR_COMMON, "WAVE header: the chunk '" << std::string(reinterpret_cast<char*>(curPos), 4)
+                                                         << "' before the audio is " << chunkSize
+                                                         << " bytes. A chunk of more than " << DEFAULT_FILE_BLOCK_SIZE
+                                                         << " bytes before the audio is not supported.")
+        if (chunkSize > static_cast<uint64_t>(end - curPos))
+            return NOT_ENOUGH_BUFFER;
+        curPos += chunkSize;
     }
-
-    curPos = findSubstr("data", curPos, FFMIN(curPos + MAX_HEADER_SIZE, end));
-    if (curPos == nullptr)
+    if (!walked)
     {
-        return end < curPos + MAX_HEADER_SIZE ? NOT_ENOUGH_BUFFER : 0;
-        // 'riff' header was wrong detected, it is just data
+        curPos = findSubstr("data", curPos, FFMIN(curPos + MAX_HEADER_SIZE, end));
+        if (curPos == nullptr)
+        {
+            return end < curPos + MAX_HEADER_SIZE ? NOT_ENOUGH_BUFFER : 0;
+            // 'riff' header was wrong detected, it is just data
+        }
     }
 
     if (m_headerType == LPCMHeaderType::htWAVE)
@@ -916,7 +952,7 @@ int LPCMStreamReader::readPacket(AVPacket& avPacket)
         const int decodeRez = decodeFrame(frame, m_bufEnd, skipBytes, skipBeforeBytes);
         if (decodeRez == NOT_ENOUGH_BUFFER)
         {
-            memcpy(m_tmpBuffer.data(), m_curPos, m_bufEnd - m_curPos);
+            memmove(m_tmpBuffer.data(), m_curPos, m_bufEnd - m_curPos);
             m_tmpBufferLen = m_bufEnd - m_curPos;
             m_curPos = m_bufEnd;
             return NEED_MORE_DATA;
