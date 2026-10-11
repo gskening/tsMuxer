@@ -1,6 +1,6 @@
 ## tsMuxeR 2.19.0
 
-Ninety-seven changes: ninety-one fixes and six additions, grouped below by area. Most of them are to Matroska output, to subtitles and to Blu-ray discs.
+Ninety-eight changes: ninety-two fixes and six additions, grouped below by area. Most of them are to Matroska output, to subtitles and to Blu-ray discs.
 
 **Matroska output is still young.** tsMuxeR has only been able to write MKV files since 2.7.2, earlier this year, and a new feature needs time and real use before it is mature. Several of these fixes started with your reports, and looking more closely at the files tsMuxeR writes turned up the rest. Some go back to when MKV output was first added.
 
@@ -120,6 +120,8 @@ More fixes like these will follow, because not everything can be found at once. 
 
 * **A WAV or W64 demuxed on Linux or macOS had a broken header.** The header kept placeholder sizes, and 8 stray bytes followed the audio. The file is now the same as on Windows.
 
+* **A WAV with a tag chunk began with its own header as sound.** When the header held a chunk of tags of a kilobyte or more, the audio was not found behind it, and the header was played as a burst of noise at the start, in every output. The audio is found behind any such chunk now.
+
 * **A demuxed WAV or W64 could keep placeholder sizes on any system.** This happened when the file came out a whole number of 64 KiB blocks long, so players saw it as broken or empty. Every file now gets its real sizes.
 
 ### Video and timing
@@ -140,7 +142,7 @@ More fixes like these will follow, because not everything can be found at once. 
 
 ### Blu-ray, transport streams and 3D
 
-* **The time between two clock references could pass 0.1 s.** The transport stream rules allow at most 0.1 s, and some outputs, UHD among them, went up to 0.11 s. The clock is now written in time. With --maxbitrate the gap can still reach 0.12 s; that is left for a later version.
+* **The time between two clock references could pass 0.1 s.** The transport stream rules allow at most 0.1 s, and some outputs, UHD among them, went up to 0.11 s. With --maxbitrate it was far worse: when the video asked for more than the cap, the clock references came seconds apart, up to 20 s. The clock is now written in time in both cases.
 
 * **The muxer's own tables went out as a burst on Blu-ray.** Every few seconds, four packets left within a few microseconds, far above the rate a drive can read. Such a short burst is now held at that rate.
 
