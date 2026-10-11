@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <string>
+#include <vector>
 
 #include <fs/systemlog.h>
 #include "fs/textfile.h"
@@ -273,6 +275,7 @@ void MuxerManager::checkTrackList(const vector<StreamInfo>& ci) const
     bool aacFound = false;
     bool mlpFound = false;
     bool mlpMergedWithAc3 = false;
+    std::vector<std::string> notOnDisc;  // codecs a Blu-ray player cannot play, in the order of the tracks
 
     for (const StreamInfo& si : ci)
     {
@@ -282,6 +285,14 @@ void MuxerManager::checkTrackList(const vector<StreamInfo>& ci) const
             mvcFound = true;
         else if (si.m_codec == aacCodecInfo.programName)
             aacFound = true;
+        else if (si.m_codec == mpegAudioCodecInfo.programName)
+            notOnDisc.emplace_back("MPEG audio (MP1, MP2 or MP3)");
+        else if (si.m_codec == opusCodecInfo.programName)
+            notOnDisc.emplace_back("Opus");
+        else if (si.m_codec == vvcCodecInfo.programName)
+            notOnDisc.emplace_back("VVC (H.266)");
+        else if (si.m_codec == av1CodecInfo.programName)
+            notOnDisc.emplace_back("AV1");
         else if (si.m_codec == mlpCodecInfo.programName)
         {
             mlpFound = true;
@@ -293,15 +304,21 @@ void MuxerManager::checkTrackList(const vector<StreamInfo>& ci) const
         }
     }
 
+    // Each warning that applies is printed. They were one chain, so a disc with AAC never heard about a TrueHD
+    // track without its core, nor about a single-track Dolby Vision, and MPEG audio, Opus, VVC and AV1, which no
+    // Blu-ray player plays either, were not mentioned at all.
     if (m_bluRayMode)
     {
         if (aacFound)
             LTRACE(LT_ERROR, 2,
                    "Warning! AAC codec is not standard for BD disks, the disk will not play in a Blu-ray player.");
-        else if (m_bluRayMode && mlpFound && !mlpMergedWithAc3)
+        if (mlpFound && !mlpMergedWithAc3)
             LTRACE(LT_ERROR, 2,
                    "Warning! MLP codec is not standard for BD disks, the disk will not play in a Blu-ray player.");
-        else if (m_bluRayMode && (V3_flags & DV) && !(V3_flags & BL_TRACK))
+        for (const auto& codec : notOnDisc)
+            LTRACE(LT_ERROR, 2,
+                   "Warning! " << codec << " is not a Blu-ray format, the disk will not play in a Blu-ray player.");
+        if ((V3_flags & DV) && !(V3_flags & BL_TRACK))
             LTRACE(LT_ERROR, 2,
                    "Warning! Dolby Vision Double Layer Single Tracks are not standard for BD disks, the disk will "
                    "not play in a Blu-ray player.");
