@@ -250,7 +250,7 @@ bool writeBdMovieObjectData(const MuxerManager& muxer, AbstractOutputStream* fil
     if (!file->open((prefix + "BDMV/MovieObject.bdmv").c_str(), File::ofWrite))
     {
         delete file;
-        return false;
+        THROW(ERR_CANT_CREATE_FILE, "Can't create file " << (prefix + "BDMV/MovieObject.bdmv"))
     }
 
     file->write(objectData);
@@ -258,7 +258,7 @@ bool writeBdMovieObjectData(const MuxerManager& muxer, AbstractOutputStream* fil
     if (!file->open((prefix + "BDMV/BACKUP/MovieObject.bdmv").c_str(), File::ofWrite))
     {
         delete file;
-        return false;
+        THROW(ERR_CANT_CREATE_FILE, "Can't create file " << (prefix + "BDMV/BACKUP/MovieObject.bdmv"))
     }
     file->write(objectData);
     file->close();
@@ -450,7 +450,7 @@ bool BlurayHelper::writeBluRayFiles(const MuxerManager& muxer, const bool usedBl
     if (!file->open((prefix + "BDMV/index.bdmv").c_str(), AbstractOutputStream::ofWrite))
     {
         delete file;
-        return false;
+        THROW(ERR_CANT_CREATE_FILE, "Can't create file " << (prefix + "BDMV/index.bdmv"))
     }
     file->write(bdIndexData, fileSize);
     file->close();
@@ -458,7 +458,7 @@ bool BlurayHelper::writeBluRayFiles(const MuxerManager& muxer, const bool usedBl
     if (!file->open((prefix + "BDMV/BACKUP/index.bdmv").c_str(), File::ofWrite))
     {
         delete file;
-        return false;
+        THROW(ERR_CANT_CREATE_FILE, "Can't create file " << (prefix + "BDMV/BACKUP/index.bdmv"))
     }
     file->write(bdIndexData, fileSize);
     file->close();
@@ -542,14 +542,14 @@ bool BlurayHelper::createCLPIFile(TSMuxer* muxer, int clpiNum, bool doLog) const
         {
             delete[] clpiBuffer;
             delete file;
-            return false;
+            THROW(ERR_CANT_CREATE_FILE, "Can't create file " << (prefix + dstDir + clipName + ".clpi"))
         }
         if (file->write(clpiBuffer, fileLen) != fileLen)
         {
             file->close();
             delete[] clpiBuffer;
             delete file;
-            return false;
+            THROW(ERR_CANT_CREATE_FILE, "Can't write file " << (prefix + dstDir + clipName + ".clpi"))
         }
         file->close();
 
@@ -559,14 +559,14 @@ bool BlurayHelper::createCLPIFile(TSMuxer* muxer, int clpiNum, bool doLog) const
         {
             delete[] clpiBuffer;
             delete file;
-            return false;
+            THROW(ERR_CANT_CREATE_FILE, "Can't create file " << (prefix + dstDir + clipName + ".clpi"))
         }
         if (file->write(clpiBuffer, fileLen) != fileLen)
         {
             file->close();
             delete[] clpiBuffer;
             delete file;
-            return false;
+            THROW(ERR_CANT_CREATE_FILE, "Can't write file " << (prefix + dstDir + clipName + ".clpi"))
         }
         file->close();
         delete file;
@@ -705,14 +705,16 @@ bool BlurayHelper::createMPLSFile(TSMuxer* mainMuxer, TSMuxer* subMuxer, int aut
     {
         delete[] mplsBuffer;
         delete file;
-        return false;
+        THROW(ERR_CANT_CREATE_FILE,
+              "Can't create file " << (prefix + dstDir + strPadLeft(int32ToStr(mplsOffset), 5, '0') + string(".mpls")))
     }
     if (file->write(mplsBuffer, fileLen) != fileLen)
     {
         file->close();
         delete[] mplsBuffer;
         delete file;
-        return false;
+        THROW(ERR_CANT_CREATE_FILE,
+              "Can't write file " << (prefix + dstDir + strPadLeft(int32ToStr(mplsOffset), 5, '0') + string(".mpls")))
     }
     file->close();
 
@@ -723,14 +725,16 @@ bool BlurayHelper::createMPLSFile(TSMuxer* mainMuxer, TSMuxer* subMuxer, int aut
     {
         delete[] mplsBuffer;
         delete file;
-        return false;
+        THROW(ERR_CANT_CREATE_FILE,
+              "Can't create file " << (prefix + dstDir + strPadLeft(int32ToStr(mplsOffset), 5, '0') + string(".mpls")))
     }
     if (file->write(mplsBuffer, fileLen) != fileLen)
     {
         file->close();
         delete[] mplsBuffer;
         delete file;
-        return false;
+        THROW(ERR_CANT_CREATE_FILE,
+              "Can't write file " << (prefix + dstDir + strPadLeft(int32ToStr(mplsOffset), 5, '0') + string(".mpls")))
     }
     file->close();
     delete[] mplsBuffer;
