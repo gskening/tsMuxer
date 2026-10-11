@@ -970,7 +970,9 @@ bool H264StreamReader::skipNal(uint8_t* nal)
         return true;  // SPS/PPS will be composed from our side on writePesHeader. It is required to compose SPS/PPS
                       // before SEI
     }
-    if (nalType == NALUnit::NALType::nuSEI)
+    // Guarded as processSEI is: the first SPS is read before any SEI in every stream measured, because the stream
+    // check fills the map before the mux starts, but nothing promises it.
+    if (nalType == NALUnit::NALType::nuSEI && !m_spsMap.empty())
     {
         SEIUnit sei;
         const uint8_t* nextNal = NALUnit::findNALWithStartCode(nal, m_bufEnd, true);
