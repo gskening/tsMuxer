@@ -5124,7 +5124,15 @@ void TsMuxerWindow::RadioButtonMuxClick()
         if (!fi.suffix().isEmpty())
         {
             oldFileName = fi.fileName();
-            ui->outFileName->setText(QDir::toNativeSeparators(fi.absolutePath()) + QDir::separator());
+            // A name with no folder in front, as "default.ts" is while no file has been added with the output going
+            // into the input's folder, was resolved against the program's own folder. That folder then stuck: the
+            // name was no longer "default", so adding a file did not replace it, and the disc went into the
+            // program folder (#564). Such a name gives the output folder the window would use now, empty until a
+            // file is added.
+            if (fi.isRelative() && !ui->outFileName->text().contains('/') && !ui->outFileName->text().contains('\\'))
+                ui->outFileName->setText(getOutputDir());
+            else
+                ui->outFileName->setText(QDir::toNativeSeparators(fi.absolutePath()) + QDir::separator());
         }
         ui->FilenameLabel->setText(tr("Folder"));
     }
