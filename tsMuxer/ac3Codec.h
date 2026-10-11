@@ -69,6 +69,8 @@ class AC3Codec
     // An AC-3 core with an E-AC-3 part beside it, the Blu-ray DD+ arrangement, as seen so far
     [[nodiscard]] bool carriesEac3() const { return m_bit_rateExt != 0 || m_nextFrameIsExt || m_bsid > 10; }
     [[nodiscard]] bool isAC3() const { return m_bsidBase > 0; }
+    // A dependent E-AC-3 substream carries channels beyond the 5.1 of the independent one (the Blu-ray 7.1 layout)
+    [[nodiscard]] bool hasExtChannels() const { return m_extChannelsExists; }
     void setDownconvertToAC3(const bool value) { m_downconvertToAC3 = value; }
     [[nodiscard]] bool getDownconvertToAC3() const { return m_downconvertToAC3; }
     [[nodiscard]] bool isTrueHD() const { return m_true_hd_mode; }

@@ -285,7 +285,7 @@ class MatroskaMuxer final : public AbstractMuxer
     // Write Tracks element into m_segmentBody
     void writeTracks();
     // Write a single TrackEntry and return its serialized bytes
-    std::vector<uint8_t> buildTrackEntry(const MkvTrackInfo& track);
+    std::vector<uint8_t> buildTrackEntry(const MkvTrackInfo& track, int* channelsValueAt = nullptr);
     static int writeColourInfo(uint8_t* dst, const MkvTrackInfo& track);
 
     // Start a new cluster at the given timecode (milliseconds)
@@ -391,6 +391,8 @@ class MatroskaMuxer final : public AbstractMuxer
     int64_t m_firstTimecode;  // the timeline's origin in INTERNAL_PTS_FREQ units (see replayBufferedPackets)
     bool m_firstTimecodeSet;
     int64_t m_durationValueFilePos;  // absolute file position of the Duration float64 value
+    // stream index -> absolute file position of the one byte value of an audio track's Channels element
+    std::map<int, int64_t> m_channelsValueFilePos;
 
     // Deferred header writing: SegmentInfo + Tracks are written once ALL tracks
     // have received at least one packet, because stream readers haven't fully

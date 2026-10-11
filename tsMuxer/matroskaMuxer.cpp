@@ -1019,7 +1019,7 @@ int MatroskaMuxer::writeColourInfo(uint8_t* dst, const MkvTrackInfo& track)
     return pos + p;
 }
 
-std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track)
+std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, int* channelsValueAt)
 {
     // Build inner content of the TrackEntry.
     // Size the buffer dynamically: fixed fields + colour and mastering metadata (~130 bytes on
@@ -1182,12 +1182,15 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track)
         uint8_t audioBuf[128];
         int aPos = 0;
         aPos += ebml_write_float(audioBuf + aPos, MATROSKA_ID_AUDIOSAMPLINGFREQ, static_cast<double>(track.sampleRate));
+        const int channelsAt = aPos + 2;  // the one byte ID 0x9F and a one byte size come first
         aPos += ebml_write_uint(audioBuf + aPos, MATROSKA_ID_AUDIOCHANNELS, track.channels);
         if (track.bitDepth > 0)
             aPos += ebml_write_uint(audioBuf + aPos, MATROSKA_ID_AUDIOBITDEPTH, track.bitDepth);
 
         // Write Audio master
         pos += ebml_write_master_open(inner.data() + pos, MATROSKA_ID_TRACKAUDIO, aPos);
+        if (channelsValueAt && track.channels > 0 && track.channels < 256)
+            *channelsValueAt = pos + channelsAt;
         memcpy(inner.data() + pos, audioBuf, aPos);
         pos += aPos;
     }
@@ -1218,15 +1221,19 @@ void MatroskaMuxer::writeTracks()
               [](const MkvTrackInfo* a, const MkvTrackInfo* b) { return a->trackNumber < b->trackNumber; });
 
     std::vector<uint8_t> allEntries;
+    std::map<int, int64_t> channelsAtInEntries;
     for (const auto* trackPtr : ordered)
     {
-        std::vector<uint8_t> entryContent = buildTrackEntry(*trackPtr);
+        int channelsAt = -1;
+        std::vector<uint8_t> entryContent = buildTrackEntry(*trackPtr, &channelsAt);
 
         // Write TrackEntry master header + content
         uint8_t header[16];
         int hdrLen = ebml_write_id(header, MATROSKA_ID_TRACKENTRY);
         hdrLen += ebml_write_size(header + hdrLen, entryContent.size());
         allEntries.insert(allEntries.end(), header, header + hdrLen);
+        if (channelsAt >= 0)
+            channelsAtInEntries[trackPtr->streamIndex] = static_cast<int64_t>(allEntries.size()) + channelsAt;
         allEntries.insert(allEntries.end(), entryContent.begin(), entryContent.end());
     }
 
@@ -1235,6 +1242,8 @@ void MatroskaMuxer::writeTracks()
     int hdrLen = ebml_write_id(header, MATROSKA_ID_TRACKS);
     hdrLen += ebml_write_size(header + hdrLen, allEntries.size());
     writeToFile(header, hdrLen);
+    const int64_t entriesFilePos = m_file.pos();
+    for (const auto& [streamIdx, at] : channelsAtInEntries) m_channelsValueFilePos[streamIdx] = entriesFilePos + at;
     writeToFile(allEntries);
 }
 
@@ -1455,6 +1464,12 @@ void MatroskaMuxer::refreshTrackProperties()
                 track.sampleRate = simpleReader->getFreq();
                 track.channels = simpleReader->getChannels();
             }
+            // A DD+ 7.1 track carries channels 7 and 8 in a dependent substream, and the reader counts only the 5.1
+            // of the independent one, so the track header said 6 while the audio decodes as 7.1. The same two
+            // channels are added wherever the listing and the transport stream descriptor name the track 7.1.
+            if (const auto ac3 = dynamic_cast<AC3StreamReader*>(track.codecReader);
+                ac3 && track.matroskaCodecID == MATROSKA_CODEC_ID_AUDIO_EAC3 && ac3->hasExtChannels())
+                track.channels = ac3->getChannels() + 2;
             const auto lpcmReader = dynamic_cast<LPCMStreamReader*>(track.codecReader);
             if (lpcmReader)
                 track.bitDepth = lpcmReader->m_bitsPerSample;
@@ -3601,6 +3616,21 @@ bool MatroskaMuxer::close()
         if (track.hasTextEnd)
             endMs = (std::max)(endMs, static_cast<double>(track.maxTextEnd - m_firstTimecode) / INTERNAL_PTS_PER_MS);
         durationMs = std::max(durationMs, endMs);
+    }
+
+    // A DD+ 7.1 track carries channels 7 and 8 in a dependent substream, which the reader may meet only after the track
+    // header has been written: the header said 6 while the audio decodes as 7.1. The count is corrected here, in
+    // place, with the same one byte size, once the whole track has been read.
+    for (const auto& [streamIdx, track] : m_tracks)
+    {
+        const auto at = m_channelsValueFilePos.find(streamIdx);
+        const auto ac3 = dynamic_cast<AC3StreamReader*>(track.codecReader);
+        if (at == m_channelsValueFilePos.end() || !ac3 || track.matroskaCodecID != MATROSKA_CODEC_ID_AUDIO_EAC3 ||
+            !ac3->hasExtChannels() || track.channels != ac3->getChannels())
+            continue;
+        const auto full = static_cast<uint8_t>(ac3->getChannels() + 2);
+        m_file.seek(at->second);
+        m_file.write(&full, 1);
     }
 
     if (m_durationValueFilePos > 0 && !(std::isfinite(durationMs) && durationMs > 0))
