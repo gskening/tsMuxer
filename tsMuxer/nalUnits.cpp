@@ -1,9 +1,11 @@
 
 #include <fs/systemlog.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <sstream>
+#include <vector>
 
 #include "bitStream.h"
 #include "nalUnits.h"
@@ -1451,26 +1453,31 @@ int SEIUnit::isMVCSEI()
     return 0;
 }
 
+// The messages other than the timing ones were collected in a buffer of 4 KB that nothing checked, so an SEI unit
+// carrying more than that next to its timing, a large user data message for instance, ran past the end of it and
+// the program stopped without a word. They are collected in a buffer that grows now, a message is taken no further
+// than the unit's end, and a timing message is removed with every byte of its type and size, not just two.
 unsigned SEIUnit::removePicTimingSEI(SPSUnit& sps)
 {
     const uint8_t* nalEnd = m_nalBuffer + m_nalBufferLen;
     const uint8_t* curBuff = m_nalBuffer + 1;
-    uint8_t tmpBuffer[1024 * 4]{};
-    tmpBuffer[0] = m_nalBuffer[0];
-    unsigned tmpBufferLen = 1;
+    std::vector<uint8_t> kept;
+    kept.reserve(m_nalBufferLen);
+    kept.push_back(m_nalBuffer[0]);
 
     while (curBuff < nalEnd)
     {
+        const size_t messageStart = kept.size();
         int payloadType = 0;
         for (; curBuff < nalEnd && *curBuff == 0xFF; curBuff++)
         {
             payloadType += 0xFF;
-            tmpBuffer[tmpBufferLen++] = 0xff;
+            kept.push_back(0xff);
         }
         if (curBuff >= nalEnd)
             break;
         payloadType += *curBuff;
-        tmpBuffer[tmpBufferLen++] = *curBuff++;
+        kept.push_back(*curBuff++);
         if (curBuff >= nalEnd)
             break;
 
@@ -1478,35 +1485,30 @@ unsigned SEIUnit::removePicTimingSEI(SPSUnit& sps)
         for (; curBuff < nalEnd && *curBuff == 0xFF; curBuff++)
         {
             payloadSize += 0xFF;
-            tmpBuffer[tmpBufferLen++] = 0xff;
+            kept.push_back(0xff);
         }
         if (curBuff >= nalEnd)
             break;
 
         payloadSize += *curBuff;
-        tmpBuffer[tmpBufferLen++] = *curBuff++;
+        kept.push_back(*curBuff++);
         if (curBuff >= nalEnd)
             break;
+        const auto present = (std::min)(static_cast<size_t>(payloadSize), static_cast<size_t>(nalEnd - curBuff));
         if (payloadType == SEI_MSG_PIC_TIMING || payloadType == SEI_MSG_BUFFERING_PERIOD)
-        {
-            tmpBufferLen -= 2;  // skip this sei message
-        }
+            kept.resize(messageStart);  // skip this sei message
         else
-        {
-            memcpy(tmpBuffer + tmpBufferLen, curBuff, payloadSize);
-            tmpBufferLen += payloadSize;
-        }
-        curBuff += payloadSize;
+            kept.insert(kept.end(), curBuff, curBuff + present);
+        curBuff += present;
     }
-    if (m_nalBufferLen < tmpBufferLen)
+    if (m_nalBufferLen < kept.size())
     {
-        // assert(m_nalBufferLen < tmpBufferLen);
         delete[] m_nalBuffer;
-        m_nalBuffer = new uint8_t[tmpBufferLen];
+        m_nalBuffer = new uint8_t[kept.size()];
     }
-    memcpy(m_nalBuffer, tmpBuffer, tmpBufferLen);
-    m_nalBufferLen = tmpBufferLen;
-    return tmpBufferLen;
+    memcpy(m_nalBuffer, kept.data(), kept.size());
+    m_nalBufferLen = static_cast<unsigned>(kept.size());
+    return static_cast<unsigned>(kept.size());
 }
 
 void SEIUnit::sei_payload(const SPSUnit& sps, const int payloadType, uint8_t* curBuff, const int payloadSize,

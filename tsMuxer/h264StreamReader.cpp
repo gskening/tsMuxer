@@ -2,6 +2,7 @@
 
 #include <fs/systemlog.h>
 #include <memory>
+#include <vector>
 
 #include "avCodecs.h"
 #include "tsPacket.h"
@@ -1058,8 +1059,10 @@ int H264StreamReader::processSEI(uint8_t* buff)
             int oldSize = static_cast<int>(nextNal - buff);
             lastSEI.removePicTimingSEI(*(m_spsMap.begin()->second));
 
-            uint8_t tmpBuff[1024 * 3];
-            int newSize = lastSEI.serializeBuffer(tmpBuff, tmpBuff + sizeof(tmpBuff), false);
+            // Sized from what is left, with room for every emulation prevention byte the packing can add (at most
+            // one for every two bytes). A fixed 3 KB ended the job with "Not enough buffer" for a larger SEI unit.
+            std::vector<uint8_t> tmpBuff(lastSEI.m_nalBufferLen + lastSEI.m_nalBufferLen / 2 + 16);
+            int newSize = lastSEI.serializeBuffer(tmpBuff.data(), tmpBuff.data() + tmpBuff.size(), false);
             if (newSize == -1)
                 THROW(ERR_COMMON, "Not enough buffer")
 
@@ -1073,7 +1076,7 @@ int H264StreamReader::processSEI(uint8_t* buff)
                 memmove(nextNal + sizeDiff, nextNal, m_bufEnd - nextNal);
                 m_bufEnd += sizeDiff;
             }
-            memcpy(buff, tmpBuff, newSize);
+            memcpy(buff, tmpBuff.data(), newSize);
         }
     }
     return 0;
