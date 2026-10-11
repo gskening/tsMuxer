@@ -801,10 +801,15 @@ void MuxerManager::parseMuxOpt(const string& opts)
             else if (postfix == "MIN")
                 coeff = 60 * INTERNAL_PTS_FREQ;
             string prefix = paramPair[1].substr(0, paramPair[1].size() - postfix.size());
+            // A fraction (--cut-start=1.5s) was cut off: the number was read as a whole one. A whole number is still
+            // read exactly; a fraction is rounded to the clock.
+            const int64_t cut = prefix.find('.') == string::npos
+                                    ? strToInt64(prefix.c_str()) * coeff
+                                    : llround(strToDouble(prefix.c_str()) * static_cast<double>(coeff));
             if (paramPair[0] == "--cut-start")
-                setCutStart(strToInt64(prefix.c_str()) * coeff);
+                setCutStart(cut);
             else
-                setCutEnd(strToInt64(prefix.c_str()) * coeff);
+                setCutEnd(cut);
         }
         else if (paramPair[0] == "--split-duration" || paramPair[0] == "--split-size")
         {

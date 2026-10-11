@@ -970,19 +970,20 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
         size_t pos = 0;
         int64_t coeff = 1;
         int64_t value = 0;
+        // "ns" is tested before "s": the other order read 500ns as 500 seconds.
         if ((pos = timeShift.find("ms")) != std::string::npos)
         {
             coeff = 1000000;
             value = strToInt32(timeShift.substr(0, pos).c_str());
         }
-        else if ((pos = timeShift.find('s')) != std::string::npos)
-        {
-            coeff = 1000000000;
-            value = strToInt32(timeShift.substr(0, pos).c_str());
-        }
         else if ((pos = timeShift.find("ns")) != std::string::npos)
         {
             coeff = 1;
+            value = strToInt32(timeShift.substr(0, pos).c_str());
+        }
+        else if ((pos = timeShift.find('s')) != std::string::npos)
+        {
+            coeff = 1000000000;
             value = strToInt32(timeShift.substr(0, pos).c_str());
         }
         else
@@ -2089,8 +2090,9 @@ AbstractStreamReader* METADemuxer::createCodec(const string& codecName, const ma
 
         itr = addParams.find("level");
         if (itr != addParams.end())
-            dynamic_cast<H264StreamReader*>(rez)->setForceLevel(static_cast<uint8_t>(strToDouble(itr->second.c_str())) *
-                                                                10);
+            // Rounded after the x10: the cast came first, so level=4.1 gave 4.0 and 5.1 gave 5.0.
+            dynamic_cast<H264StreamReader*>(rez)->setForceLevel(
+                static_cast<uint8_t>(lround(strToDouble(itr->second.c_str()) * 10)));
         itr = addParams.find("insertSEI");
         if (itr != addParams.end())
         {
