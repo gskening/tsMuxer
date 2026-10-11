@@ -1,6 +1,6 @@
 ## tsMuxeR 2.19.0
 
-Ninety-nine changes: ninety-three fixes and six additions, grouped below by area. Most of them are to Matroska output, to subtitles and to Blu-ray discs.
+Ninety-eight changes: ninety-two fixes and six additions, grouped below by area. Most of them are to Matroska output, to subtitles and to Blu-ray discs.
 
 **Matroska output is still young.** tsMuxeR has only been able to write MKV files since 2.7.2, earlier this year, and a new feature needs time and real use before it is mature. Several of these fixes started with your reports, and looking more closely at the files tsMuxeR writes turned up the rest. Some go back to when MKV output was first added.
 
@@ -29,8 +29,6 @@ More fixes like these will follow, because not everything can be found at once. 
 * **DD+ 7.1 that is not from a Blu-ray lost its extra channels in Matroska.** The frames that carry channels 7 and 8 were attached to the following frame instead of their own. They stay with their own frame now.
 
 * **The duration of a Matroska file was a little too long.** It added a video frame to whichever track ended last, so a file with TrueHD came out up to 40 ms longer than its tracks really are. Each track is now measured by its own frames. An audio-only file, which came out one frame short, is right too.
-
-* **A subtitle at the very start of a Matroska file delayed every track.** A subtitle at 0 seconds made every track of the file start a little late, picture and sound included. The file starts at zero now.
 
 * **Subtitle pictures in a Matroska file did not say where playback can start.** The Matroska rules ask for a mark on each block a player can start from, and subtitle blocks never had it. Each subtitle picture that stands on its own carries it now.
 
