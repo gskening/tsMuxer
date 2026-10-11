@@ -864,8 +864,11 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
             dataReader = m_readManager.getReader(fileList[0].c_str());
         }
     }
+    // .m2t and .mpeg belong to their families here as they do in familyOfExt and ContainerToReaderWrapper::openStream:
+    // this table and the two in discoverStreams and DetectStreamReader left them out, so such a file was read as a
+    // bare stream, or not read at all.
     else if (strEndWith(tmpname, ".ts") || strEndWith(tmpname, ".m2ts") || strEndWith(tmpname, ".mts") ||
-             strEndWith(tmpname, ".ssif"))
+             strEndWith(tmpname, ".m2t") || strEndWith(tmpname, ".ssif"))
     {
         if (pid)
             dataReader = &m_containerReader;
@@ -873,12 +876,13 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
             THROW(ERR_INVALID_CODEC_FORMAT, "For streams inside TS/M2TS container need track parameter.")
         if (listIterator)
             dynamic_cast<ContainerToReaderWrapper*>(dataReader)->setFileIterator(fileList[0].c_str(), listIterator);
-        if (strEndWith(tmpname, ".ts"))
+        if (strEndWith(tmpname, ".ts") || strEndWith(tmpname, ".m2t"))
             codecReader->setSrcContainerType(AbstractStreamReader::ContainerType::ctTS);
         else
             codecReader->setSrcContainerType(AbstractStreamReader::ContainerType::ctM2TS);
     }
-    else if (strEndWith(tmpname, ".vob") || strEndWith(tmpname, ".evo") || strEndWith(tmpname, ".mpg"))
+    else if (strEndWith(tmpname, ".vob") || strEndWith(tmpname, ".evo") || strEndWith(tmpname, ".mpg") ||
+             strEndWith(tmpname, ".mpeg"))
     {
         if (pid)
             dataReader = &m_containerReader;
@@ -1323,12 +1327,12 @@ std::vector<StreamDiscoveryData> METADemuxer::discoverStreams() const
             demuxer = std::make_unique<TSDemuxer>(m_readManager, "");
             containerType = AbstractStreamReader::ContainerType::ctM2TS;
         }
-        else if (fileExt == "ts")
+        else if (fileExt == "ts" || fileExt == "m2t")
         {
             demuxer = std::make_unique<TSDemuxer>(m_readManager, "");
             containerType = AbstractStreamReader::ContainerType::ctTS;
         }
-        else if (fileExt == "vob" || fileExt == "mpg")
+        else if (fileExt == "vob" || fileExt == "mpg" || fileExt == "mpeg")
         {
             demuxer = std::make_unique<ProgramStreamDemuxer>(m_readManager);
             containerType = AbstractStreamReader::ContainerType::ctVOB;
@@ -1666,12 +1670,12 @@ DetectStreamRez METADemuxer::DetectStreamReader(const BufferedReaderManager& rea
         if (!clpiFileName.empty())
             clpiParsed = clpi.parse(clpiFileName.c_str());
     }
-    else if (fileExt == "ts")
+    else if (fileExt == "ts" || fileExt == "m2t")
     {
         demuxer = std::make_unique<TSDemuxer>(readManager, "");
         containerType = AbstractStreamReader::ContainerType::ctTS;
     }
-    else if (fileExt == "vob" || fileExt == "mpg")
+    else if (fileExt == "vob" || fileExt == "mpg" || fileExt == "mpeg")
     {
         demuxer = std::make_unique<ProgramStreamDemuxer>(readManager);
         containerType = AbstractStreamReader::ContainerType::ctVOB;
