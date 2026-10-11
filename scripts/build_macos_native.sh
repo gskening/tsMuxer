@@ -37,11 +37,17 @@ if [ "${CMAKE_OSX_ARCHITECTURES:-}" = "x86_64" ]; then
   # archive needs nothing outside libSystem (tsMuxeR itself links the system zlib, as before). With
   # PNG and BZip2 off as well, the Intel leg needs no extra link flags.
   FREETYPE_VERSION=2.14.3
+  # The tarball is checked against this before it is unpacked: the same bytes came from two
+  # different download servers, and freetype's own release signature (Werner Lemberg's key
+  # E306 7470 7856 409F F194 8010 BE6C 3AAC 63AD 8E3F) is good on them. A changed or damaged
+  # download stops the build here instead of being compiled into the package.
+  FREETYPE_SHA256=36bc4f1cc413335368ee656c42afca65c5a3987e8768cc28cf11ba775e785a5f
   DEPS="${PWD}/deps-x86_64"
   mkdir -p "${DEPS}/src"
   pushd "${DEPS}/src"
   curl -fsSL -o freetype.tar.xz \
     "https://download.savannah.gnu.org/releases/freetype/freetype-${FREETYPE_VERSION}.tar.xz"
+  echo "${FREETYPE_SHA256}  freetype.tar.xz" | shasum -a 256 -c -
   tar xf freetype.tar.xz
   cmake -S "freetype-${FREETYPE_VERSION}" -B ft-build \
     -DCMAKE_BUILD_TYPE=Release \
