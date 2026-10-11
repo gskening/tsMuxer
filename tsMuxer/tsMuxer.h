@@ -125,6 +125,7 @@ class TSMuxer final : public AbstractMuxer
     [[nodiscard]] inline int calcM2tsFrameCnt() const;
     [[nodiscard]] bool maxRateClockDue() const;
     void insertHeldPCRIfDue();
+    void refuseLongNonVideoPes() const;
     void noteLateArrival();
     void reportLateArrival() const;
     [[nodiscard]] int64_t pcrForMaxRate(int64_t newPCR, int64_t extraFrames, int64_t pcrGAP) const;

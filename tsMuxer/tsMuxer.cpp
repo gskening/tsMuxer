@@ -714,10 +714,6 @@ void TSMuxer::reportReadRate() const
     LTRACE(LT_WARN, 2, msg.str());
 }
 
-// With --maxbitrate the data is held to the cap and never sent ahead, so where the video's own peaks are above the cap
-// its pictures reach the player after they are due, and a player stutters or freezes there. Nothing said so: on a
-// 120 Mbit/s HEVC video, with --maxbitrate=150000 141 of 900 pictures come up to 0.3 s late, and with 109000 862 of
-// 900 up to 5.9 s. A picture counts as late when its last packet arrives, at the cap, after its decoding time.
 static bool isVideoStreamType(const StreamType streamType)
 {
     switch (streamType)
@@ -736,6 +732,10 @@ static bool isVideoStreamType(const StreamType streamType)
     }
 }
 
+// With --maxbitrate the data is held to the cap and never sent ahead, so where the video's own peaks are above the cap
+// its pictures reach the player after they are due, and a player stutters or freezes there. Nothing said so: on a
+// 120 Mbit/s HEVC video, with --maxbitrate=150000 141 of 900 pictures come up to 0.3 s late, and with 109000 862 of
+// 900 up to 5.9 s. A picture counts as late when its last packet arrives, at the cap, after its decoding time.
 void TSMuxer::noteLateArrival()
 {
     if (m_maxBitrate == -1 || m_lastPCR == -1 || m_lastPESDTS == -1)
@@ -1015,6 +1015,53 @@ void TSMuxer::buildPesHeader(const uint8_t pesStreamID, AVPacket& avPacket, int 
     for (auto& i : tmpPriorityData) m_priorityData.emplace_back(i.first + pesPacket->getHeaderLength(), i.second);
 }
 
+// The length of a PES packet is 16 bits, and only video may leave it open. Packets that arrive whole are checked in
+// buildPesHeader; a PGS segment arrives in pieces and reached the stream with an open length, which a player reads
+// wrongly. It is refused with the same message. A subtitle segment of nearly 64 KB is the one way to get here. Only
+// audio and subtitle streams are refused: a video stream may leave the length open, and that includes streams that
+// are not typed as video, such as the enhancement layer of a Dolby Vision video.
+static bool isAudioOrSubtitleStreamType(const StreamType streamType)
+{
+    switch (streamType)
+    {
+    case StreamType::AUDIO_LPCM:
+    case StreamType::AUDIO_AC3:
+    case StreamType::AUDIO_DTS:
+    case StreamType::AUDIO_TRUE_HD:
+    case StreamType::AUDIO_EAC3:
+    case StreamType::AUDIO_DTS_HD:
+    case StreamType::AUDIO_DTS_HD_MA:
+    case StreamType::AUDIO_DRA:
+    case StreamType::AUDIO_DRA_EXT:
+    case StreamType::AUDIO_EAC3_SECONDARY:
+    case StreamType::AUDIO_DTS_HD_SECONDARY:
+    case StreamType::AUDIO_MPEG1:
+    case StreamType::AUDIO_MPEG2:
+    case StreamType::AUDIO_AAC:
+    case StreamType::AUDIO_AAC_RAW:
+    case StreamType::AUDIO_MHAS_MAIN:
+    case StreamType::AUDIO_MHAS_AUX:
+    case StreamType::SUB_PGS:
+    case StreamType::SUB_IGS:
+    case StreamType::SUB_TGS:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void TSMuxer::refuseLongNonVideoPes() const
+{
+    const auto it = m_pmt.pidList.find(m_pesPID);
+    if (it == m_pmt.pidList.end() || !isAudioOrSubtitleStreamType(it->second.m_streamType))
+        return;
+    const int64_t pesLength = static_cast<int64_t>(m_pesData.size()) - 6;
+    THROW(ERR_COMMON, "A packet of " << pesLength << " bytes on the stream with PID " << m_pesPID
+                                     << " does not fit in one PES packet of a transport stream (at most 65535 bytes), "
+                                        "so this track cannot be muxed to a transport stream or a disc. It can be "
+                                        "muxed to Matroska.")
+}
+
 void TSMuxer::addData(const uint8_t pesStreamID, const int pid, AVPacket& avPacket)
 {
     if (m_inplacePending)
@@ -1050,6 +1097,8 @@ void TSMuxer::addData(const uint8_t pesStreamID, const int pid, AVPacket& avPack
     // 0x10000 + 6 is the largest accumulation whose PES length field still gets patched
     // at flush time; anything bigger keeps length 0 and can leave the staging buffer now
     static constexpr int64_t INPLACE_SWITCH_MIN = 0x10000 + 6 + 1;
+    if (static_cast<int64_t>(m_pesData.size()) - 6 > 0xFFFF)
+        refuseLongNonVideoPes();
     if (static_cast<int64_t>(m_pesData.size()) >= INPLACE_SWITCH_MIN && inplaceEligible())
         switchToInplace();
 }
@@ -1435,6 +1484,8 @@ void TSMuxer::writePESPacket()
             m_pesData.data()[4] = static_cast<uint8_t>(size / 256);
             m_pesData.data()[5] = static_cast<uint8_t>(size % 256);
         }
+        else
+            refuseLongNonVideoPes();
 
         PMTStreamInfo& streamInfo = m_pmt.pidList[m_pesPID];
         const auto pesPacket = reinterpret_cast<PESPacket*>(m_pesData.data());
