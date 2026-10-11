@@ -699,23 +699,26 @@ int MatroskaDemuxer::matroska_parse_block(uint8_t* data, int size, const int64_t
                 m_tmpBuffer.clear();
                 if (tracks[track]->encodingAlgo == COMPRESSION_STRIP_HEADERS)
                 {
+                    // The bytes the writer stripped from the front of every frame (an AC-3 or DTS sync word, for
+                    // instance) are put back in front of it. They were written into the bytes before the frame in
+                    // place, which was allowed only with room left by a RealVideo slice table, so for every other
+                    // track every block was dropped and the track came out empty. The frame is put together in a
+                    // buffer of its own now.
                     offset = static_cast<int>(tracks[track]->encodingAlgoPriv.size());
                     if (offset)
                     {
-                        // Ensure the pointer won't move before the start of the data buffer
-                        if (slice_offset < offset)
+                        if (slice_size < 0 || slice_size > curPtr_size)
                         {
-                            LTRACE(LT_ERROR, 0, "strip-headers offset exceeds slice_offset");
+                            LTRACE(LT_ERROR, 0, "invalid slice size");
                             delete pkt;
                             delete[] origdata;
                             delete[] lace_size;
                             return res;
                         }
-                        curPtr -= offset;
-                        curPtr_size += offset;
-                        m_tmpBuffer.append(curPtr, offset);  // save data
-                        memcpy(curPtr, tracks[track]->encodingAlgoPriv.data(),
-                               offset);  // place extra header direct to data
+                        m_tmpBuffer.append(tracks[track]->encodingAlgoPriv.data(), offset);
+                        m_tmpBuffer.append(curPtr, slice_size);
+                        curPtr = m_tmpBuffer.data();
+                        curPtr_size = static_cast<int>(m_tmpBuffer.size());
                     }
                 }
                 else if (tracks[track]->encodingAlgo == COMPRESSION_ZLIB)
@@ -744,8 +747,6 @@ int MatroskaDemuxer::matroska_parse_block(uint8_t* data, int size, const int64_t
                     pkt->size = slice_size + offset;
                     memcpy(pkt->data, curPtr, slice_size + offset);
                 }
-                if (offset)
-                    memcpy(curPtr, m_tmpBuffer.data(), offset);  // restore data
 
                 if (n == 0)
                     pkt->flags = is_keyframe;
