@@ -1,6 +1,6 @@
 ## tsMuxeR 2.19.0
 
-Ninety-eight changes: ninety-two fixes and six additions, grouped below by area. Most of them are to Matroska output, to subtitles and to Blu-ray discs.
+Ninety-nine changes: ninety-three fixes and six additions, grouped below by area. Most of them are to Matroska output, to subtitles and to Blu-ray discs.
 
 **Matroska output is still young.** tsMuxeR has only been able to write MKV files since 2.7.2, earlier this year, and a new feature needs time and real use before it is mature. Several of these fixes started with your reports, and looking more closely at the files tsMuxeR writes turned up the rest. Some go back to when MKV output was first added.
 
@@ -143,6 +143,8 @@ More fixes like these will follow, because not everything can be found at once. 
 ### Blu-ray, transport streams and 3D
 
 * **The time between two clock references could pass 0.1 s.** The transport stream rules allow at most 0.1 s, and some outputs, UHD among them, went up to 0.11 s. With --maxbitrate it was far worse: when the video asked for more than the cap, the clock references came seconds apart, up to 20 s. The clock is now written in time in both cases.
+
+* **--maxbitrate did not say when the video could not fit under the cap.** Where the video's own peaks are above the cap, its pictures reach the player after they are due, and a player may stutter or freeze there. A warning now says how many pictures come late and by how much, and advises a re-encode with the peak bitrate capped, or a higher cap.
 
 * **The muxer's own tables went out as a burst on Blu-ray.** Every few seconds, four packets left within a few microseconds, far above the rate a drive can read. Such a short burst is now held at that rate.
 
