@@ -42,8 +42,9 @@ extern "C"
 #include "vvc.h"
 #include "vvcStreamReader.h"
 
-// The Matroska TrackType values this muxer writes. Only the subtitle one is asked about away
-// from where the tracks are built, so only it is named.
+// The Matroska TrackType values this muxer writes. Only the video and subtitle ones are asked about
+// away from where the tracks are built, so only they are named.
+static constexpr uint8_t MKV_TRACK_TYPE_VIDEO = 1;
 static constexpr uint8_t MKV_TRACK_TYPE_SUBTITLE = 17;
 static constexpr uint8_t PGS_SEGMENT_PCS = 0x16;  // presentation composition, opens a display set
 static constexpr uint8_t PGS_SEGMENT_END = 0x80;  // closes it
@@ -355,7 +356,7 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
     // Determine track type & properties
     if (codecName[0] == 'V')
     {
-        track.trackType = 1;  // video
+        track.trackType = MKV_TRACK_TYPE_VIDEO;
         const auto mpegReader = dynamic_cast<MPEGStreamReader*>(codecReader);
         if (mpegReader)
         {
@@ -1976,7 +1977,11 @@ void MatroskaMuxer::replayBufferedPackets()
     // and a file with video keeps them because its video starts there. Subtitles alone started at their first
     // subtitle instead: one due at 1 s came out at 0, every later one as early, and a delay on the track did nothing.
     // The origin is now the source's zero, or the start of a --cut-start, when the first subtitle comes after it.
-    if (tracksNeedingFirstPacket() == 0 && m_owner != nullptr)
+    // A file of audio alone, or of audio and subtitles, started at its first audio frame the same way, so a delay
+    // given to the audio was dropped without a word. Every file without video now keeps the source's times.
+    const bool hasVideo = std::any_of(m_tracks.begin(), m_tracks.end(),
+                                      [](const auto& entry) { return entry.second.trackType == MKV_TRACK_TYPE_VIDEO; });
+    if (!hasVideo && m_owner != nullptr)
         minPts = (std::min)(minPts, (std::max)(int64_t{0}, m_owner->getCutStart()));
 
     m_firstTimecode = minPts;
