@@ -28,6 +28,8 @@ extern "C"
 #include "hevcStreamReader.h"
 #include "lpcmStreamReader.h"
 #include "matroskaParser.h"
+#include "mlpStreamReader.h"
+#include "mpeg2StreamReader.h"
 #include "mpegAudioStreamReader.h"
 #include "muxerManager.h"
 #include "nalUnits.h"
@@ -1054,6 +1056,17 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
     // point itself.
     if (track.codecID == CODEC_A_OPUS)
         pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_SEEKPREROLL, 80000000);
+    // The Matroska rules for Opus ask for CodecDelay, the pre-skip of the OpusHead in CodecPrivate (bytes 10 and 11,
+    // little endian, always counted at 48 kHz). Without it a player takes the block times as they stand, and the
+    // audio came out later by the pre-skip, 6.5 ms for a usual encoder, than the same blocks in the source.
+    if (track.codecID == CODEC_A_OPUS && track.codecPrivate.size() >= 19 &&
+        memcmp(track.codecPrivate.data(), "OpusHead", 8) == 0)
+    {
+        const unsigned preSkip = track.codecPrivate[10] | (track.codecPrivate[11] << 8);
+        if (preSkip > 0)
+            pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_CODECDELAY,
+                                   static_cast<uint64_t>(preSkip) * 1000000000ULL / 48000);
+    }
 
     if (track.fps > 0)
     {
@@ -1427,6 +1440,20 @@ void MatroskaMuxer::refreshTrackProperties()
             ac3 && track.ac3CoreOfStream < 0 && track.matroskaCodecID == MATROSKA_CODEC_ID_AUDIO_AC3 &&
             ac3->carriesEac3())
             track.matroskaCodecID = MATROSKA_CODEC_ID_AUDIO_EAC3;
+        // Three formats were labelled as their bigger relatives, because one reader serves both: MPEG-1 video as
+        // V_MPEG2, MLP that is not TrueHD as A_TRUEHD, and DTS Express as plain DTS. Matroska names each on its own,
+        // and a player that trusts the label decodes the wrong thing. What a stream is, is known once its header is
+        // read.
+        if (const auto m2v = dynamic_cast<MPEG2StreamReader*>(track.codecReader);
+            m2v && track.matroskaCodecID == MATROSKA_CODEC_ID_VIDEO_MPEG2 && m2v->isMpeg1())
+            track.matroskaCodecID = MATROSKA_CODEC_ID_VIDEO_MPEG1;
+        if (const auto mlp = dynamic_cast<MLPStreamReader*>(track.codecReader);
+            mlp && track.matroskaCodecID == MATROSKA_CODEC_ID_AUDIO_TRUEHD && mlp->m_subType == MlpSubType::stMLP)
+            track.matroskaCodecID = MATROSKA_CODEC_ID_AUDIO_MLP;
+        if (const auto dts = dynamic_cast<DTSStreamReader*>(track.codecReader);
+            dts && track.matroskaCodecID == MATROSKA_CODEC_ID_AUDIO_DTS &&
+            dts->getDTSHDMode() == DTSStreamReader::DTSHD_SUBTYPE::DTS_SUBTYPE_EXPRESS)
+            track.matroskaCodecID = MATROSKA_CODEC_ID_AUDIO_DTS_EXPRESS;
         // MPEG audio is one reader for three layers, and Matroska names each: an MP2 track was
         // declared A_MPEG/L3. The layer is known once a frame has been read.
         if (const auto mpa = dynamic_cast<MpegAudioStreamReader*>(track.codecReader); mpa && mpa->getLayer() >= 1)
@@ -2926,6 +2953,10 @@ bool MatroskaMuxer::muxPacketInternal(AVPacket& avPacket)
         // Same PTS - merge flags (keep keyframe flag if any chunk has it)
         track.pendingFlags |= (avPacket.flags & AVPacket::IS_IFRAME);
     }
+    // The DTS reader marks a frame as one a player can start from by its core, and DTS Express has no core, so not
+    // one of its blocks carried the keyframe flag. Every DTS Express frame decodes on its own.
+    if (track.matroskaCodecID == MATROSKA_CODEC_ID_AUDIO_DTS_EXPRESS)
+        track.pendingFlags |= AVPacket::IS_IFRAME;
     track.pendingFrameData.insert(track.pendingFrameData.end(), avPacket.data, avPacket.data + avPacket.size);
 
     return true;

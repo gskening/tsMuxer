@@ -93,6 +93,7 @@ static constexpr uint8_t MATROSKA_ID_TRACKVIDEO = 0xE0;
 static constexpr uint8_t MATROSKA_ID_CODECID = 0x86;
 static constexpr uint16_t MATROSKA_ID_CODECPRIVATE = 0x63A2;
 static constexpr uint16_t MATROSKA_ID_SEEKPREROLL = 0x56BB;
+static constexpr uint16_t MATROSKA_ID_CODECDELAY = 0x56AA;
 static constexpr uint32_t MATROSKA_ID_CODECNAME = 0x258688;
 static constexpr uint32_t MATROSKA_ID_CODECINFOURL = 0x3B4040;
 static constexpr uint32_t MATROSKA_ID_CODECDOWNLOADURL = 0x26B240;
@@ -262,6 +263,9 @@ constexpr auto MATROSKA_CODEC_ID_AUDIO_EAC3 = "A_EAC3";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_TRUEHD = "A_TRUEHD";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_MPEG_L3 = "A_MPEG/L3";
 constexpr auto MATROSKA_CODEC_ID_VIDEO_MPEG2 = "V_MPEG2";
+constexpr auto MATROSKA_CODEC_ID_VIDEO_MPEG1 = "V_MPEG1";
+constexpr auto MATROSKA_CODEC_ID_AUDIO_MLP = "A_MLP";
+constexpr auto MATROSKA_CODEC_ID_AUDIO_DTS_EXPRESS = "A_DTS/EXPRESS";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_FLAC = "A_FLAC";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_OPUS = "A_OPUS";
 

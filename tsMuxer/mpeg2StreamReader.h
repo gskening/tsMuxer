@@ -29,6 +29,9 @@ class MPEG2StreamReader final : public MPEGStreamReader
     [[nodiscard]] int getStreamHDR() const override { return 0; }
     bool getInterlaced() override { return !m_sequence.progressive_sequence; }
 
+    // An MPEG-1 video stream has no sequence extension; every MPEG-2 stream has one right after its sequence header
+    [[nodiscard]] bool isMpeg1() const { return spsFound && !m_seqExtFound; }
+
    protected:
     const CodecInfo& getCodecInfo() override { return mpeg2CodecInfo; }
     int intDecodeNAL(uint8_t* buff) override;
