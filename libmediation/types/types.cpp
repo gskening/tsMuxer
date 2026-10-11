@@ -329,9 +329,13 @@ string extractFileExt(const string& src)
     return "";
 }
 
+// The name of a file without its folder and its extension. A name with no folder in front of it gave an empty
+// string, so a meta line naming "tone.wav" in the current folder demuxed to a file called ".wav" (#286). It is the
+// name now; a path that ends in a separator still gives an empty string.
 string extractFileName(const string& src)
 {
     size_t endPos = src.size();
+    size_t start = 0;
     for (size_t i = src.size(); i-- > 0;)
         if (src[i] == '.')
         {
@@ -340,12 +344,13 @@ string extractFileName(const string& src)
         }
         else if (src[i] == '/' || src[i] == '\\')
         {
-            string rez = src.substr(i + 1, endPos - i - 1);
-            if (!rez.empty() && rez[rez.size() - 1] == '\"')
-                return rez.substr(0, rez.size() - 1);
-            return rez;
+            start = i + 1;
+            break;
         }
-    return "";
+    string rez = src.substr(start, endPos - start);
+    if (!rez.empty() && rez[rez.size() - 1] == '\"')
+        return rez.substr(0, rez.size() - 1);
+    return rez;
 }
 
 string extractFileName2(const string& src, const bool withExt)
@@ -397,10 +402,9 @@ bool isValidFileName(const string& src)
     // path then travelled all the way to the muxer and came back as an unknown exception, and a
     // path of nothing but spaces was accepted outright.
     //
-    // Only the whole path is tested here. extractFileName() below returns an empty string both for
-    // a name that has no directory part and for a path that ends in a separator, and neither of
-    // those is a fault: a bare name is an ordinary relative path, and demux and Blu-ray output are
-    // both given a folder.
+    // Only the whole path is tested here. extractFileName() below returns an empty string for a
+    // path that ends in a separator, and that is not a fault: demux and Blu-ray output are both
+    // given a folder. A bare name is an ordinary relative path and is checked as a name.
     if (trimStr(src).empty())
         return false;
 

@@ -269,8 +269,8 @@ bool isIso639_2(const std::string& code)
 // near the end: "bigjoin - 2 - AC3, [dan], 2.0 channels, 192kbps, 48kHz.ac3".
 std::string langFromFileName(const std::string& fileName)
 {
-    // extractFileName already drops the extension, and it returns nothing at all for a bare name
-    // with no directory in front of it, so that case is handled here rather than left empty.
+    // extractFileName already drops the extension. It returned nothing for a bare name with no
+    // directory in front of it; it gives the name now, and the fallback below stays for safety.
     std::string name = extractFileName(fileName);
     if (name.empty())
     {
