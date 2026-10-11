@@ -254,15 +254,48 @@ bool File::setSparse() const
     return DeviceIoControl(m_impl, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &bytesReturned, nullptr) != 0;
 }
 
-// The volume of a path, found by its full name, and the size of that volume's sectors as the file system uses them:
-// the logical size, 512 on most drives, 4,096 on a drive with native 4 KB sectors.
+// The volume a folder really lies on, as \\?\Volume{...}\, asked of the folder itself. A junction or a symbolic link
+// on the way, or a drive mounted in a folder, leads to another volume than the one the path names.
+static bool realVolumeOfFolder(const wchar_t* folder, wchar_t* volume, const DWORD size)
+{
+    const HANDLE dir = CreateFileW(folder, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                   nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (dir == INVALID_HANDLE_VALUE)
+        return false;
+    const DWORD len = GetFinalPathNameByHandleW(dir, volume, size, VOLUME_NAME_GUID | FILE_NAME_NORMALIZED);
+    CloseHandle(dir);
+    if (len == 0 || len >= size || wcsncmp(volume, L"\\\\?\\Volume{", 11) != 0)
+        return false;
+    wchar_t* const end = wcschr(volume + 11, L'\\');  // the volume's root ends at the first separator after its name
+    if (end == nullptr)
+        return false;
+    end[1] = L'\0';
+    return true;
+}
+
+// The volume of a path and the size of that volume's sectors as the file system uses them: the logical size, 512 on
+// most drives, 4,096 on a drive with native 4 KB sectors. The volume was found by the path as written, which named
+// the wrong one when the output folder was reached through a junction or a symbolic link: a 4 KB drive behind a link
+// on a 512-byte drive still refused the write. The folder that receives the file is asked first, and the path as
+// written is the fallback when that fails.
 uint32_t File::volumeSectorSize(const char* fName)
 {
     const auto name = toWide(fName);
     wchar_t full[MAX_PATH * 4];
     wchar_t volume[MAX_PATH * 4];
-    const DWORD len = GetFullPathNameW(name.data(), MAX_PATH * 4, full, nullptr);
-    if (len == 0 || len >= MAX_PATH * 4 || !GetVolumePathNameW(full, volume, MAX_PATH * 4))
+    wchar_t* filePart = nullptr;
+    const DWORD len = GetFullPathNameW(name.data(), MAX_PATH * 4, full, &filePart);
+    if (len == 0 || len >= MAX_PATH * 4)
+        return 0;
+    bool found = false;
+    if (filePart != nullptr && filePart > full)
+    {
+        const wchar_t keep = *filePart;
+        *filePart = L'\0';  // the folder, with its trailing separator
+        found = realVolumeOfFolder(full, volume, MAX_PATH * 4);
+        *filePart = keep;
+    }
+    if (!found && !GetVolumePathNameW(full, volume, MAX_PATH * 4))
         return 0;
     DWORD sectorsPerCluster = 0, bytesPerSector = 0, freeClusters = 0, totalClusters = 0;
     if (!GetDiskFreeSpaceW(volume, &sectorsPerCluster, &bytesPerSector, &freeClusters, &totalClusters))
