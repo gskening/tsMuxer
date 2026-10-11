@@ -152,6 +152,7 @@ TSMuxer::TSMuxer(MuxerManager* owner) : AbstractMuxer(owner)
     m_cbrEvalPCR = -2;  // sentinel: differs from any real m_lastPCR incl. -1
     m_cbrNextEvalBits = 0;
     m_inplacePending = false;
+    m_midPesPCR = false;
     m_pendingStartOffset = 0;
     m_pendingStartPktCnt = 0;
     m_pendingTsPackets = 0;
@@ -1165,6 +1166,7 @@ void TSMuxer::emitInplacePacket(const uint8_t* payload, const int payloadLen, co
     // getting the diagnosis the check exists to give.
     if (m_outBufLen - m_pendingStartOffset > 100 * 1024 * 1024)
         THROW(ERR_COMMON, "Pes packet len too large ( >100Mb). Bad stream or invalid codec speciffed.")
+    insertHeldPCRIfDue();
     ensureOutBufSpace(m_frameSize);
     if (m_m2tsMode)
     {
@@ -1271,6 +1273,7 @@ void TSMuxer::switchToInplace()
     }
 
     m_inplacePending = true;
+    m_midPesPCR = false;
     m_pendingStartOffset = m_outBufLen;
     m_pendingStartPktCnt = m_muxedPacketCnt[m_muxedPacketCnt.size() - 1];
     m_pendingTsPackets = 0;
@@ -1353,6 +1356,7 @@ void TSMuxer::finalizeInplacePes()
     }
 
     m_inplacePending = false;
+    m_midPesPCR = false;
     m_priorityData.clear();
     while (m_outBufLen >= m_writeBlockSize) writeOutBuffer();  // catch up the flusher
 }
@@ -1637,8 +1641,9 @@ bool TSMuxer::muxPacket(AVPacket& avPacket)
     {
         finishFileBlock(avPacket.pts, newPCR, false);  // interleave SSIF here
     }
-    else if (newPCR - m_lastPCR >= m_pcr_delta ||
-             (newPES && m_cbrBitrate == -1 && newPCR > m_lastPCR && nextPCRChanceTooLate(tsIndex, avPacket.dts)))
+    else if (!(m_inplacePending && m_midPesPCR) &&
+             (newPCR - m_lastPCR >= m_pcr_delta || (newPES && (m_cbrBitrate == -1 || m_maxBitrate != -1) &&
+                                                    newPCR > m_lastPCR && nextPCRChanceTooLate(tsIndex, avPacket.dts))))
     {
         if (m_interliaveBlockSize == 0 || avPacket.stream_index == m_mainStreamIndex)
         {
@@ -1728,6 +1733,37 @@ bool TSMuxer::nextPCRChanceTooLate(const int tsIndex, const int64_t dts) const
     return nextPCR - m_lastPCR > PCR_MAX_INTERVAL - PCR_INTERVAL_MARGIN;
 }
 
+// With --maxbitrate the PCR is held back until the data written since the last one could have arrived at that rate
+// (pcrForMaxRate), so whenever the streams ask for more than the cap the clock falls behind the picture times. A PCR
+// was only ever written when the picture times had moved on by m_pcr_delta from the last PCR, and a held PCR is
+// later than them, so none came until they caught up: measured on a 90 Mbit/s video, the PCRs were 0.8 s apart with
+// --maxbitrate=150000, 5 s with 115000 and 20 s with 48000, where the rules allow 0.1 s. A PCR is now also due once
+// the data since the last one takes m_pcr_delta to arrive at the cap, so the held clock gets a PCR as often as the
+// free one. It is checked before every packet of a stream, because one picture alone can take longer than 0.1 s to
+// arrive at the cap. A mux that stays under the cap never meets this condition first, and is written exactly as
+// before. 3D, whose two views are interleaved in blocks, is left as it was.
+bool TSMuxer::maxRateClockDue() const
+{
+    if (m_maxBitrate == -1 || m_lastPCR == -1 || m_interliaveBlockSize > 0)
+        return false;
+    return static_cast<int64_t>(std::ceil(static_cast<double>(m_pcrBits) * 90000.0 / m_maxBitrate)) >= m_pcr_delta;
+}
+
+// The tables and the PCR go in between two packets of a picture. Inside a picture written in place, the PCR that the
+// picture times would ask for is then left out for the rest of that picture (writeFrame), because its tables would
+// be moved in front of the picture's packets that already carry arrival times from this one.
+void TSMuxer::insertHeldPCRIfDue()
+{
+    if (!maxRateClockDue())
+        return;
+    ensureOutBufSpace(5 * m_frameSize);
+    // Asked for at the last PCR, so pcrForMaxRate gives exactly the time the data takes at the cap, no later.
+    writePATPMT(m_lastPCR + m_pcr_delta);
+    writePCR(m_lastPCR);
+    if (m_inplacePending)
+        m_midPesPCR = true;
+}
+
 int TSMuxer::writeTSFrames(const int pid, const uint8_t* buffer, const int64_t len, const bool priorityData,
                            bool payloadStart)
 {
@@ -1741,6 +1777,7 @@ int TSMuxer::writeTSFrames(const int pid, const uint8_t* buffer, const int64_t l
 
     while (curPos < end)
     {
+        insertHeldPCRIfDue();
         if (m_cbrBitrate != -1 && m_lastPCR != -1)
         {
             // The pacing value is monotone in m_pcrBits (90000/m_cbrBitrate ticks per

@@ -123,6 +123,8 @@ class TSMuxer final : public AbstractMuxer
     void writePESPacket();
     void processM2TSPCR(int64_t pcrVal, int64_t pcrGAP);
     [[nodiscard]] inline int calcM2tsFrameCnt() const;
+    [[nodiscard]] bool maxRateClockDue() const;
+    void insertHeldPCRIfDue();
     [[nodiscard]] int64_t pcrForMaxRate(int64_t newPCR, int64_t extraFrames, int64_t pcrGAP) const;
     [[nodiscard]] bool nextPCRChanceTooLate(int tsIndex, int64_t dts) const;
     static void writeM2TSHeader(uint8_t* buffer, const int64_t m2tsPCR)
@@ -199,6 +201,7 @@ class TSMuxer final : public AbstractMuxer
     // 65541 bytes (no PES length patch possible), its remaining payload is packetized
     // straight into m_outBuf instead of being staged in m_pesData first.
     bool m_inplacePending;
+    bool m_midPesPCR;               // a PCR went in between the packets of the pending PES (insertHeldPCRIfDue)
     int m_pendingStartOffset;       // first TS packet of the pending PES in m_outBuf
     uint32_t m_pendingStartPktCnt;  // m_muxedPacketCnt at PES start, for the seek index
     uint32_t m_pendingTsPackets;    // TS packets emitted for the pending PES itself
