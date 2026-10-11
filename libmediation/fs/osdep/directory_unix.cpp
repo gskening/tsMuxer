@@ -9,6 +9,9 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <set>
+#include <utility>
+
 using namespace std;
 
 char getDirSeparator() { return '/'; }
@@ -53,6 +56,25 @@ bool createDir(const std::string& dirName, bool createParentDirs)
 
 bool deleteFile(const string& fileName) { return unlink(fileName.c_str()) == 0; }
 
+// What an entry of a directory listing is. A symbolic link reports itself as a link, and some file systems report
+// every entry as unknown, so both are asked about what they point at. Only a regular file and a directory counted
+// before, which made a font file or a font folder that is a link invisible, and a link inside a disc folder too.
+static bool isEntryOfKind(const string& fullName, const dirent* entry, const bool wantDir)
+{
+    if (entry->d_type == DT_REG)
+        return !wantDir;
+    if (entry->d_type == DT_DIR)
+        return wantDir;
+    if (entry->d_type != DT_LNK && entry->d_type != DT_UNKNOWN)
+        return false;
+    struct stat st
+    {
+    };
+    if (stat(fullName.c_str(), &st) != 0)
+        return false;  // a dangling link
+    return wantDir ? S_ISDIR(st.st_mode) : S_ISREG(st.st_mode);
+}
+
 bool findFiles(const string& path, const string& fileMask, vector<string>* fileList, bool savePaths)
 {
     dirent** namelist;
@@ -67,7 +89,7 @@ bool findFiles(const string& path, const string& fileMask, vector<string>* fileL
     {
         while (n--)
         {
-            if (namelist[n]->d_type == DT_REG)
+            if (isEntryOfKind(path + namelist[n]->d_name, namelist[n], false))
             {
                 string fileName(namelist[n]->d_name);
 
@@ -96,7 +118,7 @@ bool findDirs(const string& path, vector<string>* dirsList)
     {
         while (n--)
         {
-            if (namelist[n]->d_type == DT_DIR)
+            if (isEntryOfKind(path + namelist[n]->d_name, namelist[n], true))
             {
                 string dirName(namelist[n]->d_name);
 
@@ -112,9 +134,26 @@ bool findDirs(const string& path, vector<string>* dirsList)
     return true;
 }
 
+// Each directory is entered once, by its device and inode: a link to a directory above it would otherwise send the
+// search round in a circle now that links are followed.
+static void findFilesOnce(const string& path, const string& mask, vector<string>* const fileList,
+                          std::set<std::pair<dev_t, ino_t>>& visited)
+{
+    struct stat st
+    {
+    };
+    if (stat(path.c_str(), &st) != 0 || !visited.insert({st.st_dev, st.st_ino}).second)
+        return;
+    findFiles(path, mask, fileList, true);
+    vector<string> dirList;
+    findDirs(path, &dirList);
+    for (const auto& dir : dirList) findFilesOnce(dir, mask, fileList, visited);
+}
+
 bool findFilesRecursive(const string& path, const string& mask, vector<string>* const fileList)
 {
-    recurseDirectorySearch(findFiles, findDirs, path, mask, fileList);
+    std::set<std::pair<dev_t, ino_t>> visited;
+    findFilesOnce(path, mask, fileList, visited);
     return true;
 }
 
