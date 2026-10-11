@@ -102,6 +102,15 @@ class HEVCStreamReader final : public MPEGStreamReader
     MemoryBlock m_vpsBuffer;
     MemoryBlock m_spsBuffer;
     MemoryBlock m_ppsBuffer;
+    int m_damagedUnitWarnings = 0;   // damaged parameter sets passed through, warned once
+    int m_damagedSliceWarnings = 0;  // damaged slice headers, warned once
+    // The order of each picture of the GOP so far and of the GOP before, as an offset from its place in decode order.
+    std::vector<int> m_gopOrderOffsets;
+    std::vector<int> m_prevGopOrderOffsets;
+    int guessPicOrder(HevcUnit::NalType nalType);
+    void notePicOrder(HevcUnit::NalType nalType);
+    template <typename Unit>
+    void keepLastGoodUnit(Unit*& unit, MemoryBlock& lastGood, const char* name);
     bool m_firstFileFrame;
     int m_vpsCounter;
     int m_vpsSizeDiff;

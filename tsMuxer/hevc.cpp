@@ -299,6 +299,10 @@ int HevcVpsUnit::deserialize()
     {
         return NOT_ENOUGH_BUFFER;
     }
+    catch (BitStreamException&)
+    {
+        return UNIT_DAMAGED;  // the unit ends before its fields do: a damaged or cut unit, not missing data
+    }
 }
 
 bool HevcVpsUnit::setFPS(const double fps)
@@ -738,6 +742,10 @@ int HevcSpsUnit::deserialize()
     {
         return NOT_ENOUGH_BUFFER;
     }
+    catch (BitStreamException&)
+    {
+        return UNIT_DAMAGED;  // the unit ends before its fields do: a damaged or cut unit, not missing data
+    }
 }
 
 double HevcSpsUnit::getFPS() const
@@ -814,6 +822,10 @@ int HevcPpsUnit::deserialize()
     catch (VodCoreException&)
     {
         return NOT_ENOUGH_BUFFER;
+    }
+    catch (BitStreamException&)
+    {
+        return UNIT_DAMAGED;  // the unit ends before its fields do: a damaged or cut unit, not missing data
     }
 }
 
@@ -919,6 +931,8 @@ int HevcSliceHeader::deserialize(const HevcSpsUnit* sps, const HevcPpsUnit* pps)
     const int rez = HevcUnit::deserialize();
     if (rez)
         return rez;
+    if (!sps || !pps)
+        return UNIT_DAMAGED;  // no whole parameter set yet to read it with (the first one was damaged)
 
     try
     {
@@ -961,6 +975,10 @@ int HevcSliceHeader::deserialize(const HevcSpsUnit* sps, const HevcPpsUnit* pps)
     catch (VodCoreException&)
     {
         return NOT_ENOUGH_BUFFER;
+    }
+    catch (BitStreamException&)
+    {
+        return UNIT_DAMAGED;  // the unit ends before its fields do: a damaged or cut unit, not missing data
     }
 }
 

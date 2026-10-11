@@ -238,6 +238,34 @@ void HEVCStreamReader::readElParameterSet(const uint8_t* nal, const uint8_t* nex
 CheckStreamRez HEVCStreamReader::checkStream(uint8_t* buffer, const int len)
 {
     CheckStreamRez rez;
+    // The pictures counted here are read again from the start by the mux, so the counters go back to zero on every way
+    // out, not only at the end: an early return left them where the check stopped, and every picture of the mux came
+    // out that many frames late.
+    struct ResetCounters
+    {
+        HEVCStreamReader* r;
+        ~ResetCounters()
+        {
+            r->m_totalFrameNum = r->m_frameNum = r->m_fullPicOrder = 0;
+            r->m_curDts = r->m_curPts = 0;
+            r->m_picOrderStarted = false;
+        }
+    } resetCounters{this};
+    // A parameter set is read into a unit of its own and kept only when it is whole: a damaged one (see
+    // keepLastGoodUnit) is skipped here, and the one before it stays in use.
+    const auto readWhole = [](auto*& current, auto* fresh, const uint8_t* from, const uint8_t* to) -> int
+    {
+        fresh->decodeBuffer(from, to);
+        const int r = fresh->deserialize();
+        if (r != 0)
+        {
+            delete fresh;
+            return r;
+        }
+        delete current;
+        current = fresh;
+        return 0;
+    };
 
     uint8_t* end = buffer + len;
     for (uint8_t* nal = NALUnit::findNextNAL(buffer, end); nal < end - 4; nal = NALUnit::findNextNAL(nal, end))
@@ -252,10 +280,11 @@ CheckStreamRez HEVCStreamReader::checkStream(uint8_t* buffer, const int len)
         switch (nalType)
         {
         case HevcUnit::NalType::VPS:
-            if (!m_vps)
-                m_vps = new HevcVpsUnit();
-            m_vps->decodeBuffer(nal, nextNal);
-            if (m_vps->deserialize() != 0)
+        {
+            const int r = readWhole(m_vps, new HevcVpsUnit(), nal, nextNal);
+            if (r == UNIT_DAMAGED)
+                break;
+            if (r != 0)
                 return rez;
             m_spsPpsFound = true;
             if (m_vps->num_units_in_tick)
@@ -268,26 +297,27 @@ CheckStreamRez HEVCStreamReader::checkStream(uint8_t* buffer, const int len)
                     setFPS(fps);
             }
             break;
+        }
         case HevcUnit::NalType::SPS:
-            if (!m_sps)
-                m_sps = new HevcSpsUnit();
-            m_sps->decodeBuffer(nal, nextNal);
-            if (m_sps->deserialize() != 0)
+        {
+            const int r = readWhole(m_sps, new HevcSpsUnit(), nal, nextNal);
+            if (r == UNIT_DAMAGED)
+                break;
+            if (r != 0)
                 return rez;
             m_spsPpsFound = true;
-            {
-                const double fps = correctFps(getStreamFPS(m_sps));
-                if (fps > 0.0 && m_fps == 0.0)
-                    setFPS(fps);
-            }
+            const double fps = correctFps(getStreamFPS(m_sps));
+            if (fps > 0.0 && m_fps == 0.0)
+                setFPS(fps);
             break;
+        }
         case HevcUnit::NalType::PPS:
-            if (!m_pps)
-                m_pps = new HevcPpsUnit();
-            m_pps->decodeBuffer(nal, nextNal);
-            if (m_pps->deserialize() != 0)
+        {
+            const int r = readWhole(m_pps, new HevcPpsUnit(), nal, nextNal);
+            if (r != 0 && r != UNIT_DAMAGED)
                 return rez;
             break;
+        }
         case HevcUnit::NalType::SEI_PREFIX:
             // Same guard as intDecodeNAL: one malformed SEI must not take down the probe. This
             // path runs first and is the one an "analyze" hits, so leaving it unguarded meant a
@@ -327,15 +357,16 @@ CheckStreamRez HEVCStreamReader::checkStream(uint8_t* buffer, const int len)
         if (isSlice(nalType) && (nal[2] & 0x80))
         {
             m_slice->decodeBuffer(nal, FFMIN(nal + MAX_SLICE_HEADER, nextNal));
-            if (m_slice->deserialize(m_sps, m_pps))
+            const int r = m_slice->deserialize(m_sps, m_pps);
+            if (r == UNIT_DAMAGED)
+                m_fullPicOrder = m_frameNum;  // the check only counts pictures; its times are reset
+            else if (r)
                 return rez;  // not enough buffer or error
-            m_fullPicOrder = toFullPicOrder(m_slice, m_sps->log2_max_pic_order_cnt_lsb);
+            else
+                m_fullPicOrder = toFullPicOrder(m_slice, m_sps->log2_max_pic_order_cnt_lsb);
             incTimings();
         }
     }
-    m_totalFrameNum = m_frameNum = m_fullPicOrder = 0;
-    m_curDts = m_curPts = 0;
-    m_picOrderStarted = false;  // the check above counted pictures that are read again from the start
 
     // Set HDR10 flag if PQ detected
     if (m_vps && m_sps && m_pps && m_sps->vps_id == m_vps->vps_id && m_pps->sps_id == m_sps->sps_id)
@@ -1031,6 +1062,37 @@ int HEVCStreamReader::toFullPicOrder(const HevcSliceHeader* slice, const unsigne
     return slice->pic_order_cnt_lsb + m_picOrderMsb + m_picOrderBase;
 }
 
+int HEVCStreamReader::guessPicOrder(const HevcUnit::NalType nalType)
+{
+    // A picture whose header is cut has no order to read. An IDR picture has none to read anyway: it is 0. Any other
+    // picture takes the order of the picture at the same place in the GOP before, as an encoder repeats one GOP
+    // pattern; the next time in sequence is only the last resort, as with B pictures it is the time of another picture.
+    if (nalType == HevcUnit::NalType::IDR_W_RADL || nalType == HevcUnit::NalType::IDR_N_LP)
+    {
+        m_slice->pic_order_cnt_lsb = 0;
+        return toFullPicOrder(m_slice, m_sps ? m_sps->log2_max_pic_order_cnt_lsb : 0);
+    }
+    // An IRAP picture starts a GOP, so the GOP before it is the one still open.
+    const bool irap = nalType >= HevcUnit::NalType::BLA_W_LP && nalType <= HevcUnit::NalType::RSV_IRAP_VCL23;
+    const std::vector<int>& before = irap ? m_gopOrderOffsets : m_prevGopOrderOffsets;
+    const size_t place = irap ? 0 : m_gopOrderOffsets.size();
+    if (place < before.size())
+        return m_frameNum + before[place];
+    return m_frameNum;
+}
+
+void HEVCStreamReader::notePicOrder(const HevcUnit::NalType nalType)
+{
+    static constexpr size_t MAX_GOP_PICTURES = 512;  // a stream with one IRAP only does not grow it without end
+    if (nalType >= HevcUnit::NalType::BLA_W_LP && nalType <= HevcUnit::NalType::RSV_IRAP_VCL23)
+    {
+        m_prevGopOrderOffsets.swap(m_gopOrderOffsets);
+        m_gopOrderOffsets.clear();
+    }
+    if (m_gopOrderOffsets.size() < MAX_GOP_PICTURES)
+        m_gopOrderOffsets.push_back(m_fullPicOrder - m_frameNum);
+}
+
 // dataEnd is where the start code of the next NAL begins, so the NAL is everything before it, less the zero bytes a
 // stream may put in front of a start code. It used to step back one byte first, as if dataEnd were past the next
 // start code, and so every stored parameter set and SEI lost its last byte: the VPS, SPS and PPS written at the
@@ -1042,6 +1104,29 @@ void HEVCStreamReader::storeBuffer(MemoryBlock& dst, const uint8_t* data, const 
     {
         dst.resize(static_cast<int>(dataEnd - data));
         memcpy(dst.data(), data, dataEnd - data);
+    }
+}
+
+// A parameter set that ends before its fields do (a recording that lost part of a packet) ended the whole job with
+// "Bitstream exception", and nothing was written. Broadcasts and discs repeat their parameter sets, so the damaged one
+// is passed through as it came and the last good one stays in use; before the first good one, the pictures wait for
+// it as they always did.
+template <typename Unit>
+void HEVCStreamReader::keepLastGoodUnit(Unit*& unit, MemoryBlock& lastGood, const char* name)
+{
+    if (m_damagedUnitWarnings++ == 0)
+        LTRACE(LT_WARN, 2,
+               "Warning: HEVC: a damaged " << name << " at picture " << m_totalFrameNum
+                                           << " is passed through as it is. The last good one stays in use.");
+    if (lastGood.size() > 0)
+    {
+        unit->decodeBuffer(lastGood.data(), lastGood.data() + lastGood.size());
+        unit->deserialize();
+    }
+    else
+    {
+        delete unit;
+        unit = nullptr;
     }
 }
 
@@ -1084,18 +1169,41 @@ int HEVCStreamReader::intDecodeNAL(uint8_t* buff)
                     curPos += hdrAdded;
                     nextNal += hdrAdded;
                 }
-                m_slice->decodeBuffer(curPos, FFMIN(curPos + MAX_SLICE_HEADER, nextNal));
+                // nextNal points past the next start code: the header is read up to that start code, as the check
+                // does, or a header cut short read the start code's zero bytes as its own fields and was taken as whole.
+                const uint8_t* sliceEnd = nextNal;
+                if (nextNal < m_bufEnd)
+                    sliceEnd = nextNal[-4] == 0 ? nextNal - 4 : nextNal - 3;
+                m_slice->decodeBuffer(curPos, FFMIN(curPos + MAX_SLICE_HEADER, sliceEnd));
                 rez = m_slice->deserialize(m_sps, m_pps);
-                if (rez)
-                    return rez;  // not enough buffer or error
-                if (nalType >= HevcUnit::NalType::BLA_W_LP)
-                    m_lastIFrame = true;
-                // B is 0, P is 1, I is 2, so the lowest value seen is the most permissive and
-                // is exactly what pic_type has to declare in a generated delimiter.
-                if (m_slice->slice_type <= 2 &&
-                    (m_auMinSliceType < 0 || static_cast<int>(m_slice->slice_type) < m_auMinSliceType))
-                    m_auMinSliceType = static_cast<int>(m_slice->slice_type);
-                m_fullPicOrder = toFullPicOrder(m_slice, m_sps->log2_max_pic_order_cnt_lsb);
+                // A slice header that ends before its fields do (a recording that lost part of a packet) ended
+                // the whole job with "Bitstream exception", and nothing was written. The picture is kept, as it
+                // came; its own order cannot be read, so guessPicOrder gives it one.
+                if (rez == UNIT_DAMAGED)
+                {
+                    if (m_damagedSliceWarnings++ == 0)
+                        LTRACE(LT_WARN, 2,
+                               "Warning: HEVC: the header of picture "
+                                   << m_totalFrameNum << " is damaged. The picture "
+                                   << "is kept, with the time of the picture at its place in the GOP before.");
+                    if (nalType >= HevcUnit::NalType::BLA_W_LP)
+                        m_lastIFrame = true;
+                    m_fullPicOrder = guessPicOrder(nalType);
+                }
+                else
+                {
+                    if (rez)
+                        return rez;  // not enough buffer or error
+                    if (nalType >= HevcUnit::NalType::BLA_W_LP)
+                        m_lastIFrame = true;
+                    // B is 0, P is 1, I is 2, so the lowest value seen is the most permissive and
+                    // is exactly what pic_type has to declare in a generated delimiter.
+                    if (m_slice->slice_type <= 2 &&
+                        (m_auMinSliceType < 0 || static_cast<int>(m_slice->slice_type) < m_auMinSliceType))
+                        m_auMinSliceType = static_cast<int>(m_slice->slice_type);
+                    m_fullPicOrder = toFullPicOrder(m_slice, m_sps->log2_max_pic_order_cnt_lsb);
+                }
+                notePicOrder(nalType);
             }
             sliceFound = true;
         }
@@ -1117,6 +1225,11 @@ int HEVCStreamReader::intDecodeNAL(uint8_t* buff)
                     m_vps = new HevcVpsUnit();
                 m_vps->decodeBuffer(curPos, nextNalWithStartCode);
                 rez = m_vps->deserialize();
+                if (rez == UNIT_DAMAGED)
+                {
+                    keepLastGoodUnit(m_vps, m_vpsBuffer, "VPS");
+                    break;
+                }
                 if (rez)
                     return rez;
                 m_spsPpsFound = true;
@@ -1134,6 +1247,11 @@ int HEVCStreamReader::intDecodeNAL(uint8_t* buff)
                     m_sps = new HevcSpsUnit();
                 m_sps->decodeBuffer(curPos, nextNalWithStartCode);
                 rez = m_sps->deserialize();
+                if (rez == UNIT_DAMAGED)
+                {
+                    keepLastGoodUnit(m_sps, m_spsBuffer, "SPS");
+                    break;
+                }
                 if (rez)
                     return rez;
                 m_spsPpsFound = true;
@@ -1154,6 +1272,11 @@ int HEVCStreamReader::intDecodeNAL(uint8_t* buff)
                     m_pps = new HevcPpsUnit();
                 m_pps->decodeBuffer(curPos, nextNalWithStartCode);
                 rez = m_pps->deserialize();
+                if (rez == UNIT_DAMAGED)
+                {
+                    keepLastGoodUnit(m_pps, m_ppsBuffer, "PPS");
+                    break;
+                }
                 if (rez)
                     return rez;
                 m_spsPpsFound = true;

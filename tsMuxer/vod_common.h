@@ -78,6 +78,8 @@ static constexpr int CANT_FIND_VIDEO_DECODER = -8;
 static constexpr int INVALID_TS_FRAME_SYNC_CODE = -9;
 static constexpr int NOT_ENOUGH_BUFFER = -10;
 static constexpr int INVALID_BITSTREAM_SYNTAX = -11;
+// A unit (a parameter set, a slice header) that ends before its fields do: damaged or cut, not waiting for more data
+static constexpr int UNIT_DAMAGED = -12;
 static constexpr int MAX_ERROR = -100;
 
 bool isFillerNullPacket(uint8_t* curBuf);
