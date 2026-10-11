@@ -1488,6 +1488,9 @@ int MovDemuxer::mov_read_ctts(MOVAtom atom)
 // 528 and 544 at 16000 for 29.97 or 3753 and 3754 at 90 kHz for 23.976, and only the average gives the rate. An
 // average within 0.1 % of a standard rate is that rate: a few samples one tick off, as timestamps rounded to the time
 // scale leave them, must not turn 59.94 into 59.9412, which a disc cannot carry. 0 when the table is empty.
+// The NEAREST standard rate is taken. The first one within 0.1 % used to win, and 24 lies exactly 0.1 % above 23.976
+// (30 above 29.97, and so on), so a true 24 fps track came out as 23.976 or 24 by the rounding of the average alone:
+// 0.1 % slower, 3.6 s an hour behind the sound, at the usual time scales 12288 and 90000.
 static double fpsFromStts(const std::vector<MOVStts>& stts, const int64_t timeScale)
 {
     uint64_t total = 0;
@@ -1510,10 +1513,11 @@ static double fpsFromStts(const std::vector<MOVStts>& stts, const int64_t timeSc
     static constexpr double standardRates[] = {
         24000.0 / 1001, 24.0, 25.0,  30000.0 / 1001,  30.0, 48000.0 / 1001, 48.0, 50.0,
         60000.0 / 1001, 60.0, 100.0, 120000.0 / 1001, 120.0};
+    double nearest = standardRates[0];
     for (const double rate : standardRates)
-        if (std::fabs(average - rate) <= rate * 0.001)
-            return rate;
-    return average;
+        if (std::fabs(average - rate) < std::fabs(average - nearest))
+            nearest = rate;
+    return std::fabs(average - nearest) <= nearest * 0.001 ? nearest : average;
 }
 
 int MovDemuxer::mov_read_stts(MOVAtom atom)
