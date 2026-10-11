@@ -5291,6 +5291,26 @@ void TsMuxerWindow::startMuxing()
             return;
         }
     }
+    // TS and Matroska were not checked: tsMuxeR chooses what to write by the output's extension, and takes any other
+    // extension for a folder to demux into. "My.Movie.2020" in TS or MKV mode came out as a folder of demuxed tracks
+    // and the window reported success.
+    else if (ui->radioButtonTS->isChecked() || ui->radioButtonMKV->isChecked())
+    {
+        const QString suffix = QFileInfo(ui->outFileName->text()).suffix().toUpper();
+        const bool ok = ui->radioButtonTS->isChecked() ? suffix == "TS" : (suffix == "MKV" || suffix == "MKA");
+        if (!ok)
+        {
+            QMessageBox msgBox(this);
+            msgBox.setWindowTitle(tr("Invalid file name"));
+            msgBox.setText(tr("The output file \"%1\" has invalid extension. Please, change file extension to \"%2\"")
+                               .arg(ui->outFileName->text())
+                               .arg(ui->radioButtonTS->isChecked() ? ".ts" : ".mkv"));
+            msgBox.setIcon(QMessageBox::Warning);
+            msgBox.setStandardButtons(QMessageBox::Ok);
+            msgBox.exec();
+            return;
+        }
+    }
     else if (ui->radioButtonBluRayISO->isChecked())
     {
         QFileInfo fi(ui->outFileName->text());
