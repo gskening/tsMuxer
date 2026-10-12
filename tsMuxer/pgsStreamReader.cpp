@@ -407,6 +407,34 @@ int64_t getTimeValueNano(const int64_t pts)
     return ptsToInternalClock(pts);
 }
 
+// The next "PG" marker at or after `from` that begins a plausible segment: a known segment type, and a length that
+// ends at another "PG" or where the buffered data ends. Nothing when the buffer holds none.
+uint8_t* PGSStreamReader::findSupMarker(uint8_t* from) const
+{
+    for (uint8_t* p = from; p + 13 <= m_bufEnd; ++p)
+    {
+        if (p[0] != 'P' || p[1] != 'G')
+            continue;
+        const uint8_t type = p[10];
+        if (type != PALETTE_DEF_SEGMENT && type != OBJECT_DEF_SEGMENT && type != PCS_DEF_SEGMENT &&
+            type != WINDOWS_DEF_SEGMENT && type != 0x80)
+            continue;
+        const uint8_t* next = p + 13 + AV_RB16(p + 11);
+        if (next + 2 > m_bufEnd || (next[0] == 'P' && next[1] == 'G'))
+            return p;
+    }
+    return nullptr;
+}
+
+void PGSStreamReader::warnSupDamage()
+{
+    if (m_supDamagedSegments++ == 0)
+        LTRACE(LT_WARN, 2,
+               "Warning: PGS stream (track " << m_streamIndex
+                                              << "): a damaged segment in the .sup file was skipped. Reading goes on "
+                                                 "at the next segment.");
+}
+
 int PGSStreamReader::readPacket(AVPacket& avPacket)
 {
     avPacket.size = 0;
@@ -508,9 +536,32 @@ int PGSStreamReader::readPacket(AVPacket& avPacket)
         memmove(m_tmpBuffer.data(), m_curPos, m_tmpBufferLen);
         return NEED_MORE_DATA;
     }
-    const bool pgStartCode = m_curPos[0] == 'P' && m_curPos[1] == 'G';
+    bool pgStartCode = m_curPos[0] == 'P' && m_curPos[1] == 'G';
+    // .sup input: a segment is followed by the next "PG" marker. When it is not, the bytes before the next marker are
+    // skipped, with a warning.
+    if (m_containerType == ContainerType::ctSUP && m_supExpectMarker && !pgStartCode)
+    {
+        uint8_t* next = findSupMarker(m_curPos);
+        if (next == nullptr)
+        {
+            // keep the last bytes, a marker may begin in them
+            if (m_bufEnd - m_curPos > 12)
+            {
+                m_processedSize += m_bufEnd - 12 - m_curPos;
+                m_curPos = m_bufEnd - 12;
+            }
+            m_tmpBufferLen = m_bufEnd - m_curPos;
+            memmove(m_tmpBuffer.data(), m_curPos, m_tmpBufferLen);
+            return NEED_MORE_DATA;
+        }
+        warnSupDamage();
+        m_processedSize += next - m_curPos;
+        m_curPos = next;
+        pgStartCode = true;
+    }
     if (pgStartCode)
     {
+        m_supExpectMarker = false;
         if (m_bufEnd - m_curPos < 10)
         {
             m_tmpBufferLen = m_bufEnd - m_curPos;
@@ -593,6 +644,26 @@ int PGSStreamReader::readPacket(AVPacket& avPacket)
         m_tmpBufferLen = m_bufEnd - m_curPos;
         memmove(m_tmpBuffer.data(), m_curPos, m_tmpBufferLen);
         return NEED_MORE_DATA;
+    }
+    if (m_containerType == ContainerType::ctSUP)
+    {
+        // A segment that lost bytes claims more than it holds: the next marker comes before the end its length gives.
+        // It is dropped and reading goes on at that marker. Before, the reader went on at the claimed end, in the
+        // middle of the next segment, and every subtitle after it was lost without a word.
+        uint8_t* claimedEnd = m_curPos + 3 + segment_len;
+        if (claimedEnd + 2 <= m_bufEnd && !(claimedEnd[0] == 'P' && claimedEnd[1] == 'G'))
+        {
+            uint8_t* next = findSupMarker(m_curPos + 3);
+            if (next != nullptr && next < claimedEnd)
+            {
+                warnSupDamage();
+                m_processedSize += next - m_curPos;
+                m_curPos = next;
+                m_supExpectMarker = false;
+                return readPacket(avPacket);
+            }
+        }
+        m_supExpectMarker = true;
     }
     m_curPos += 3;
     BitStreamReader bitReader{};

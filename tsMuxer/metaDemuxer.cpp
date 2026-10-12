@@ -964,6 +964,9 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
         pgStream->ssPGOffset = ssPGOffset;
         pgStream->leftEyeSubStreamIdx = leftEyeSubStreamIdx;
         pgStream->rightEyeSubStreamIdx = rightEyeSubStreamIdx;
+        // A .sup file (N43): its segments carry the "PG" marker that the reader checks and finds its way back on.
+        if (strEndWith(tmpname, ".sup"))
+            pgStream->setSrcContainerType(AbstractStreamReader::ContainerType::ctSUP);
     }
     //
 
