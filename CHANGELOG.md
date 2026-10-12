@@ -1,6 +1,6 @@
 ## tsMuxeR 2.19.1
 
-Thirty-eight changes, nearly all of them fixes, grouped below by area. Many are for damaged sources: a recording that lost part of a packet now gives a full output with a warning, where it used to stop the job or move every time after the damage. The others are for Matroska, MP4, subtitles, discs and the window.
+Thirty-nine changes, nearly all of them fixes, grouped below by area. Many are for damaged sources: a recording that lost part of a packet now gives a full output with a warning, where it used to stop the job or move every time after the damage. The others are for Matroska, MP4, subtitles, discs and the window.
 
 **The Intel macOS build is back since 2.19.0, and Mac users are still asked to test.** It has been built and checked, but it has not been run on an Intel Mac, because no Mac is available here. If you have one, please try it and report whether it works. On any Mac, please also try changing the subtitle font and colour in the window, and report what happens.
 
@@ -95,6 +95,8 @@ Thirty-eight changes, nearly all of them fixes, grouped below by area. Many are 
 * **A video track that is never clicked follows the window's SEI and SPS choice.** In a file with two video tracks, the one not clicked was muxed with insertSEI and contSPS on, even when they were switched off.
 
 * **Choosing a folder output before adding a file no longer sends it to the program folder.** With the output set to the input file's folder, choosing Blu-ray folder, AVCHD folder or Demux first wrote the disc into tsMuxeR's own folder.
+
+* **The BDMV folder to ISO tab finds a disc whatever the case of its names.** On Linux and macOS a disc copy named in other letter cases, such as bdmv or 00001.M2TS, was reported as having no BDMV folder, or as not being 3D. The command line never minded the case.
 
 * **With bibliographic codes chosen, the language box shows them too.** A track tagged "cze" showed "ces (Czech)". It shows "cze (Czech)" now. The code written was always the track's own.
 
