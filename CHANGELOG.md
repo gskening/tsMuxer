@@ -1,104 +1,104 @@
 ## tsMuxeR 2.19.1
 
-Thirty-nine changes, nearly all of them fixes, grouped below by area. Many are for damaged sources: a recording that lost part of a packet now gives a full output with a warning, where it used to stop the job or move every time after the damage. The others are for Matroska, MP4, subtitles, discs and the window.
+Thirty-nine changes, nearly all of them fixes, grouped below by area. Several are for damaged sources, such as a recording that lost part of a packet. A damaged H.264, HEVC or VVC header, or a damaged segment in a .sup file, could stop the job, shift the timing or lose subtitles. Now the mux goes on with a warning. Most of the others are for Matroska, MP4, subtitles, discs and the window.
 
-**The Intel macOS build is back since 2.19.0, and Mac users are still asked to test.** It has been built and checked, but it has not been run on an Intel Mac, because no Mac is available here. If you have one, please try it and report whether it works. On any Mac, please also try changing the subtitle font and colour in the window, and report what happens.
+**The Intel macOS build has been back since 2.19.0, and Mac users are still asked to test.** It has been built and checked, but it has not been run on an Intel Mac, because no Mac is available here. If you have an Intel Mac, please try it and report whether it works. On any Mac, please also try changing the subtitle font and colour in the window, and report what happens.
 
 **If something goes wrong, please report it** with the bug report form on GitHub, and include as much as you can: the version line and the full log, the meta file (the text in the Meta file box of the window), what you expected and what happened instead, and the player you used. A short sample of the source helps most.
 
 ### Worth acting on
 
-* **A 24 or 30 fps MP4 was muxed as 23.976 or 29.97.** When the video carries no frame rate of its own, the rate comes from the MP4, and a true 24 fps track came out as 23.976: every picture 0.1 per cent too long, 3.6 seconds an hour behind the sound. Mux such files again.
+* **A 24 or 30 fps MP4 could be muxed as 23.976 or 29.97.** When the video carries no frame rate of its own, the rate comes from the MP4, and a true 24 fps track could come out as 23.976: every picture 0.1 per cent too long, 3.6 seconds an hour behind the sound. Mux such files again.
 
-* **TrueHD longer than 2 hours 31 minutes at 192 kHz lost the rest of its audio.** The times went wrong from there, and the mux still reported success. At 96 kHz the limit was 5 hours 2 minutes. Mux such files again.
+* **TrueHD longer than 2 hours 31 minutes at 192 kHz lost the rest of its audio, except when merge-ac3-track= or merge-ac3-file= added its core.** The times went wrong from there, and the mux still reported success. At 96 kHz the limit was 5 hours 2 minutes. Mux such files again.
 
-* **level=4.1, timeshift=500ns and --cut-start=1.5s did not mean what they say.** level= dropped its decimal and wrote level 4.0, "ns" was read as seconds, and a fraction in --cut-start or --cut-end was cut off. Files made with such values should be made again.
+* **level=4.1 on an H.264 track, timeshift=500ns and --cut-start=1.5s did not mean what they say.** level= on an H.264 track dropped its decimal and wrote level 4.0, "ns" was read as seconds, and a fraction in --cut-start or --cut-end was cut off. Files made with such values should be made again.
 
-* **HE-AAC from Matroska or MP4 was labelled AAC Main in a transport stream.** The frames are AAC LC with the HE extension, and a player that trusts the label may refuse them. Mux such files again.
+* **HE-AAC from Matroska or MP4 could be labelled AAC Main in a transport stream, a Matroska file or a demuxed .aac file.** The frames are AAC LC with the HE extension, and a player that trusts the label may refuse them. Make such files again.
 
-* **On Linux and macOS, a mux onto a full drive reported success.** A TS or Matroska file was cut short under "Mux successful", and an ISO never finished. The mux now stops with "Error writing file ...: No space left on device", as it always did on Windows. A file made on a drive that ran full is shorter than its source: mux it again.
+* **On Linux and macOS, a full drive did not stop the mux.** A TS or Matroska file was cut short under "Mux successful", and an ISO never finished. The mux now stops with "Error writing file ...: No space left on device (28)". On Windows, a full drive always stopped the mux with an error. A file made on a drive that ran full is shorter than its source: mux it again.
 
 ### Damaged sources
 
-* **A damaged HEVC or H.264 header no longer ends the mux.** A parameter set or a picture header that ends before its fields do stopped the job with "Bitstream exception" or "Not enough buffer", and nothing was written. A damaged parameter set is now passed through and the last good one stays in use; a picture with a damaged header is kept and given its time. There is one warning of each kind.
+* **A damaged HEVC or H.264 header no longer ends the mux.** In HEVC, a parameter set or picture header cut short could stop the job with "Bitstream exception", and in H.264 a parameter set cut short with "Not enough buffer". The output then ended before the damage, or there was none at all. A damaged parameter set is now passed through and the last good one stays in use. A picture with a damaged header is kept, and its time is worked out from the pictures before it. There is one warning of each kind.
 
-* **A damaged picture header no longer moves every time after it.** An H.264 header cut short was read into the next unit and taken as whole, and a picture that lost its first-slice flag was joined to the picture before. In both cases every time after it was shifted without a warning. On the streams measured, every time now equals the undamaged stream's.
+* **A damaged H.264 or HEVC picture header could shift the timing of other pictures.** An H.264 header cut short was read on into the next unit and treated as complete, and a picture that lost its first-slice flag was joined to the picture before or given its presentation time. In both cases decoding times were shifted without a warning. On the streams measured, every time now equals the undamaged stream's.
 
-* **A damaged segment in a .sup file no longer loses every subtitle after it.** The reader now finds its way back at the next segment and warns. Before, 8 of 40 subtitles came out, or the track was refused for a transport stream or a disc.
+* **A damaged segment in a .sup file no longer loses every subtitle after it.** The reader now finds its way back at the next segment and warns. Before, Matroska output lost the rest of the track, and a mux to a transport stream or a disc could stop with an error.
 
-* **An MP4 box that holds less than its contents no longer ends the reading.** Everything after the box was skipped, so the file could not be read at all. Reading now goes on where the box says it ends, with a warning, and a track whose neighbour lost its tables this way is still read.
+* **An MP4 box whose size is too small for its contents ends the reading in fewer cases.** Everything after the box was skipped, later tracks included, so tracks were lost or the file could not be read at all. Reading now goes on where the box says it ends, and the first such box is named in a warning. A track whose neighbour lost its tables this way is still read, as long as the file lists the size of each sample of that track and is not fragmented.
 
-* **A mistyped SRT timing line no longer puts its block inside the subtitle before it.** A timing line with a wrong arrow or a colon for the comma made the broken block, its counter and its text part of the subtitle before it. The broken block is now skipped and named in a warning.
+* **After a blank line, a mistyped SRT timing line that still starts with a time in the form 00:00:05,000 or 00:00:05:000 no longer puts its block inside the subtitle before it.** A timing line with a wrong arrow, or a colon in place of the comma, made the whole broken block part of the subtitle before it, without a warning. The broken block is now skipped and named in a warning.
 
 ### Matroska output
 
 * **DD+ 7.1 said 6 channels.** The track header counted only the 5.1 part. It says 8 now.
 
-* **MPEG-1 video, MLP and DTS Express were labelled as their bigger relatives.** They were written as MPEG-2, TrueHD and DTS, so a player that trusts the label decoded the wrong thing. Each has its own label now, and DTS Express frames are marked so a player can seek in them. Opus tracks now also carry the encoder delay (CodecDelay), which the Matroska rules ask for.
+* **MPEG-1 video, MLP and DTS Express had the wrong codec label.** They were written as MPEG-2, TrueHD and DTS, so a player that trusts the label may pick the wrong decoder. Each has its own label now, and DTS Express frames are marked so a player can seek in them. Opus tracks now also carry the encoder delay (CodecDelay), which the Matroska rules ask for.
 
 * **A file without video lost a delay given to its audio.** The file started at its first audio frame, so a timeshift on the audio was dropped. A file without video now keeps the source's times.
 
 * **A short video track held a whole Matroska mux in memory.** A second video track of a few pictures, a still for instance, held back the start of the file until the end of the mux. The wait now ends after ten seconds of data. One measured mux peaks at 156 MB instead of 359 MB, with the same output.
 
-### Matroska and MP4 input
+### Input files
 
-* **Matroska tracks written with header stripping were read as empty.** Some writers remove the bytes every frame starts with and name them once in the track header. Those tracks came out empty. They are read now, the same as when every frame is stored whole.
+* **Matroska tracks written with header stripping were read as empty.** Some programs remove the bytes that every frame starts with and store them once in the track header. Those tracks came out empty. They are read now, the same as when every frame is stored whole.
 
 * **An MP4 with its index after the media was read three times.** A 3.4 GB file was read as 10.2 GB to mux, and in full just to list it. It is read once now, with the same output.
 
-* **.mpeg and .m2t files were not read.** A .mpeg file was taken for a bare stream and a .m2t file gave "Can't detect stream type". They are read as the program stream and transport stream they are.
+* **.mpeg and .m2t files were not read.** A .mpeg file was taken for a bare stream and a .m2t file gave "Can't detect stream type". A .mpeg file is now read as a program stream, and a .m2t file as a transport stream.
 
 ### Video
 
-* **VVC pictures are found and timed by the VVC rules.** The type of each unit was read the HEVC way, from the wrong byte, so pictures were split or merged: 11 of 15 test streams came out with the wrong number of pictures, and a stream with two layers with none. An IDR picture with its own order value was shown late, with every picture after it. VVC streams now have the right pictures, each at its own time, and damage is handled as for HEVC.
+* **VVC pictures are found and timed by the VVC rules.** The type of each unit was read the HEVC way, from the wrong byte, so pictures were split or merged. Of 15 test streams, 11 came out with the wrong number of pictures. In one of them, a stream with two layers, no picture was found at all. An IDR picture with its own order value was shown late, and the pictures after it were shown at the wrong times. On all 15 test streams, every picture of the base layer now comes out once, at its own time. Damage is now handled as for HEVC. On the two test streams that carry their frame rate in the SPS, fps= now writes the new rate there.
 
-* **H.264 with a large SEI unit no longer stops the mux.** With insertSEI, forceSEI or delPulldown, a unit with more than 4 KB of messages stopped tsMuxeR without a word or with "Not enough buffer". Streams that worked before give the same output.
+* **H.264 with a large SEI unit no longer stops the mux.** With insertSEI, forceSEI or delPulldown, an SEI unit that held a picture timing or buffering period message next to more than 3 KB of other messages could end the mux with "Not enough buffer". Above 4 KB, tsMuxeR could stop with no message at all. Streams that worked before give the same output.
 
 ### Subtitles
 
-* **A subtitle too large for the picture is drawn faster.** The search for the largest size that fits measured the same sizes again and again. 150 such subtitles take 59 seconds instead of 72, with the same pictures.
+* **A subtitle too large for the picture is drawn faster.** The search for the largest size that fits measured the same sizes again and again. One measured mux with 150 very long subtitles takes 59 seconds instead of 72, with the same pictures.
 
-* **An SRT counter with a byte order mark is no longer named as skipped text.** Two SRT files joined byte for byte leave one in front of a counter. The subtitle was always kept; now the warning is gone too.
+* **After a blank line, an SRT counter with a byte order mark is no longer put inside the subtitle before it.** Two SRT files joined byte for byte can leave a byte order mark in front of a counter. Such a counter became part of the subtitle before it, without a warning, and its own subtitle was kept. Now it is passed over like any other counter.
 
 * **The fade times are given in seconds in the help.** The help said milliseconds, so fadein-time=500 as documented gave a fade of 500 seconds. The window always wrote seconds.
 
-### Blu-ray, transport streams and 3D
+### Blu-ray and 3D
 
-* **The clip information named the wrong clock PID.** Without --no-pcr-on-video-pid, which the window always writes, the clock is on the video PID, but the clip information said 4097. It names the real one now.
+* **The clip information named the wrong clock PID.** Without --no-pcr-on-video-pid the clock is on the video PID, but the clip information said 4097. It names the real one now. The window puts that option into every meta it makes, so discs muxed in the window were not affected, unless the meta was opened from a file or changed in the Meta file box and did not have the option.
 
-* **A playlist or clip file that cannot be written stops the job by name.** A read-only file in the way, for instance, gave "Mux successful" over a disc without it, or with an old copy.
+* **A playlist or clip file that cannot be written now stops the job, and the error names the file.** A read-only file in the way, for instance, gave "Mux successful" over a disc without it, or with an old copy.
 
-* **A 3D playlist with a text subtitle wrote outside its stream list.** The stereo details of a text subtitle were written into the entry before the first one. They are kept only for an entry that has a place.
+* **Reading a 3D playlist with a text subtitle could put 3D details in the wrong place.** Each entry of the 3D table was looked up as if it were a PG stream, so a text subtitle in front of a PG stream gave its details to that PG stream, and the details of a text subtitle could be written into the memory just before the list of streams. Each entry is now looked up by its place among the PG and text subtitles, and the left-eye and right-eye streams of a stereo subtitle are kept only for a PG stream. tsMuxeR never writes a text subtitle into a playlist, so reading a playlist made by tsMuxeR was not affected. A disc that tsMuxeR made from a 3D playlist with a text subtitle in front of a PG stream could carry the wrong 3D details for the PG streams after it.
 
-* **A 3D movie split into parts kept 3D in its first part only, after BDMV folder to ISO.** With --3d-single-copy the .ssif file was rebuilt for the first part alone, so the later parts played in 2D, without a warning. Every part gets its .ssif now.
+* **A 3D movie split into parts kept 3D in its first part only, after BDMV folder to ISO with --3d-single-copy.** From a folder without .ssif files, such as a Blu-ray folder written by tsMuxeR, --3d-single-copy makes them. It made one for the first part alone, so the later parts got none and could not play in 3D, and there was no warning. The window ticks its 3D box, which sets this option, by itself for a 3D folder. Every part gets its .ssif now.
 
-* **Every Blu-ray warning that applies is shown.** One warning hid the others, so a disc with AAC was never told about a TrueHD track without its core. MPEG audio, Opus, VVC and AV1, which no Blu-ray player plays, are warned about too. The disc itself is unchanged.
+* **Every Blu-ray warning that applies is shown.** One warning hid the others, so with an AAC track there was no warning for a TrueHD track without its core. MPEG audio, Opus, VVC and AV1, which are not Blu-ray formats, are warned about too. The disc itself is unchanged.
 
 ### Meta file and command line
 
-* **A misspelt MUXOPT option is no longer lost without a word.** An unknown option was ignored, so a typo changed nothing and nobody was told. It is named in a warning now. A MUXOPT line with spaces or a tab in front lost every option on it; it is read as written now.
+* **A misspelt MUXOPT option is no longer lost without a word.** An unknown option was ignored, so a typo changed nothing and nobody was told. It is named in a warning now. A MUXOPT line with only spaces in front lost every option on it without a word, and one with only tabs in front stopped the job with an error such as "Invalid codec format". Both are read as written now.
 
-* **A file named without a folder keeps its name when demuxed.** A meta line naming a file in the current folder demuxed to a file called only ".wav". The name is kept now.
+* **A file named without a folder keeps its name when demuxed.** A file named without a folder in a meta line, such as "tone.wav", was demuxed to a file called only ".wav". The name is kept now.
 
 ### Linux, macOS and Windows
 
-* **On Linux and macOS a font or a disc file that is a link is found.** A font file or folder that is a link was not found, and the subtitle stopped with "Can't find a font file". With --bdmv-to-iso, a stream file that is a link was left out of the image without a word.
+* **On Linux and macOS, a font or a disc file behind a symbolic link is found.** Inside a font folder, a symbolic link to a font file or to a folder of fonts was not followed, so a subtitle in such a font stopped the mux with "Can't find a font file". With --bdmv-to-iso, a stream file that is a link was left out of the image without a word.
 
-* **On Windows, output to a 4 KB-sector drive through another drive letter works.** A drive letter made with subst gave no sector size, and Windows refused the file with "The parameter is incorrect".
+* **On Windows, output to a 4 KB-sector drive through another drive letter works.** A drive letter made with subst gave no sector size, so Windows refused a TS file written there with "The parameter is incorrect".
 
 ### Window
 
-* **The window says why a file was not added.** When tsMuxeR could not read a file, it was simply not added. A box now names the file and gives tsMuxeR's own words.
+* **The window says why tsMuxeR refused a file, and goes on with the files chosen after it.** When tsMuxeR's check of a file ended with an error, the file was not added, the window did not say why, and the files chosen after it at the same time were not added either. A box now names the file and gives tsMuxeR's own words, and the window goes on with the files after it. A file that tsMuxeR cannot identify, or one that is in the list already, no longer stops the files after it either.
 
 * **A TS or MKV mux no longer becomes a demux over a missing extension.** A name typed without .ts or .mkv came out as a folder of demuxed tracks, and the window reported success. TS output now needs .ts and MKV output .mkv or .mka.
 
 * **A video track that is never clicked follows the window's SEI and SPS choice.** In a file with two video tracks, the one not clicked was muxed with insertSEI and contSPS on, even when they were switched off.
 
-* **Choosing a folder output before adding a file no longer sends it to the program folder.** With the output set to the input file's folder, choosing Blu-ray folder, AVCHD folder or Demux first wrote the disc into tsMuxeR's own folder.
+* **Choosing an output before adding a file no longer keeps the name the window filled in.** With the output set to the input file's folder, choosing Blu-ray folder, AVCHD folder or Demux before adding a file set the output folder to the current folder, on Windows usually tsMuxeR's own folder, and adding a file did not change it. Choosing Matroska first kept "default.mkv" in the same way. Both now take the name from the added file. A name made from an added file could also show the folder separator twice in front of the name; it shows one now.
 
-* **The BDMV folder to ISO tab finds a disc whatever the case of its names.** On Linux and macOS a disc copy named in other letter cases, such as bdmv or 00001.M2TS, was reported as having no BDMV folder, or as not being 3D. The command line never minded the case.
+* **The BDMV folder to ISO tab finds a disc whatever the case of its names.** On a drive that tells upper and lower case apart, as is usual on Linux, a disc copy named in other letter cases, such as bdmv or 00001.M2TS, was reported as having no BDMV folder, or as not being 3D. The command line option --bdmv-to-iso already ignored the case.
 
-* **With bibliographic codes chosen, the language box shows them too.** A track tagged "cze" showed "ces (Czech)". It shows "cze (Czech)" now. The code written was always the track's own.
+* **With bibliographic codes chosen, the language box shows them too.** A track tagged "cze" showed "ces (Czech)". It shows "cze (Czech)" now. Only the text in the box changes. The code written is the same as before.
 
 * **The new window texts are translated** into every language of the window.
 
