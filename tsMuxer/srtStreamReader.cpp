@@ -596,7 +596,11 @@ uint8_t* SRTStreamReader::renderNextMessage(uint32_t& renderedLen)
 void SRTStreamReader::skipNonCueLine()
 {
     const std::string& line = m_sourceText.front();
-    if (!std::all_of(line.begin(), line.end(), [](const char c) { return (c >= '0' && c <= '9') || c == ' '; }))
+    // A counter that carries a byte order mark (two files joined byte for byte) is still only a counter: it was named
+    // as skipped text although its subtitle was kept.
+    const size_t from = line.size() >= 3 && line.compare(0, 3, "\xEF\xBB\xBF") == 0 ? 3 : 0;
+    if (!std::all_of(line.begin() + static_cast<std::ptrdiff_t>(from), line.end(),
+                     [](const char c) { return (c >= '0' && c <= '9') || c == ' '; }))
     {
         const int64_t lineNumber = m_linesRead - static_cast<int64_t>(m_sourceText.size()) + 1;
         if (m_skippedLines == 0)
