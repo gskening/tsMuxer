@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Reading a pressed 3D Blu-ray's own description of how its two video views are laid out.
@@ -49,9 +50,10 @@ struct BdSsifGroup
 // those clips, which is what it did on the first disc it met.
 bool bdReadClipChunkSizes(const std::string& clpiPath, std::vector<int64_t>& sizes);
 
-// The base and dependent clip ids from one playlist, e.g. "00800" and "01064". Both empty when the
-// playlist describes no stereoscopic sub path, which is every 2D playlist.
-bool bdReadPlaylistStereoPair(const std::string& mplsPath, std::string& baseClipId, std::string& depClipId);
+// The base and dependent clip ids of every play item of one playlist that has a dependent view, in play item order,
+// e.g. {"00800", "01064"}. False, with none, when the playlist describes no stereoscopic sub path, which is every 2D
+// playlist. A playlist of several clips (a 3D mux split into parts) has a pair for each.
+bool bdReadPlaylistStereoPairs(const std::string& mplsPath, std::vector<std::pair<std::string, std::string>>& pairs);
 
 // Whether one .m2ts is half of a 3D pair, and where the whole picture is.
 //

@@ -139,10 +139,12 @@ bool bdReadClipChunkSizes(const std::string& clpiPath, std::vector<int64_t>& siz
     return true;
 }
 
-bool bdReadPlaylistStereoPair(const std::string& mplsPath, std::string& baseClipId, std::string& depClipId)
+// Only the first play item's pair was read. A playlist of several clips, as a 3D mux split into parts writes, has a
+// pair for each clip, and every pair after the first was unknown here: folder to ISO rebuilt the .ssif of part 1 only,
+// so the later parts played in 2D, without a warning.
+bool bdReadPlaylistStereoPairs(const std::string& mplsPath, std::vector<std::pair<std::string, std::string>>& pairs)
 {
-    baseClipId.clear();
-    depClipId.clear();
+    pairs.clear();
     std::vector<uint8_t> d;
     if (!readWholeFile(mplsPath, d) || d.size() < 20 || memcmp(d.data(), "MPLS", 4) != 0)
         return false;
@@ -151,15 +153,25 @@ bool bdReadPlaylistStereoPair(const std::string& mplsPath, std::string& baseClip
     if (!be32(d, 8, plAt) || !be32(d, 16, extAt))
         return false;
 
-    // The base view is the first play item's clip. Play list: length, reserved, play item count,
-    // sub path count, then the items, each a two byte length followed by a five character clip id
-    // and a four character codec id.
-    if (plAt + 12 > d.size())
+    // Each play item names its base view clip. Play list: length, reserved, play item count, sub path count, then
+    // the items, each a two byte length followed by a five character clip id and a four character codec id. The
+    // items are read as far as they are whole; the pairs of those come back.
+    uint16_t itemCount = 0;
+    if (!be16(d, plAt + 6, itemCount) || itemCount == 0)
         return false;
-    const size_t firstItem = plAt + 10;
-    if (firstItem + 11 > d.size())
+    std::vector<std::string> items;
+    size_t item = plAt + 10;
+    for (uint16_t i = 0; i < itemCount; ++i)
+    {
+        uint16_t itemLen = 0;
+        if (!be16(d, item, itemLen) || itemLen < 9 || item + 2 + itemLen > d.size())
+            break;
+        items.emplace_back(reinterpret_cast<const char*>(d.data() + item + 2), 5);
+        item += 2 + itemLen;
+    }
+    if (items.empty())
         return false;
-    baseClipId.assign(reinterpret_cast<const char*>(d.data() + firstItem + 2), 5);
+    std::vector<bool> paired(items.size(), false);
 
     // The dependent view is named in extension data id 2/2, the sub path entries extension, which a
     // 2D player never reads. Inside it: length, count, then sub paths of a four byte length, a
@@ -167,16 +179,10 @@ bool bdReadPlaylistStereoPair(const std::string& mplsPath, std::string& baseClip
     size_t at = 0;
     uint32_t len = 0;
     if (!findExtensionEntry(d, extAt, 2, 2, at, len) || len < 6)
-    {
-        baseClipId.clear();
         return false;
-    }
     uint16_t subPaths = 0;
     if (!be16(d, at + 4, subPaths) || subPaths == 0 || subPaths > 64)
-    {
-        baseClipId.clear();
         return false;
-    }
     size_t o = at + 6;
     const size_t blockEnd = at + len;
     for (uint16_t i = 0; i < subPaths && o + 10 <= blockEnd; ++i)
@@ -189,11 +195,10 @@ bool bdReadPlaylistStereoPair(const std::string& mplsPath, std::string& baseClip
         // Type 8 is the stereoscopic dependent view. Nothing else here is of interest.
         if (subPathType == 8)
         {
-            // The first play item's dependent view is the sub play item that names play item 0 in
-            // its sync_PlayItem_id, which need not be the first sub play item (T2-F1). Each sub
-            // play item is a two byte length, then the clip id (5), codec id (4), flags (4), STC id
-            // (1), in and out time (4 + 4) and sync_PlayItem_id (2). Extra clip entries after that
-            // belong to other angles; the first clip goes with the play item's own clip.
+            // A play item's dependent view is the sub play item that names it in its sync_PlayItem_id, in
+            // whatever order the sub play items come. Each sub play item is a two byte length, then the clip id
+            // (5), codec id (4), flags (4), STC id (1), in and out time (4 + 4) and sync_PlayItem_id (2). Extra
+            // clip entries after that belong to other angles; the first clip goes with the play item's own clip.
             const size_t spEnd = o + 4 + spLen;
             size_t p = o + 10;
             for (unsigned k = 0; k < itemCount && p + 2 <= spEnd; ++k)
@@ -201,18 +206,23 @@ bool bdReadPlaylistStereoPair(const std::string& mplsPath, std::string& baseClip
                 uint16_t spiLen = 0, syncPlayItem = 0;
                 if (!be16(d, p, spiLen) || spiLen < 24 || p + 2 + spiLen > spEnd || !be16(d, p + 24, syncPlayItem))
                     break;
-                if (syncPlayItem == 0)
+                if (syncPlayItem < items.size() && !paired[syncPlayItem])
                 {
-                    depClipId.assign(reinterpret_cast<const char*>(d.data() + p + 2), 5);
-                    return true;
+                    paired[syncPlayItem] = true;
+                    pairs.emplace_back(items[syncPlayItem],
+                                       std::string(reinterpret_cast<const char*>(d.data() + p + 2), 5));
                 }
                 p += 2 + spiLen;
             }
         }
         o += 4 + spLen;
     }
-    baseClipId.clear();
-    return false;
+    // In play item order, which is the order of the parts.
+    std::sort(
+        pairs.begin(), pairs.end(),
+        [&items](const std::pair<std::string, std::string>& a, const std::pair<std::string, std::string>& b)
+        { return std::find(items.begin(), items.end(), a.first) < std::find(items.begin(), items.end(), b.first); });
+    return !pairs.empty();
 }
 
 namespace
@@ -277,17 +287,20 @@ std::string bdFindSsifForM2ts(const std::string& m2tsPath, bool& isBaseView)
 
     for (const auto& mpls : playlists)
     {
-        std::string baseId, depId;
-        if (!bdReadPlaylistStereoPair(mpls, baseId, depId))
+        std::vector<std::pair<std::string, std::string>> pairs;
+        if (!bdReadPlaylistStereoPairs(mpls, pairs))
             continue;  // an ordinary 2D playlist, which is most of them
-        if (myId != baseId && myId != depId)
-            continue;
-        // The interleaved file is named after the BASE clip, whichever half was asked about.
-        const std::string rel = "BDMV/STREAM/SSIF/" + baseId + ".ssif";
-        if (getFileSize(root + "/" + rel) == 0)
-            continue;  // the pairing is stated but the file is not there
-        isBaseView = myId == baseId;
-        return rel;
+        for (const auto& [baseId, depId] : pairs)
+        {
+            if (myId != baseId && myId != depId)
+                continue;
+            // The interleaved file is named after the BASE clip, whichever half was asked about.
+            const std::string rel = "BDMV/STREAM/SSIF/" + baseId + ".ssif";
+            if (getFileSize(root + "/" + rel) == 0)
+                continue;  // the pairing is stated but the file is not there
+            isBaseView = myId == baseId;
+            return rel;
+        }
     }
     return std::string();
 }
@@ -327,65 +340,69 @@ std::vector<BdSsifGroup> bdFindSsifGroups(const std::string& srcRoot)
     std::vector<std::string> seen;
     for (const auto& [id, mplsPath] : mplsByName)
     {
-        std::string baseId, depId;
-        if (!bdReadPlaylistStereoPair(mplsPath, baseId, depId))
+        std::vector<std::pair<std::string, std::string>> pairs;
+        if (!bdReadPlaylistStereoPairs(mplsPath, pairs))
             continue;  // an ordinary 2D playlist, which is most of them
-        if (std::find(seen.begin(), seen.end(), baseId) != seen.end())
-            continue;  // two playlists can point at one pair; the group is wanted once
-        // The interleaved file is named after the BASE clip. Both clips and both clip info files have
-        // to be present: without them there is nothing to rebuild from, and the files are copied as
-        // found. The .ssif itself may be missing, as when only the .m2ts were copied: it holds no data
-        // of its own, so it can be made again from the two clips.
-        const auto ssif = ssifById.find(baseId);
-        const auto base = m2tsById.find(baseId);
-        const auto dep = m2tsById.find(depId);
-        const auto baseClpi = clpiById.find(baseId);
-        const auto depClpi = clpiById.find(depId);
-        if (base == m2tsById.end() || dep == m2tsById.end() || baseClpi == clpiById.end() || depClpi == clpiById.end())
-            continue;
+        for (const auto& [baseId, depId] : pairs)
+        {
+            if (std::find(seen.begin(), seen.end(), baseId) != seen.end())
+                continue;  // two playlists, or two play items, can point at one pair; the group is wanted once
+            // The interleaved file is named after the BASE clip. Both clips and both clip info files have
+            // to be present: without them there is nothing to rebuild from, and the files are copied as
+            // found. The .ssif itself may be missing, as when only the .m2ts were copied: it holds no data
+            // of its own, so it can be made again from the two clips.
+            const auto ssif = ssifById.find(baseId);
+            const auto base = m2tsById.find(baseId);
+            const auto dep = m2tsById.find(depId);
+            const auto baseClpi = clpiById.find(baseId);
+            const auto depClpi = clpiById.find(depId);
+            if (base == m2tsById.end() || dep == m2tsById.end() || baseClpi == clpiById.end() ||
+                depClpi == clpiById.end())
+                continue;
 
-        BdSsifGroup g;
-        g.baseRel = base->second;
-        g.depRel = dep->second;
-        g.ssifMissing = ssif == ssifById.end();
-        if (g.ssifMissing)
-        {
-            // Where the disc keeps it: STREAM/SSIF beside the base clip, with the base clip's own letter case.
-            const size_t slash = g.baseRel.find_last_of('/');
-            const std::string dir = slash == std::string::npos ? std::string() : g.baseRel.substr(0, slash + 1);
-            const bool upperExt = g.baseRel.size() >= 5 && g.baseRel.compare(g.baseRel.size() - 5, 5, ".M2TS") == 0;
-            g.ssifRel = dir + "SSIF/" + baseId + (upperExt ? ".SSIF" : ".ssif");
-        }
-        else
-            g.ssifRel = ssif->second;
-        // A clip with ONE chunk has a table holding a single start point, so it yields no
-        // differences and a legitimately empty list. Ask whether the TABLE was there.
-        if (!bdReadClipChunkSizes(baseClpi->second, g.baseChunkBytes) ||
-            !bdReadClipChunkSizes(depClpi->second, g.depChunkBytes) ||
-            !appendTailChunk(g.baseChunkBytes, static_cast<int64_t>(getFileSize(root + "/" + g.baseRel))) ||
-            !appendTailChunk(g.depChunkBytes, static_cast<int64_t>(getFileSize(root + "/" + g.depRel))))
-        {
+            BdSsifGroup g;
+            g.baseRel = base->second;
+            g.depRel = dep->second;
+            g.ssifMissing = ssif == ssifById.end();
             if (g.ssifMissing)
+            {
+                // Where the disc keeps it: STREAM/SSIF beside the base clip, with the base clip's own letter case.
+                const size_t slash = g.baseRel.find_last_of('/');
+                const std::string dir = slash == std::string::npos ? std::string() : g.baseRel.substr(0, slash + 1);
+                const bool upperExt = g.baseRel.size() >= 5 && g.baseRel.compare(g.baseRel.size() - 5, 5, ".M2TS") == 0;
+                g.ssifRel = dir + "SSIF/" + baseId + (upperExt ? ".SSIF" : ".ssif");
+            }
+            else
+                g.ssifRel = ssif->second;
+            // A clip with ONE chunk has a table holding a single start point, so it yields no
+            // differences and a legitimately empty list. Ask whether the TABLE was there.
+            if (!bdReadClipChunkSizes(baseClpi->second, g.baseChunkBytes) ||
+                !bdReadClipChunkSizes(depClpi->second, g.depChunkBytes) ||
+                !appendTailChunk(g.baseChunkBytes, static_cast<int64_t>(getFileSize(root + "/" + g.baseRel))) ||
+                !appendTailChunk(g.depChunkBytes, static_cast<int64_t>(getFileSize(root + "/" + g.depRel))))
+            {
+                if (g.ssifMissing)
+                    LTRACE(LT_WARN, 2,
+                           "Warning: 3D: " << g.ssifRel << " is missing, and the clip info of " << g.baseRel << " and "
+                                           << g.depRel
+                                           << " does not describe how to rebuild it, so that title plays in 2D");
+                continue;
+            }
+            // The two views interleave one chunk for one. Unequal counts mean this is not the layout
+            // this understands, and guessing at it would produce a file of exactly the right size with
+            // the halves scrambled, which is the worst way to be wrong.
+            if (g.baseChunkBytes.size() != g.depChunkBytes.size())
+            {
                 LTRACE(LT_WARN, 2,
-                       "Warning: 3D: " << g.ssifRel << " is missing, and the clip info of " << g.baseRel << " and "
-                                       << g.depRel
-                                       << " does not describe how to rebuild it, so that title plays in 2D");
-            continue;
+                       "3D: " << g.ssifRel << " has " << g.baseChunkBytes.size() << " base chunks against "
+                              << g.depChunkBytes.size() << " dependent, so it is "
+                              << (g.ssifMissing ? "not rebuilt, and that title plays in 2D"
+                                                : "copied as found rather than rebuilt"));
+                continue;
+            }
+            seen.push_back(baseId);
+            groups.push_back(std::move(g));
         }
-        // The two views interleave one chunk for one. Unequal counts mean this is not the layout
-        // this understands, and guessing at it would produce a file of exactly the right size with
-        // the halves scrambled, which is the worst way to be wrong.
-        if (g.baseChunkBytes.size() != g.depChunkBytes.size())
-        {
-            LTRACE(LT_WARN, 2,
-                   "3D: " << g.ssifRel << " has " << g.baseChunkBytes.size() << " base chunks against "
-                          << g.depChunkBytes.size() << " dependent, so it is "
-                          << (g.ssifMissing ? "not rebuilt, and that title plays in 2D"
-                                            : "copied as found rather than rebuilt"));
-            continue;
-        }
-        seen.push_back(baseId);
-        groups.push_back(std::move(g));
     }
     return groups;
 }
