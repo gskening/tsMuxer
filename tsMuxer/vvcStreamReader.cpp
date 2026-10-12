@@ -144,7 +144,7 @@ CheckStreamRez VVCStreamReader::checkStream(uint8_t* buffer, const int len)
         // A picture begins at its picture header: a picture header unit before its slices, or the header carried in
         // its slice (the first bit of the slice header), which is then the picture's only slice. Only the second kind
         // used to be counted.
-        // As in the mux, the first slice of an access unit with no picture header at all begins its picture (N44).
+        // As in the mux, the first slice of an access unit with no picture header at all begins its picture.
         if (!isSlice(nalType) && !isSuffix(nalType) && nalType != VvcUnit::NalType::PH)
             auOpen = true;
         else if (isSlice(nalType) && ((nal[2] & 0x80) || phPending || auOpen))
@@ -519,9 +519,9 @@ int VVCStreamReader::intDecodeNAL(uint8_t* buff)
                 m_slice->decodeBuffer(curPos, FFMIN(curPos + MAX_SLICE_HEADER, sliceEnd));
                 rez = m_slice->deserialize(m_sps, m_pps);
                 const bool irap = nalType >= VvcUnit::NalType::IDR_W_RADL && nalType <= VvcUnit::NalType::CRA;
-                // A damaged picture header (M20, as for HEVC) keeps its picture, as it came, and gives it an order. That
-                // includes the first slice of an access unit with no picture header at all, neither its own unit nor
-                // in the slice: the flag that said it carries one was lost with the rest of its header (N44).
+                // A damaged picture header, as for HEVC, keeps its picture, as it came, and gives it an order.
+                // That includes the first slice of an access unit with no picture header at all, neither its own
+                // unit nor in the slice: the flag that said it carries one was lost with the rest of its header.
                 if (!phInSlice && !phInAu)
                     rez = UNIT_DAMAGED;
                 if (rez == UNIT_DAMAGED || (rez == 0 && !m_slice->picture_header_in_slice && m_phDamaged))

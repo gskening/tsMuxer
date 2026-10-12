@@ -156,7 +156,7 @@ class PGSStreamReader final : public AbstractStreamReader
 
     CompositionState composition_state;
 
-    // .sup input (N43): every segment there begins with the "PG" marker, and that marker is how the reader finds its
+    // .sup input: every segment there begins with the "PG" marker, and that marker is how the reader finds its
     // way back after a damaged segment.
     bool m_supExpectMarker = false;
     int m_supDamagedSegments = 0;

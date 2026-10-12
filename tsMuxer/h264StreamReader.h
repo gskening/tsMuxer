@@ -155,7 +155,7 @@ class H264StreamReader final : public MPEGStreamReader
     // constructor's false. Without it the first SPS was compared against the defaults and
     // reported as a change.
     bool m_spsFlagsKnown;
-    // M20: a unit that ends before its fields do (a damaged or cut recording) is skipped or guessed, with one warning
+    // A unit that ends before its fields do (a damaged or cut recording) is skipped or guessed, with one warning
     // of each kind.
     int m_damagedUnitWarnings = 0;
     int m_damagedSliceWarnings = 0;

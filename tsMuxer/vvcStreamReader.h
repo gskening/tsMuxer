@@ -74,7 +74,7 @@ class VVCStreamReader final : public MPEGStreamReader
     // picture header, and whether that unit was damaged.
     uint16_t m_phPocLsb = 0;
     bool m_phDamaged = false;
-    // M20, as for HEVC: damaged parameter sets and picture headers, warned once of each kind.
+    // As for HEVC: damaged parameter sets and picture headers, warned once of each kind.
     int m_damagedUnitWarnings = 0;
     int m_damagedSliceWarnings = 0;
     std::vector<int> m_gopOrderOffsets;

@@ -355,7 +355,7 @@ CheckStreamRez HEVCStreamReader::checkStream(uint8_t* buffer, const int len)
         }
 
         // check Frame Depth on first slices. As in the mux, the first slice of an access unit begins its picture even
-        // when it does not say so (N44).
+        // when it does not say so.
         if (!isSlice(nalType) && !isSuffix(nalType))
             auOpen = true;
         else if (isSlice(nalType) && ((nal[2] & 0x80) || auOpen))
@@ -1163,7 +1163,7 @@ int HEVCStreamReader::intDecodeNAL(uint8_t* buff)
         {
             // The first slice of an access unit must say so (first_slice_segment_in_pic_flag). One that does not, after
             // the delimiter or SEI that began the access unit, has lost the flag with the rest of its header, or the
-            // slice before it was lost (N44). It used to be taken for a further slice of the picture before: the two
+            // slice before it was lost. It used to be taken for a further slice of the picture before: the two
             // pictures were written as one, and every decoding time after them moved. It begins its picture now.
             const bool firstSliceFlag = curPos[2] & 0x80;
             if (firstSliceFlag || !sliceFound)
@@ -1185,7 +1185,8 @@ int HEVCStreamReader::intDecodeNAL(uint8_t* buff)
                     nextNal += hdrAdded;
                 }
                 // nextNal points past the next start code: the header is read up to that start code, as the check
-                // does, or a header cut short read the start code's zero bytes as its own fields and was taken as whole.
+                // does, or a header cut short read the start code's zero bytes as its own fields and was taken
+                // as whole.
                 const uint8_t* sliceEnd = nextNal;
                 if (nextNal < m_bufEnd)
                     sliceEnd = nextNal[-4] == 0 ? nextNal - 4 : nextNal - 3;

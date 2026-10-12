@@ -1,12 +1,13 @@
 #include "lang_codes.h"
 
-QVariant LangCodesModel::QtvLangCode::toVariant(int role,
-                                                const std::function<QString(const QString&)>& shownCode) const
+QVariant LangCodesModel::QtvLangCode::toVariant(int role, const std::function<QString(const QString&)>& shownCode) const
 {
     switch (role)
     {
     case Qt::DisplayRole:
-        return QString("%1 (%2)").arg(shownCode ? shownCode(QString::fromLatin1(code)) : QString::fromLatin1(code)).arg(lang);
+        return QString("%1 (%2)")
+            .arg(shownCode ? shownCode(QString::fromLatin1(code)) : QString::fromLatin1(code))
+            .arg(lang);
     case Qt::UserRole:
         return code;
     default:

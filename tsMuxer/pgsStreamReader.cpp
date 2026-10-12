@@ -431,8 +431,8 @@ void PGSStreamReader::warnSupDamage()
     if (m_supDamagedSegments++ == 0)
         LTRACE(LT_WARN, 2,
                "Warning: PGS stream (track " << m_streamIndex
-                                              << "): a damaged segment in the .sup file was skipped. Reading goes on "
-                                                 "at the next segment.");
+                                             << "): a damaged segment in the .sup file was skipped. Reading goes on "
+                                                "at the next segment.");
 }
 
 int PGSStreamReader::readPacket(AVPacket& avPacket)
