@@ -663,7 +663,7 @@ struct MPLSParser
     MPLSStreamInfo& getMainStream();
     MPLSStreamInfo& getMVCDependStream();
     static int calcPlayItemID(const MPLSStreamInfo& streamInfo, uint32_t pts);
-    [[nodiscard]] int pgIndexToFullIndex(int value) const;
+    [[nodiscard]] int pgTextIndexToFullIndex(int value) const;
     void parseSubPathEntryExtension(uint8_t* data, uint32_t dataLen);
     void chooseRepresentativeStnTable();
     void dropContradictingPlayItems();

@@ -1788,18 +1788,15 @@ MPLSStreamInfo& MPLSParser::getMainStream()
     THROW(ERR_COMMON, "Can't find stream index. One audio or video stream is needed.")
 }
 
-int MPLSParser::pgIndexToFullIndex(const int value) const
+// The place in m_streamInfo of entry `value` of the PG and text subtitle list: STN_table() stores the primary video
+// entries, then the primary audio entries, then this list in its own order. -1 when the list has no such entry.
+int MPLSParser::pgTextIndexToFullIndex(const int value) const
 {
-    int cnt = 0;
-    for (size_t i = 0; i < m_streamInfo.size(); ++i)
-    {
-        if (m_streamInfo[i].stream_coding_type == StreamType::SUB_PGS)
-        {
-            if (cnt++ == value)
-                return static_cast<int>(i);
-        }
-    }
-    return -1;
+    if (value < 0 || value >= number_of_PG_textST_stream_entries)
+        return -1;
+    const size_t idx = static_cast<size_t>(number_of_primary_video_stream_entries) +
+                       number_of_primary_audio_stream_entries + static_cast<size_t>(value);
+    return idx < m_streamInfo.size() ? static_cast<int>(idx) : -1;
 }
 
 MPLSStreamInfo MPLSParser::getStreamByPID(const int pid) const
@@ -2063,19 +2060,23 @@ void MPLSParser::parseStnTableSS(uint8_t* data, uint32_t dataLength)
         for (int i = 0; i < number_of_PG_textST_stream_entries; ++i)
         {
             auto PG_textST_offset_sequence_id = reader.getBits<uint8_t>(8);
-            int idx = pgIndexToFullIndex(i);
+            // Entry i here describes entry i of the PG and text subtitle list of the STN table, which STN_table()
+            // stored right after the video and audio entries, PG and text subtitles together in their own order.
+            // It used to be looked up as the i-th PG stream, so a text subtitle in front of a PG stream gave its
+            // values to that PG stream, and each PG stream after it received the values of the entry before.
+            const int idx = pgTextIndexToFullIndex(i);
             if (idx != -1)
                 m_streamInfo[idx].offsetId = PG_textST_offset_sequence_id;
 
-            // An entry that is not a PG stream (a text subtitle shares this list) has no place in m_streamInfo, and
-            // the eye entries below were written to the element before the first one. They are still read, so
-            // that everything after them stays in step, and kept only when the entry has a place.
+            // The stereo details belong to a PG stream only. They are always read, so that everything after them
+            // stays in step, and kept only for an entry that is a PG stream.
+            const int pgIdx = (idx != -1 && m_streamInfo[idx].stream_coding_type == StreamType::SUB_PGS) ? idx : -1;
             reader.skipBits(5);  // reserved, dialog_region_offset_valid
             const bool isSSPG = reader.getBit();
             bool isTopAS = reader.getBit();
             bool isBottomAS = reader.getBit();
-            if (idx != -1)
-                m_streamInfo[idx].isSSPG = isSSPG;
+            if (pgIdx != -1)
+                m_streamInfo[pgIdx].isSSPG = isSSPG;
             if (isSSPG)
             {
                 auto leftEye = std::make_unique<MPLSStreamInfo>();
@@ -2084,11 +2085,11 @@ void MPLSParser::parseStnTableSS(uint8_t* data, uint32_t dataLength)
                 rightEye->parseStreamEntry(reader);  // right eye
                 reader.skipBits(8);                  // reserved
                 const auto ssOffsetId = reader.getBits<uint8_t>(8);
-                if (idx != -1)
+                if (pgIdx != -1)
                 {
-                    m_streamInfo[idx].leftEye = leftEye.release();
-                    m_streamInfo[idx].rightEye = rightEye.release();
-                    m_streamInfo[idx].SS_PG_offset_sequence_id = ssOffsetId;
+                    m_streamInfo[pgIdx].leftEye = leftEye.release();
+                    m_streamInfo[pgIdx].rightEye = rightEye.release();
+                    m_streamInfo[pgIdx].SS_PG_offset_sequence_id = ssOffsetId;
                 }
             }
             if (isTopAS)
