@@ -274,10 +274,9 @@ static bool realVolumeOfFolder(const wchar_t* folder, wchar_t* volume, const DWO
 }
 
 // The volume of a path and the size of that volume's sectors as the file system uses them: the logical size, 512 on
-// most drives, 4,096 on a drive with native 4 KB sectors. The volume was found by the path as written, which named
-// the wrong one when the output folder was reached through a junction or a symbolic link: a 4 KB drive behind a link
-// on a 512-byte drive still refused the write. The folder that receives the file is asked first, and the path as
-// written is the fallback when that fails.
+// most drives, 4,096 on a drive with native 4 KB sectors. The volume was found from the path as written, and for a
+// drive letter made with subst that gave no sector size, so Windows refused the write. The folder that receives the
+// file is asked first, and the path as written is the fallback when that fails.
 uint32_t File::volumeSectorSize(const char* fName)
 {
     const auto name = toWide(fName);

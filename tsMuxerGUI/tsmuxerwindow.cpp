@@ -472,8 +472,9 @@ struct Bdmv3dScan
 };
 
 // A name inside a folder whatever its case. Discs and copies of them write BDMV, PLAYLIST, STREAM and the clip names
-// in either case, and on Linux and macOS a scan for the exact case found nothing in an upper-case copy: the 3D box was
-// greyed and forced off, and every .ssif was reported missing. The command line compares without case already.
+// in either case, and on a drive that tells upper and lower case apart, as is usual on Linux, a scan for the exact
+// case found nothing in a copy named the other way: the 3D box was greyed and forced off, and every .ssif was reported
+// missing. --bdmv-to-iso on the command line compares without case already.
 static QString pathNoCase(const QString& dir, const QString& name)
 {
     const QDir d(dir);
