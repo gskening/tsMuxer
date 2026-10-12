@@ -39,10 +39,13 @@ struct VvcUnit
         VPS = 14,
         SPS = 15,
         PPS = 16,
+        PREFIX_APS = 17,
         SUFFIX_APS = 18,
+        PH = 19,
         AUD = 20,
         EOS = 21,
         EOB = 22,
+        PREFIX_SEI = 23,
         SUFFIX_SEI = 24,
         FD = 25,
         RSV_NVCL_27 = 27,
@@ -158,9 +161,16 @@ struct VvcSliceHeader : VvcUnit
 {
     VvcSliceHeader();
     int deserialize(const VvcSpsUnit* sps, const VvcPpsUnit* pps);
+    // A picture header unit (PH_NUT): read into this object, so that the slices after it, which do not carry the
+    // picture header, take their picture order count from it.
+    int deserializePictureHeader(const VvcSpsUnit* sps);
     [[nodiscard]] bool isIDR() const;
 
     uint16_t pic_order_cnt_lsb;
+    bool picture_header_in_slice = false;
+
+   private:
+    int readPictureHeaderStart(const VvcSpsUnit* sps);
 };
 
 std::vector<std::vector<uint8_t>> vvc_extract_priv_data(const uint8_t* buff, int size, uint8_t* nal_size);

@@ -49,7 +49,36 @@ void VVCStreamReader::applyDiscoveryData(const StreamDiscoveryData& data)
 CheckStreamRez VVCStreamReader::checkStream(uint8_t* buffer, const int len)
 {
     CheckStreamRez rez;
+    // The pictures counted here are read again from the start by the mux, so the counters go back to zero on every way
+    // out, not only at the end, as in the HEVC reader.
+    struct ResetCounters
+    {
+        VVCStreamReader* r;
+        ~ResetCounters()
+        {
+            r->m_totalFrameNum = r->m_frameNum = r->m_fullPicOrder = 0;
+            r->m_curDts = r->m_curPts = 0;
+        }
+    } resetCounters{this};
+    // A parameter set is read into a unit of its own and kept only when it is whole; a damaged one is skipped and the
+    // one before it stays in use.
+    const auto readWhole = [](auto*& current, auto* fresh, const uint8_t* from, const uint8_t* to) -> int
+    {
+        fresh->decodeBuffer(from, to);
+        const int r = fresh->deserialize();
+        if (r != 0)
+        {
+            delete fresh;
+            return r;
+        }
+        delete current;
+        current = fresh;
+        return 0;
+    };
     uint8_t* end = buffer + len;
+    bool phPending = false;  // a picture header unit was read: the next slice begins its picture
+    bool phDamaged = false;
+    bool auOpen = true;  // a delimiter, SEI or parameter set came after the last slice
 
     for (uint8_t* nal = NALUnit::findNextNAL(buffer, end); nal < end - 4; nal = NALUnit::findNextNAL(nal, end))
     {
@@ -59,17 +88,22 @@ CheckStreamRez VVCStreamReader::checkStream(uint8_t* buffer, const int len)
         uint8_t* nextNal = NALUnit::findNALWithStartCode(nal, end, true);
         if (!m_eof && nextNal == end)
             break;
+        if ((nal[0] & 0x3f) != 0)
+            continue;  // a unit of a layer above the base layer: the base layer is the one read and timed
 
         switch (nalType)
         {
         case VvcUnit::NalType::VPS:
-            m_vps->decodeBuffer(nal, nextNal);
-            if (m_vps->deserialize())
+        {
+            const int r = readWhole(m_vps, new VvcVpsUnit(), nal, nextNal);
+            if (r == UNIT_DAMAGED)
+                break;
+            if (r != 0)
                 return rez;
             m_spsPpsFound = true;
             if (m_vps->num_units_in_tick)
             {
-                // Lightweight FPS extraction for probing only — the full
+                // Lightweight FPS extraction for probing only. The full
                 // updateFPS() (with logging and 25fps fallback) runs later
                 // during actual muxing in intDecodeNAL().
                 const double fps = correctFps(m_vps->getFPS());
@@ -77,42 +111,66 @@ CheckStreamRez VVCStreamReader::checkStream(uint8_t* buffer, const int len)
                     setFPS(fps);
             }
             break;
+        }
         case VvcUnit::NalType::SPS:
-            if (!m_sps)
-                m_sps = new VvcSpsUnit();
-            m_sps->decodeBuffer(nal, nextNal);
-            if (m_sps->deserialize() != 0)
+        {
+            const int r = readWhole(m_sps, new VvcSpsUnit(), nal, nextNal);
+            if (r == UNIT_DAMAGED)
+                break;
+            if (r != 0)
                 return rez;
             m_spsPpsFound = true;
-            {
-                const double fps = correctFps(getStreamFPS(m_sps));
-                if (fps > 0.0 && m_fps == 0.0)
-                    setFPS(fps);
-            }
+            const double fps = correctFps(getStreamFPS(m_sps));
+            if (fps > 0.0 && m_fps == 0.0)
+                setFPS(fps);
             break;
+        }
         case VvcUnit::NalType::PPS:
-            if (!m_pps)
-                m_pps = new VvcPpsUnit();
-            m_pps->decodeBuffer(nal, nextNal);
-            if (m_pps->deserialize() != 0)
+        {
+            const int r = readWhole(m_pps, new VvcPpsUnit(), nal, nextNal);
+            if (r != 0 && r != UNIT_DAMAGED)
                 return rez;
+            break;
+        }
+        case VvcUnit::NalType::PH:
+            m_slice->decodeBuffer(nal, FFMIN(nal + MAX_SLICE_HEADER, nextNal));
+            phDamaged = m_slice->deserializePictureHeader(m_sps) != 0;
+            phPending = true;
             break;
         default:
             break;
         }
 
-        // check Frame Depth on first slices
-        if (isSlice(nalType) && (nal[2] & 0x80))
+        // A picture begins at its picture header: a picture header unit before its slices, or the header carried in
+        // its slice (the first bit of the slice header), which is then the picture's only slice. Only the second kind
+        // used to be counted.
+        // As in the mux, the first slice of an access unit with no picture header at all begins its picture (N44).
+        if (!isSlice(nalType) && !isSuffix(nalType) && nalType != VvcUnit::NalType::PH)
+            auOpen = true;
+        else if (isSlice(nalType) && ((nal[2] & 0x80) || phPending || auOpen))
         {
+            const bool noPictureHeader = !(nal[2] & 0x80) && !phPending;
+            auOpen = false;
+            const uint16_t phPocLsb = m_slice->pic_order_cnt_lsb;
             m_slice->decodeBuffer(nal, FFMIN(nal + MAX_SLICE_HEADER, nextNal));
-            if (m_slice->deserialize(m_sps, m_pps))
+            int r = m_slice->deserialize(m_sps, m_pps);
+            if (noPictureHeader)
+                r = UNIT_DAMAGED;
+            // The same guess as the mux, so that a damaged IDR picture starts the count again here too.
+            if (r == UNIT_DAMAGED || (r == 0 && !m_slice->picture_header_in_slice && phDamaged))
+                m_fullPicOrder = guessPicOrder(nalType);
+            else if (r)
                 return rez;  // not enough buffer or error
-            m_fullPicOrder = toFullPicOrder(m_slice, m_sps->log2_max_pic_order_cnt_lsb);
+            else
+            {
+                if (!m_slice->picture_header_in_slice)
+                    m_slice->pic_order_cnt_lsb = phPocLsb;
+                m_fullPicOrder = toFullPicOrder(m_slice, m_sps->log2_max_pic_order_cnt_lsb);
+            }
             incTimings();
+            phPending = false;
         }
     }
-    m_totalFrameNum = m_frameNum = m_fullPicOrder = 0;
-    m_curDts = m_curPts = 0;
 
     if (m_sps && m_pps && m_pps->sps_id == m_sps->sps_id)
     {
@@ -326,11 +384,14 @@ void VVCStreamReader::incTimings()
 
 int VVCStreamReader::toFullPicOrder(const VvcSliceHeader* slice, const int pic_bits)
 {
+    // An IDR picture starts the count again, and in VVC it carries its own pic_order_cnt_lsb, which need not be 0: the
+    // picture order count of an IDR picture is that value. The base used to be the IDR's place alone, so an IDR with
+    // a value of 8 and every picture after it were presented 8 frames late, over the pictures of the IDR before.
     if (slice->isIDR())
     {
-        m_picOrderBase = m_frameNum;
+        m_picOrderBase = m_frameNum - static_cast<int>(slice->pic_order_cnt_lsb);
         m_picOrderMsb = 0;
-        m_prevPicOrder = 0;
+        m_prevPicOrder = static_cast<int>(slice->pic_order_cnt_lsb);
     }
     else
     {
@@ -345,6 +406,58 @@ int VVCStreamReader::toFullPicOrder(const VvcSliceHeader* slice, const int pic_b
     }
 
     return slice->pic_order_cnt_lsb + m_picOrderMsb + m_picOrderBase;
+}
+
+int VVCStreamReader::guessPicOrder(const VvcUnit::NalType nalType)
+{
+    // As in the HEVC reader. An IDR picture starts the count again at its own place, whatever its lost
+    // pic_order_cnt_lsb was (toFullPicOrder puts an IDR there), so its time is exact. Any other picture takes the order
+    // of the picture at the same place in the GOP before; the next time in sequence is only the last resort.
+    if (nalType == VvcUnit::NalType::IDR_W_RADL || nalType == VvcUnit::NalType::IDR_N_LP)
+    {
+        m_slice->pic_order_cnt_lsb = 0;
+        return toFullPicOrder(m_slice, m_sps ? m_sps->log2_max_pic_order_cnt_lsb : 0);
+    }
+    // An IRAP picture starts a GOP, so the GOP before it is the one still open.
+    const bool irap = nalType >= VvcUnit::NalType::IDR_W_RADL && nalType <= VvcUnit::NalType::CRA;
+    const std::vector<int>& before = irap ? m_gopOrderOffsets : m_prevGopOrderOffsets;
+    const size_t place = irap ? 0 : m_gopOrderOffsets.size();
+    if (place < before.size())
+        return m_frameNum + before[place];
+    return m_frameNum;
+}
+
+void VVCStreamReader::notePicOrder(const VvcUnit::NalType nalType)
+{
+    static constexpr size_t MAX_GOP_PICTURES = 512;  // a stream with one IRAP only does not grow it without end
+    if (nalType >= VvcUnit::NalType::IDR_W_RADL && nalType <= VvcUnit::NalType::CRA)
+    {
+        m_prevGopOrderOffsets.swap(m_gopOrderOffsets);
+        m_gopOrderOffsets.clear();
+    }
+    if (m_gopOrderOffsets.size() < MAX_GOP_PICTURES)
+        m_gopOrderOffsets.push_back(m_fullPicOrder - m_frameNum);
+}
+
+// A parameter set that ends before its fields do is passed through as it came and the last good one stays in use;
+// before the first good one, the pictures wait for it as they always did.
+template <typename Unit>
+void VVCStreamReader::keepLastGoodUnit(Unit*& unit, MemoryBlock& lastGood, const char* name)
+{
+    if (m_damagedUnitWarnings++ == 0)
+        LTRACE(LT_WARN, 2,
+               "Warning: VVC: a damaged " << name << " at picture " << m_totalFrameNum
+                                          << " is passed through as it is. The last good one stays in use.");
+    if (lastGood.size() > 0)
+    {
+        unit->decodeBuffer(lastGood.data(), lastGood.data() + lastGood.size());
+        unit->deserialize();
+    }
+    else
+    {
+        delete unit;
+        unit = nullptr;
+    }
 }
 
 // dataEnd is where the start code of the next NAL begins, so the NAL is everything before it, less the zero bytes a
@@ -368,6 +481,7 @@ int VVCStreamReader::intDecodeNAL(uint8_t* buff)
     m_spsPpsFound = false;
     m_lastIFrame = false;
 
+    bool phInAu = false;  // this access unit has a picture header unit
     const uint8_t* prevPos = nullptr;
     uint8_t* curPos = buff;
     uint8_t* nextNal = NALUnit::findNextNAL(curPos, m_bufEnd);
@@ -377,30 +491,66 @@ int VVCStreamReader::intDecodeNAL(uint8_t* buff)
 
     while (curPos < m_bufEnd)
     {
-        const auto nalType = static_cast<VvcUnit::NalType>((*curPos >> 1) & 0x3f);
-        if (isSlice(nalType))
+        // The unit type is the 5 bits after the layer id in the SECOND byte. It used to be read with the HEVC formula,
+        // from the first byte, so most units were taken for something else and pictures were split or merged: 11 of
+        // 15 test streams came out with the wrong number of pictures, and a two-layer stream with none at all.
+        const auto nalType = static_cast<VvcUnit::NalType>(curPos[1] >> 3);
+        if ((curPos[0] & 0x3f) != 0)
+            ;  // a unit of a layer above the base layer belongs to the access unit around it
+        else if (isSlice(nalType))
         {
-            if (curPos[2] & 0x80)  // slice.first_slice
+            // A picture begins at its picture header. When the slice carries it (the first bit of the slice header),
+            // the slice is the picture's only one, so a second such slice begins the next picture; otherwise the
+            // picture header unit before the slices began it, and is handled with the other prefix units below.
+            const bool phInSlice = curPos[2] & 0x80;
+            if (sliceFound && phInSlice)
+            {  // first slice of next frame: case where there is no non-VCL NAL between the two frames
+                m_lastDecodedPos = prevPos;  // next frame started
+                incTimings();
+                return 0;
+            }
+            if (!sliceFound)
             {
-                if (sliceFound)
-                {  // first slice of next frame: case where there is no non-VCL NAL between the two frames
-                    m_lastDecodedPos = prevPos;  // next frame started
-                    incTimings();
-                    return 0;
-                }
-                // first slice of current frame
-                m_slice->decodeBuffer(curPos, FFMIN(curPos + MAX_SLICE_HEADER, nextNal));
+                // first slice of current frame. nextNal points past the next start code: the header is read up to
+                // that start code, or a header cut short would read the start code's zero bytes as its own fields.
+                const uint8_t* sliceEnd = nextNal;
+                if (nextNal < m_bufEnd)
+                    sliceEnd = nextNal[-4] == 0 ? nextNal - 4 : nextNal - 3;
+                m_slice->decodeBuffer(curPos, FFMIN(curPos + MAX_SLICE_HEADER, sliceEnd));
                 rez = m_slice->deserialize(m_sps, m_pps);
-                if (rez)
-                    return rez;  // not enough buffer or error
-                if (nalType >= VvcUnit::NalType::IDR_W_RADL)
-                    m_lastIFrame = true;
-                m_fullPicOrder = toFullPicOrder(m_slice, m_sps->log2_max_pic_order_cnt_lsb);
+                const bool irap = nalType >= VvcUnit::NalType::IDR_W_RADL && nalType <= VvcUnit::NalType::CRA;
+                // A damaged picture header (M20, as for HEVC) keeps its picture, as it came, and gives it an order. That
+                // includes the first slice of an access unit with no picture header at all, neither its own unit nor
+                // in the slice: the flag that said it carries one was lost with the rest of its header (N44).
+                if (!phInSlice && !phInAu)
+                    rez = UNIT_DAMAGED;
+                if (rez == UNIT_DAMAGED || (rez == 0 && !m_slice->picture_header_in_slice && m_phDamaged))
+                {
+                    if (m_damagedSliceWarnings++ == 0)
+                        LTRACE(LT_WARN, 2,
+                               "Warning: VVC: the header of picture "
+                                   << m_totalFrameNum << " is damaged. The picture "
+                                   << "is kept, with the time of the picture at its place in the GOP before.");
+                    if (irap)
+                        m_lastIFrame = true;
+                    m_fullPicOrder = guessPicOrder(nalType);
+                }
+                else
+                {
+                    if (rez)
+                        return rez;  // not enough buffer or error
+                    if (irap)
+                        m_lastIFrame = true;
+                    if (!m_slice->picture_header_in_slice)
+                        m_slice->pic_order_cnt_lsb = m_phPocLsb;
+                    m_fullPicOrder = toFullPicOrder(m_slice, m_sps->log2_max_pic_order_cnt_lsb);
+                }
+                notePicOrder(nalType);
             }
             sliceFound = true;
         }
         else if (!isSuffix(nalType))
-        {  // first non-VCL prefix NAL (AUD, SEI...) following current frame
+        {  // first non-VCL prefix NAL (AUD, SEI, picture header...) following current frame
             if (sliceFound)
             {
                 incTimings();
@@ -413,8 +563,15 @@ int VVCStreamReader::intDecodeNAL(uint8_t* buff)
             switch (nalType)
             {
             case VvcUnit::NalType::VPS:
+                if (!m_vps)
+                    m_vps = new VvcVpsUnit();  // keepLastGoodUnit drops a damaged first one
                 m_vps->decodeBuffer(curPos, nextNalWithStartCode);
                 rez = m_vps->deserialize();
+                if (rez == UNIT_DAMAGED)
+                {
+                    keepLastGoodUnit(m_vps, m_vpsBuffer, "VPS");
+                    break;
+                }
                 if (rez)
                     return rez;
                 m_spsPpsFound = true;
@@ -430,6 +587,11 @@ int VVCStreamReader::intDecodeNAL(uint8_t* buff)
                     m_sps = new VvcSpsUnit();
                 m_sps->decodeBuffer(curPos, nextNalWithStartCode);
                 rez = m_sps->deserialize();
+                if (rez == UNIT_DAMAGED)
+                {
+                    keepLastGoodUnit(m_sps, m_spsBuffer, "SPS");
+                    break;
+                }
                 if (rez)
                     return rez;
                 m_spsPpsFound = true;
@@ -441,10 +603,22 @@ int VVCStreamReader::intDecodeNAL(uint8_t* buff)
                     m_pps = new VvcPpsUnit();
                 m_pps->decodeBuffer(curPos, nextNalWithStartCode);
                 rez = m_pps->deserialize();
+                if (rez == UNIT_DAMAGED)
+                {
+                    keepLastGoodUnit(m_pps, m_ppsBuffer, "PPS");
+                    break;
+                }
                 if (rez)
                     return rez;
                 m_spsPpsFound = true;
                 storeBuffer(m_ppsBuffer, curPos, nextNalWithStartCode);
+                break;
+            case VvcUnit::NalType::PH:
+                // The slices after it take their picture order count from it.
+                phInAu = true;
+                m_slice->decodeBuffer(curPos, FFMIN(curPos + MAX_SLICE_HEADER, nextNalWithStartCode));
+                m_phDamaged = m_slice->deserializePictureHeader(m_sps) != 0;
+                m_phPocLsb = m_slice->pic_order_cnt_lsb;
                 break;
             default:
                 break;
@@ -459,6 +633,10 @@ int VVCStreamReader::intDecodeNAL(uint8_t* buff)
     }
     if (m_eof)
     {
+        // The last access unit of the stream has no NAL after it to announce that a new frame started, so it was
+        // never timed or counted (the same step the HEVC reader has).
+        if (sliceFound)
+            incTimings();
         m_lastDecodedPos = m_bufEnd;
         return 0;
     }
@@ -498,7 +676,7 @@ int VVCStreamReader::writeAdditionData(uint8_t* dstBuffer, uint8_t* dstEnd, AVPa
     if (avPacket.size > 4 && avPacket.size < dstEnd - dstBuffer)
     {
         const int offset = avPacket.data[2] == 1 ? 3 : 4;
-        const auto nalType = static_cast<VvcUnit::NalType>((avPacket.data[offset] >> 1) & 0x3f);
+        const auto nalType = static_cast<VvcUnit::NalType>(avPacket.data[offset + 1] >> 3);
         if (nalType == VvcUnit::NalType::AUD)
         {
             // place delimiter at first place

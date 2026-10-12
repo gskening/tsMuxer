@@ -188,7 +188,7 @@ int VvcUnitWithProfile::profile_tier_level(const bool profileTierPresentFlag, co
     }
     catch (BitStreamException&)
     {
-        return NOT_ENOUGH_BUFFER;
+        return UNIT_DAMAGED;  // the unit ends inside its profile: damaged or cut (the caller passes this on)
     }
 }
 
@@ -311,8 +311,8 @@ int VvcVpsUnit::deserialize()
         m_reader.skipBits(m_reader.getBitsLeft() % 8);  // vps_ptl_alignment_zero_bit
 
         for (int i = 0; i < vps_num_ptls; i++)
-            if (profile_tier_level(vps_pt_present_flag[i], vps_ptl_max_tid[i]) != 0)
-                return 1;
+            if (const int r = profile_tier_level(vps_pt_present_flag[i], vps_ptl_max_tid[i]); r != 0)
+                return r == UNIT_DAMAGED ? UNIT_DAMAGED : 1;
 
         for (int i = 0; i < TotalNumOlss; i++)
             if (vps_num_ptls > 1 && vps_num_ptls != TotalNumOlss)
@@ -457,7 +457,7 @@ int VvcVpsUnit::deserialize()
     }
     catch (BitStreamException&)
     {
-        return NOT_ENOUGH_BUFFER;
+        return UNIT_DAMAGED;  // the unit ends before its fields do: a damaged or cut unit, not missing data
     }
 }
 
@@ -548,8 +548,8 @@ int VvcSpsUnit::deserialize()
         if (sps_id == 0 && !sps_ptl_dpb_hrd_params_present_flag)
             return 1;
         if (sps_ptl_dpb_hrd_params_present_flag)
-            if (profile_tier_level(true, max_sublayers_minus1) != 0)
-                return 1;
+            if (const int r = profile_tier_level(true, max_sublayers_minus1); r != 0)
+                return r == UNIT_DAMAGED ? UNIT_DAMAGED : 1;
         m_reader.skipBit();      // sps_gdr_enabled_flag
         if (m_reader.getBit())   // sps_ref_pic_resampling_enabled_flag
             m_reader.skipBit();  // sps_res_change_in_clvs_allowed_flag
@@ -867,6 +867,10 @@ int VvcSpsUnit::deserialize()
     {
         return NOT_ENOUGH_BUFFER;
     }
+    catch (BitStreamException&)
+    {
+        return UNIT_DAMAGED;  // the unit ends before its fields do: a damaged or cut unit, not missing data
+    }
 }
 
 int VvcSpsUnit::ref_pic_list_struct(const size_t rplsIdx)
@@ -982,6 +986,10 @@ int VvcPpsUnit::deserialize()
     {
         return NOT_ENOUGH_BUFFER;
     }
+    catch (BitStreamException&)
+    {
+        return UNIT_DAMAGED;  // the unit ends before its fields do: a damaged or cut unit, not missing data
+    }
 }
 
 // ----------------------- VvcHrdUnit ------------------------
@@ -1061,32 +1069,65 @@ bool VvcUnit::sublayer_hrd_parameters(const VvcHrdUnit m_hrd)
 
 VvcSliceHeader::VvcSliceHeader() : pic_order_cnt_lsb(0) {}
 
+// The start of picture_header_structure(), as far as the picture order count. It is the whole of a picture header
+// unit's own start, and it follows sh_picture_header_in_slice_header_flag when a slice carries its picture header.
+int VvcSliceHeader::readPictureHeaderStart(const VvcSpsUnit* sps)
+{
+    const bool ph_gdr_or_irap_pic_flag = m_reader.getBit();
+    m_reader.skipBit();  // ph_non_ref_pic_flag
+    if (ph_gdr_or_irap_pic_flag)
+        m_reader.skipBit();          // ph_gdr_pic_flag
+    if (m_reader.getBit())           // ph_inter_slice_allowed_flag
+        m_reader.skipBit();          // ph_intra_slice_allowed_flag
+    if (extractUEGolombCode() > 63)  // ph_pps_id
+        return 1;
+    pic_order_cnt_lsb = m_reader.getBits<uint16_t>(sps->log2_max_pic_order_cnt_lsb);
+    return 0;
+}
+
 int VvcSliceHeader::deserialize(const VvcSpsUnit* sps, const VvcPpsUnit* pps)
 {
     const int rez = VvcUnit::deserialize();
     if (rez)
         return rez;
+    if (!sps || !pps)
+        return UNIT_DAMAGED;  // no whole parameter set yet to read it with (the first one was damaged)
 
     try
     {
-        if (m_reader.getBit())  // sh_picture_header_in_slice_header_flag
-        {
-            const bool ph_gdr_or_irap_pic_flag = m_reader.getBit();
-            m_reader.skipBit();  // ph_non_ref_pic_flag
-            if (ph_gdr_or_irap_pic_flag)
-                m_reader.skipBit();          // ph_gdr_pic_flag
-            if (m_reader.getBit())           // ph_inter_slice_allowed_flag
-                m_reader.skipBit();          // ph_intra_slice_allowed_flag
-            if (extractUEGolombCode() > 63)  // ph_pps_id
-                return 1;
-            pic_order_cnt_lsb = m_reader.getBits<uint16_t>(sps->log2_max_pic_order_cnt_lsb);
-        }
-
+        picture_header_in_slice = m_reader.getBit();  // sh_picture_header_in_slice_header_flag
+        if (picture_header_in_slice)
+            return readPictureHeaderStart(sps);
         return 0;
     }
     catch (VodCoreException&)
     {
         return NOT_ENOUGH_BUFFER;
+    }
+    catch (BitStreamException&)
+    {
+        return UNIT_DAMAGED;  // the unit ends before its fields do: a damaged or cut unit, not missing data
+    }
+}
+
+int VvcSliceHeader::deserializePictureHeader(const VvcSpsUnit* sps)
+{
+    const int rez = VvcUnit::deserialize();
+    if (rez)
+        return rez;
+    if (!sps)
+        return UNIT_DAMAGED;
+    try
+    {
+        return readPictureHeaderStart(sps);
+    }
+    catch (VodCoreException&)
+    {
+        return NOT_ENOUGH_BUFFER;
+    }
+    catch (BitStreamException&)
+    {
+        return UNIT_DAMAGED;  // the unit ends before its fields do: a damaged or cut unit, not missing data
     }
 }
 

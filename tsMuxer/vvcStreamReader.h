@@ -69,6 +69,20 @@ class VVCStreamReader final : public MPEGStreamReader
     bool m_firstFileFrame;
     int m_vpsCounter;
     int m_vpsSizeDiff;
+
+    // The picture order count of the last picture header unit, for the slices after it that do not carry their own
+    // picture header, and whether that unit was damaged.
+    uint16_t m_phPocLsb = 0;
+    bool m_phDamaged = false;
+    // M20, as for HEVC: damaged parameter sets and picture headers, warned once of each kind.
+    int m_damagedUnitWarnings = 0;
+    int m_damagedSliceWarnings = 0;
+    std::vector<int> m_gopOrderOffsets;
+    std::vector<int> m_prevGopOrderOffsets;
+    int guessPicOrder(VvcUnit::NalType nalType);
+    void notePicOrder(VvcUnit::NalType nalType);
+    template <typename Unit>
+    void keepLastGoodUnit(Unit*& unit, MemoryBlock& lastGood, const char* name);
 };
 
 #endif  // _VVC_STREAM_READER_H_
