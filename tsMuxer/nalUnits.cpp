@@ -1222,6 +1222,19 @@ bool SliceUnit::isIFrame() const
     return nal_unit_type == NALType::nuSliceExt ? anchor_pic_flag : slice_type == I_TYPE;
 }
 
+void SliceUnit::assumeDamagedFirstSlice(const NALType type, const SPSUnit* lastSps, const PPSUnit* lastPps)
+{
+    nal_unit_type = type;
+    first_mb_in_slice = 0;
+    slice_type = orig_slice_type = B_TYPE;
+    m_field_pic_flag = 0;
+    bottom_field_flag = 0;
+    pic_order_cnt_lsb = 0;
+    memory_management_control_operation = 0;
+    sps = lastSps;
+    pps = lastPps;
+}
+
 int SliceUnit::deserializeSliceType(uint8_t* buffer, uint8_t* end)
 {
     if (end - buffer < 2)

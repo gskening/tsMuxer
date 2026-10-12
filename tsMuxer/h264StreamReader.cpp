@@ -104,9 +104,11 @@ CheckStreamRez H264StreamReader::checkStream(uint8_t* buffer, int len)
                 m_mvcPrimaryStream = true;
             auto sps = new SPSUnit();
             sps->decodeBuffer(nal, nextNal);
-            if (sps->deserialize() != 0)
+            if (const int r = sps->deserialize(); r != 0)
             {
                 delete sps;
+                if (r == NOT_ENOUGH_BUFFER)
+                    break;  // the whole unit is here and still ends early: damaged, skipped (M20)
                 return rez;
             }
             if (m_spsMap.find(sps->seq_parameter_set_id) != m_spsMap.end())
@@ -123,9 +125,11 @@ CheckStreamRez H264StreamReader::checkStream(uint8_t* buffer, int len)
         {
             auto pps = new PPSUnit();
             pps->decodeBuffer(nal, nextNal);
-            if (pps->deserialize() != 0)
+            if (const int r = pps->deserialize(); r != 0)
             {
                 delete pps;
+                if (r == NOT_ENOUGH_BUFFER)
+                    break;  // the whole unit is here and still ends early: damaged, skipped (M20)
                 return rez;
             }
             if (m_spsMap.find(pps->seq_parameter_set_id) == m_spsMap.end() ||
@@ -765,6 +769,8 @@ int H264StreamReader::getIdrPrevFrames(uint8_t* buff, const uint8_t* bufEnd)
         case NALUnit::NALType::nuSliceC:
         case NALUnit::NALType::nuSliceExt:
             deserializeRez = deserializeSliceHeader(slice, nal, bufEnd);
+            if (deserializeRez == UNIT_DAMAGED)
+                break;  // a damaged picture header says nothing about the pictures around it
             if (deserializeRez == NOT_ENOUGH_BUFFER && !m_eof)
                 return -1;
             if (deserializeRez != 0)
@@ -825,6 +831,8 @@ int H264StreamReader::lsbDivOfIdrPeriod(const SliceUnit& idrSlice, uint8_t* buff
                 return pictures > 0 ? 1 : m_forceLsbDiv;  // the next period begins: every count was even
             rez = deserializeSliceHeader(slice, nal, m_bufEnd);
         }
+        if (rez == UNIT_DAMAGED)
+            continue;  // a damaged picture header says nothing about the step
         if (rez == NOT_ENOUGH_BUFFER)
             break;  // the data buffered so far ends inside this slice header
         if (rez != 0)
@@ -932,7 +940,7 @@ int H264StreamReader::intDecodeNAL(uint8_t* buff)
         case NALUnit::NALType::nuSliceB:
         case NALUnit::NALType::nuSliceC:
         case NALUnit::NALType::nuSliceExt:
-            nalRez = processSliceNal(nextNal);
+            nalRez = processSliceNal(nextNal, true);
             if (nalRez == 0)
             {
                 m_lastDecodedPos = nextNal;
@@ -1124,6 +1132,16 @@ bool H264StreamReader::findPPSForward(uint8_t* buff)
 
 int H264StreamReader::deserializeSliceHeader(SliceUnit& slice, const uint8_t* buff, const uint8_t* sliceEnd)
 {
+    // A slice header is read up to the start code of the next unit, not up to the end of the data: a header cut short
+    // read the next unit's bytes as its own fields and was taken as whole, and every picture time after it was
+    // shifted without a warning. A header never comes near this window; past it the unit is long and whole.
+    static constexpr int UNIT_END_WINDOW = 4096;
+    const uint8_t* windowEnd = sliceEnd - buff > UNIT_END_WINDOW ? buff + UNIT_END_WINDOW : sliceEnd;
+    const uint8_t* unitEnd =
+        NALUnit::findNALWithStartCode(const_cast<uint8_t*>(buff), const_cast<uint8_t*>(windowEnd), true);
+    const bool unitWhole = unitEnd < windowEnd;
+    if (unitWhole)
+        sliceEnd = unitEnd;
     int nalRez, toDecode;
     const int maxHeaderSize = static_cast<int>(sliceEnd - buff);
     do
@@ -1137,10 +1155,26 @@ int H264StreamReader::deserializeSliceHeader(SliceUnit& slice, const uint8_t* bu
             m_decodedSliceHeader.resize(m_decodedSliceHeader.size() + 1);
     } while (nalRez == NOT_ENOUGH_BUFFER && toDecode < maxHeaderSize);
 
+    if (nalRez == NOT_ENOUGH_BUFFER && unitWhole)
+        return UNIT_DAMAGED;  // the whole unit was read and the header still ends early
     return nalRez;
 }
 
-int H264StreamReader::processSliceNal(uint8_t* buff)
+bool H264StreamReader::isDamagedUnit(const int nalRez, const uint8_t* nextNal) const
+{
+    // NOT_ENOUGH_BUFFER from a unit whose end is in the buffer: the unit itself ends before its fields do.
+    return nalRez == NOT_ENOUGH_BUFFER && nextNal < m_bufEnd;
+}
+
+void H264StreamReader::warnDamagedUnit(const char* name)
+{
+    if (m_damagedUnitWarnings++ == 0)
+        LTRACE(LT_WARN, 2,
+               "Warning: H264: a damaged " << name << " at picture " << m_totalFrameNum
+                                           << " is passed through as it is. The last good one stays in use.");
+}
+
+int H264StreamReader::processSliceNal(uint8_t* buff, const bool auFirst)
 {
     // Whether picture order counts step by one or by two is a property of the stream, not of the
     // container being written, and until now it was decided only inside getTSDescriptor. That exists
@@ -1165,6 +1199,47 @@ int H264StreamReader::processSliceNal(uint8_t* buff)
     {
         if (findPPSForward(buff + 1))
             nalRez = deserializeSliceHeader(slice, buff, sliceEnd);
+    }
+
+    // A picture whose header is damaged (a recording that lost part of a packet) is kept as it came. Its first slice
+    // still says it begins a picture (first_mb_in_slice 0 is the single bit 1), and its NAL type says whether it is an
+    // IDR picture; the rest is read with the parameter sets of the picture before. An IDR picture has order 0 by
+    // definition, so its time is exact; any other picture takes its order from the GOP before (see below).
+    // The first slice of an access unit that does not say so (N44): either its header is damaged down to the first
+    // bit, or the slice before it was lost and this one is whole. A whole header is used as it is, with its own order;
+    // a damaged one is guessed as above. Before, the slice was taken for a further slice of the picture before, the
+    // two pictures were written as one, and every time after them was shifted.
+    if (auFirst && nalRez == 0 && slice.first_mb_in_slice != 0 && slice.nal_unit_type != NALUnit::NALType::nuSliceExt)
+    {
+        if (m_damagedSliceWarnings++ == 0)
+            LTRACE(LT_WARN, 2,
+                   "Warning: H264: picture " << m_totalFrameNum
+                                             << " has lost its first slice. The rest of the picture is kept.");
+        slice.first_mb_in_slice = 0;
+    }
+    bool guessOrder = false;
+    bool damaged = false;
+    if (nalRez == UNIT_DAMAGED)
+    {
+        const auto unitType = static_cast<NALUnit::NALType>(*buff & 0x1f);
+        const bool firstSlice = unitType != NALUnit::NALType::nuSliceExt &&
+                                (auFirst || (m_bufEnd - buff > 1 && (buff[1] & 0x80)));
+        const auto pps = m_ppsMap.find(m_lastSlicePPS);
+        if (!firstSlice || pps == m_ppsMap.end())
+            return 0;  // a further slice of a picture, or nothing to read it with yet: passed through as it came
+        const auto sps = m_spsMap.find(pps->second->seq_parameter_set_id);
+        if (sps == m_spsMap.end())
+            return 0;
+        if (m_damagedSliceWarnings++ == 0)
+            LTRACE(LT_WARN, 2,
+                   "Warning: H264: the header of picture "
+                       << m_totalFrameNum
+                       << " is damaged. The picture is kept, with the time of the picture at its place in the GOP "
+                          "before.");
+        slice.assumeDamagedFirstSlice(unitType, sps->second, pps->second);
+        damaged = true;
+        guessOrder = !slice.isIDR();
+        nalRez = 0;
     }
 
     if (nalRez != 0)
@@ -1230,11 +1305,15 @@ int H264StreamReader::processSliceNal(uint8_t* buff)
 
     ////////////////////////////
 
+    // A guessed order is set below from the GOP before; calcPicOrder would take the stand-in count as the stream's own.
     int fullPicOrder = 0;
-    if (slice.getSPS()->pic_order_cnt_type != 2)
-        fullPicOrder = calcPicOrder(slice);
-    else
-        m_frameDepth = 0;
+    if (!guessOrder)
+    {
+        if (slice.getSPS()->pic_order_cnt_type != 2)
+            fullPicOrder = calcPicOrder(slice);
+        else
+            m_frameDepth = 0;
+    }
 
     if (slice.isIDR())
     {
@@ -1280,6 +1359,26 @@ int H264StreamReader::processSliceNal(uint8_t* buff)
         }
         else
             fullPicOrder = m_frameNum;
+    }
+
+    // The offset of each picture from its place in decode order repeats from GOP to GOP, so a picture whose own order
+    // cannot be read takes the offset of the picture at its place in the GOP before; the next time in sequence is only
+    // the last resort, as with B pictures it is the time of another picture.
+    {
+        static constexpr size_t MAX_GOP_PICTURES = 512;  // a stream with one I picture only does not grow it without end
+        const bool gopStart = slice.isIDR() || (!damaged && slice.isIFrame());
+        if (guessOrder)
+        {
+            const size_t place = m_gopOrderOffsets.size();
+            fullPicOrder = m_frameNum + (place < m_prevGopOrderOffsets.size() ? m_prevGopOrderOffsets[place] : 0);
+        }
+        if (gopStart)
+        {
+            m_prevGopOrderOffsets.swap(m_gopOrderOffsets);
+            m_gopOrderOffsets.clear();
+        }
+        if (m_gopOrderOffsets.size() < MAX_GOP_PICTURES)
+            m_gopOrderOffsets.push_back(fullPicOrder - m_frameNum);
     }
 
     // check b-pyramid
@@ -1328,7 +1427,7 @@ int H264StreamReader::processSliceNal(uint8_t* buff)
     else
         m_lastSliceSPS = -1;
     m_lastSliceIDR = slice.isIDR();
-    m_lastIFrame = slice.isIFrame();
+    m_lastIFrame = slice.isIFrame() || (damaged && slice.isIDR());
 
     return 0;
 }
@@ -1436,6 +1535,14 @@ int H264StreamReader::processSPS(uint8_t* buff)
     const int oldSpsLen = static_cast<int>(nextNal - buff);
     sps->decodeBuffer(buff, nextNal);
     const int nalRez = sps->deserialize();
+    // A damaged SPS asked for more data for ever, and the job ended with "Not enough buffer" after the pictures before
+    // it. Discs and broadcasts repeat their SPS, so it is passed through as it came and the last good one stays in use.
+    if (isDamagedUnit(nalRez, nextNal))
+    {
+        delete sps;
+        warnDamagedUnit("SPS");
+        return 0;
+    }
 
     // The FIRST sequence parameter set is adopted, not compared. These two flags start false
     // in the constructor, and checkStream is what normally replaces them with the stream's own
@@ -1514,6 +1621,12 @@ int H264StreamReader::processPPS(uint8_t* buff)
 
     pps->decodeBuffer(buff, nextNal);
     const int nalRez = pps->deserialize();
+    if (isDamagedUnit(nalRez, nextNal))
+    {
+        delete pps;
+        warnDamagedUnit("PPS");
+        return 0;  // as an SPS: passed through, the last good one stays in use
+    }
     if (nalRez != 0)
     {
         delete pps;

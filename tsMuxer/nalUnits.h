@@ -386,6 +386,9 @@ class SliceUnit final : public NALUnit
     using NALUnit::deserialize;
 
     [[nodiscard]] const SPSUnit* getSPS() const { return sps; }
+    // A first slice whose header is damaged: what is known of it (its NAL type, and the parameter sets of the picture
+    // before) and safe values for the rest. The slice type is taken as B, the most permissive one for a delimiter.
+    void assumeDamagedFirstSlice(NALType type, const SPSUnit* lastSps, const PPSUnit* lastPps);
     [[nodiscard]] const PPSUnit* getPPS() const { return pps; }
     [[nodiscard]] bool isIDR() const;
     [[nodiscard]] bool isIFrame() const;

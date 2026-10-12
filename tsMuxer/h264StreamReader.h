@@ -130,7 +130,9 @@ class H264StreamReader final : public MPEGStreamReader
     int calcPicOrder(const SliceUnit& slice);
     int getIdrPrevFrames(uint8_t* buff, const uint8_t* bufEnd);
     int lsbDivOfIdrPeriod(const SliceUnit& idrSlice, uint8_t* buff);
-    int processSliceNal(uint8_t* buff);
+    // auFirst: the slice follows the delimiter, SPS, PPS or SEI that began its access unit, so it is the first slice of
+    // its picture whatever its header says.
+    int processSliceNal(uint8_t* buff, bool auFirst = false);
     int processSPS(uint8_t* buff);
     int processPPS(uint8_t* buff);
     int detectPrimaryPicType(const SliceUnit& firstSlice, uint8_t* buff);
@@ -153,6 +155,17 @@ class H264StreamReader final : public MPEGStreamReader
     // constructor's false. Without it the first SPS was compared against the defaults and
     // reported as a change.
     bool m_spsFlagsKnown;
+    // M20: a unit that ends before its fields do (a damaged or cut recording) is skipped or guessed, with one warning
+    // of each kind.
+    int m_damagedUnitWarnings = 0;
+    int m_damagedSliceWarnings = 0;
+    // The order of each picture of the GOP so far and of the GOP before, as an offset from its place in decode order,
+    // taken where checkPyramid receives it. A picture whose header is damaged takes the offset of the picture at the
+    // same place in the GOP before.
+    std::vector<int> m_gopOrderOffsets;
+    std::vector<int> m_prevGopOrderOffsets;
+    bool isDamagedUnit(int nalRez, const uint8_t* nextNal) const;
+    void warnDamagedUnit(const char* name);
 };
 
 #endif
