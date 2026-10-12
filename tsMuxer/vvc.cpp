@@ -59,7 +59,7 @@ int VvcUnit::deserialize()
     }
 }
 
-bool VvcUnit::updateBits(const int bitOffset, const int bitLen, const int value) const
+bool VvcUnit::updateBits(const int bitOffset, const int bitLen, const unsigned value) const
 {
     // Validate parameters to prevent heap-buffer-overflow (GitHub #899)
     if (bitOffset < 0 || bitLen <= 0)
@@ -69,40 +69,65 @@ bool VvcUnit::updateBits(const int bitOffset, const int bitLen, const int value)
         return false;
     }
 
-    // The BitStreamWriter needs bitLen/8 + 5 bytes from the start position,
-    // and flushBits() reads/writes a 4-byte word at the final position.
-    // Verify the entire write region fits within the NAL buffer.
+    // The same write as HevcUnit::updateBits. The unit has to reach only the byte that holds the first bit after the
+    // field: the field's own last byte, or the byte after it when the field ends on a byte boundary. The old check
+    // asked for bitLen / 8 + 5 bytes from the field's first byte, because flushBits() reads and writes a whole 32 bit
+    // word where the writer stops, so it refused a field that close to the end of a unit. The write goes through a
+    // scratch buffer with room for that word, and only bytes inside the unit are copied back.
     const int startByte = bitOffset / 8;
-    const int requiredEnd = startByte + bitLen / 8 + 5;
-    if (requiredEnd > m_nalBufferLen)
+    const int lastByte = (bitOffset + bitLen) / 8;
+    if (lastByte >= m_nalBufferLen)
     {
         LTRACE(LT_WARN, 2,
-               "VVC updateBits: write region [" << startByte << ", " << requiredEnd << ") exceeds NAL buffer size "
-                                                << m_nalBufferLen);
+               "VVC updateBits: the field at bit " << bitOffset << " ends past the unit, which is " << m_nalBufferLen
+                                                   << " bytes");
         return false;
     }
 
-    uint8_t* ptr = m_reader.getBuffer() + startByte;
-    BitStreamWriter bitWriter{};
     const int byteOffset = bitOffset % 8;
-    bitWriter.setBuffer(ptr, ptr + (bitLen / 8 + 5));
-
-    const uint8_t* ptr_end = m_reader.getBuffer() + (bitOffset + bitLen) / 8;
     const int endBitsPostfix = 8 - ((bitOffset + bitLen) % 8);
+    const int touched = lastByte - startByte + 1;
+
+    std::vector<uint8_t> scratch(static_cast<size_t>(touched) + 8, 0);
+    uint8_t* ptr = m_reader.getBuffer() + startByte;
+    memcpy(scratch.data(), ptr, static_cast<size_t>(touched));
+
+    BitStreamWriter bitWriter{};
+    bitWriter.setBuffer(scratch.data(), scratch.data() + scratch.size());
 
     if (byteOffset > 0)
     {
-        const int prefix = *ptr >> (8 - byteOffset);
+        const int prefix = scratch[0] >> (8 - byteOffset);
         bitWriter.putBits(byteOffset, prefix);
     }
     bitWriter.putBits(bitLen, value);
 
     if (endBitsPostfix < 8)
     {
-        const int postfix = *ptr_end & (1 << endBitsPostfix) - 1;
+        const int postfix = scratch[static_cast<size_t>(touched) - 1] & (1 << endBitsPostfix) - 1;
         bitWriter.putBits(endBitsPostfix, postfix);
     }
     bitWriter.flushBits();
+
+    memcpy(ptr, scratch.data(), static_cast<size_t>(touched));
+    return true;
+}
+
+// Writes a frame rate into the timing that general_timing_hrd_parameters() read from this unit, in place. The VPS and
+// the SPS each may carry that timing, and each unit's setFPS rewrites only its own copy. False when the unit carries
+// none, or when the two fields would not fit; the unit is then left as it was, because the room for both fields is
+// checked before either is written.
+bool VvcUnit::setTimingFps(VvcHrdUnit& hrd, const double fps) const
+{
+    const int bitPos = hrd.num_units_in_tick_bit_pos;
+    if (bitPos <= 0 || fps <= 0.0 || (bitPos + 64) / 8 >= m_nalBufferLen)
+        return false;
+    const auto newTimeScale = static_cast<unsigned>(lround(fps) * 1000000);
+    const auto newTicks = static_cast<unsigned>(lround(newTimeScale / fps));
+    if (!updateBits(bitPos, 32, newTicks) || !updateBits(bitPos + 32, 32, newTimeScale))
+        return false;
+    hrd.num_units_in_tick = newTicks;
+    hrd.time_scale = newTimeScale;
     return true;
 }
 
@@ -223,18 +248,11 @@ std::string VvcUnitWithProfile::getProfileString() const
 
 // ------------------------- VvcVpsUnit -------------------
 
-VvcVpsUnit::VvcVpsUnit()
-    : vps_id(0),
-      vps_max_layers(0),
-      vps_max_sublayers(0),
-      num_units_in_tick(0),
-      time_scale(0),
-      num_units_in_tick_bit_pos(-1)
-{
-}
+VvcVpsUnit::VvcVpsUnit() : vps_id(0), vps_max_layers(0), vps_max_sublayers(0) {}
 
 int VvcVpsUnit::deserialize()
 {
+    m_vps_hrd = VvcHrdUnit();  // the object is reused for every VPS: the timing of an earlier one must not outlive it
     int rez = VvcUnit::deserialize();
     if (rez)
         return rez;
@@ -461,31 +479,24 @@ int VvcVpsUnit::deserialize()
     }
 }
 
+// The VPS kept a copy of the timing fields of its own, with their position, and nothing ever filled them in: the
+// timing was read into m_vps_hrd and the copy stayed at zero and -1. So getFPS returned 0 for every VPS (its
+// description read "Frame rate: not found"), and setFPS could only refuse. Both now use m_vps_hrd, which deserialize
+// fills when the unit carries timing, and which a successful setFPS changes to the rate it wrote.
 bool VvcVpsUnit::setFPS(const double fps)
 {
-    time_scale = lround(fps) * 1000000;
-    num_units_in_tick = lround(time_scale / fps);
-
     // Guard against missing timing info instead of asserting (GitHub #899)
-    if (num_units_in_tick_bit_pos <= 0)
+    if (m_vps_hrd.num_units_in_tick_bit_pos <= 0)
     {
-        LTRACE(LT_WARN, 2,
-               "VVC VPS does not contain timing info (bit_pos=" << num_units_in_tick_bit_pos
-                                                                << "), cannot override FPS in stream");
+        LTRACE(LT_WARN, 2, "VVC VPS does not contain timing info, cannot override FPS in stream");
         return false;
     }
-
-    if (!updateBits(num_units_in_tick_bit_pos, 32, num_units_in_tick))
-        return false;
-    if (!updateBits(num_units_in_tick_bit_pos + 32, 32, time_scale))
-        return false;
-
-    return true;
+    return setTimingFps(m_vps_hrd, fps);
 }
 
 double VvcVpsUnit::getFPS() const
 {
-    return num_units_in_tick ? static_cast<double>(time_scale) / num_units_in_tick : 0;
+    return m_vps_hrd.num_units_in_tick ? static_cast<double>(m_vps_hrd.time_scale) / m_vps_hrd.num_units_in_tick : 0;
 }
 
 string VvcVpsUnit::getDescription() const
@@ -528,6 +539,7 @@ VvcSpsUnit::VvcSpsUnit()
 
 int VvcSpsUnit::deserialize()
 {
+    m_sps_hrd = VvcHrdUnit();  // the object is reused for every SPS: the timing of an earlier one must not outlive it
     const int rez = VvcUnit::deserialize();
     if (rez)
         return rez;
@@ -914,6 +926,9 @@ double VvcSpsUnit::getFPS() const
     return m_sps_hrd.num_units_in_tick ? static_cast<double>(m_sps_hrd.time_scale) / m_sps_hrd.num_units_in_tick : 0;
 }
 
+// An SPS without timing of its own has nothing to rewrite and says nothing here, as HevcSpsUnit::setFPS does.
+bool VvcSpsUnit::setFPS(const double fps) { return setTimingFps(m_sps_hrd, fps); }
+
 string VvcSpsUnit::getDescription() const
 {
     string result = getProfileString();
@@ -1000,6 +1015,7 @@ int VvcPpsUnit::deserialize()
 VvcHrdUnit::VvcHrdUnit()
     : num_units_in_tick(0),
       time_scale(0),
+      num_units_in_tick_bit_pos(-1),
       general_nal_hrd_params_present_flag(false),
       general_vcl_hrd_params_present_flag(false),
       general_du_hrd_params_present_flag(false),
@@ -1009,6 +1025,8 @@ VvcHrdUnit::VvcHrdUnit()
 
 bool VvcUnit::general_timing_hrd_parameters(VvcHrdUnit& m_hrd)
 {
+    // Counted from the start of the unit, its two header bytes included, which is where updateBits counts from too.
+    m_hrd.num_units_in_tick_bit_pos = m_reader.getBitsCount();
     m_hrd.num_units_in_tick = m_reader.getBits(32);
     m_hrd.time_scale = m_reader.getBits(32);
     m_hrd.general_nal_hrd_params_present_flag = m_reader.getBit();

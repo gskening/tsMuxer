@@ -9,6 +9,7 @@ struct VvcHrdUnit
 
     unsigned num_units_in_tick;
     unsigned time_scale;
+    int num_units_in_tick_bit_pos;  // where num_units_in_tick starts in the unit, for fps=; -1 = the unit has none
     bool general_nal_hrd_params_present_flag;
     bool general_vcl_hrd_params_present_flag;
     bool general_du_hrd_params_present_flag;
@@ -66,7 +67,8 @@ struct VvcUnit
    protected:
     unsigned extractUEGolombCode();
     int extractSEGolombCode();
-    [[nodiscard]] bool updateBits(int bitOffset, int bitLen, int value) const;
+    [[nodiscard]] bool updateBits(int bitOffset, int bitLen, unsigned value) const;
+    [[nodiscard]] bool setTimingFps(VvcHrdUnit& hrd, double fps) const;
     bool dpb_parameters(int MaxSubLayersMinus1, bool subLayerInfoFlag);
     bool general_timing_hrd_parameters(VvcHrdUnit& m_hrd);
     bool ols_timing_hrd_parameters(VvcHrdUnit m_hrd, int firstSubLayer, int MaxSubLayersVal);
@@ -104,9 +106,6 @@ struct VvcVpsUnit : VvcUnitWithProfile
     uint8_t vps_id;
     uint8_t vps_max_layers;
     uint8_t vps_max_sublayers;
-    int num_units_in_tick;
-    int time_scale;
-    int num_units_in_tick_bit_pos;
     VvcHrdUnit m_vps_hrd;
 };
 
@@ -115,6 +114,7 @@ struct VvcSpsUnit : VvcUnitWithProfile
     VvcSpsUnit();
     int deserialize();
     [[nodiscard]] double getFPS() const;
+    [[nodiscard]] bool setFPS(double fps);
     [[nodiscard]] std::string getDescription() const;
 
     uint8_t sps_id;

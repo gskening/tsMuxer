@@ -101,7 +101,7 @@ CheckStreamRez VVCStreamReader::checkStream(uint8_t* buffer, const int len)
             if (r != 0)
                 return rez;
             m_spsPpsFound = true;
-            if (m_vps->num_units_in_tick)
+            if (m_vps->m_vps_hrd.num_units_in_tick)
             {
                 // Lightweight FPS extraction for probing only. The full
                 // updateFPS() (with logging and 25fps fallback) runs later
@@ -266,17 +266,39 @@ int VVCStreamReader::getTSDescriptor(uint8_t* dstBuff, bool blurayMode, const bo
 
 void VVCStreamReader::updateStreamFps(void* nalUnit, uint8_t* buff, uint8_t* nextNal, int)
 {
-    const int oldNalSize = static_cast<int>(nextNal - buff);
+    // ** THIS IS HANDED THE SPS AS WELL AS THE VPS, AND THEY ARE SIBLINGS. **
+    //
+    // intDecodeNAL calls updateFPS with m_sps at the SPS branch, and this used to cast whatever arrived to the VPS
+    // type. The VPS rate was never read, so only an SPS with timing of its own, at a rate other than the muxing rate,
+    // ever got here. Read through the wrong type, that SPS gave a position for the timing fields out of one of its
+    // own unrelated members, and the new rate was written there: in the two measured streams that carry timing, bit 2
+    // of every SPS, inside its header, so the output could not be decoded. HEVCStreamReader::updateStreamFps had the
+    // same mistake and was fixed the same way. Each unit handed here now rewrites its own timing, at the position
+    // read from it.
     m_vpsSizeDiff = 0;
-    const auto vps = static_cast<VvcVpsUnit*>(nalUnit);
-    if (!vps->setFPS(m_fps))
+    VvcUnit* unit = nullptr;
+    bool rewritten = false;
+    if (nalUnit == m_vps && m_vps != nullptr)
     {
-        // FPS override failed (missing timing info or buffer too small).
-        // Leave the stream unmodified rather than crashing.
-        return;
+        unit = m_vps;
+        rewritten = m_vps->setFPS(m_fps);
     }
-    auto tmpBuffer = std::make_unique<uint8_t[]>(vps->nalBufferLen() + 16);
-    const long newSpsLen = vps->serializeBuffer(tmpBuffer.get(), tmpBuffer.get() + vps->nalBufferLen() + 16);
+    else if (nalUnit == m_sps && m_sps != nullptr)
+    {
+        unit = m_sps;
+        rewritten = m_sps->setFPS(m_fps);
+    }
+    else
+        return;
+
+    // The unit carries no timing to change, or the write would not fit. Either way the stream is left exactly as it
+    // came in.
+    if (!rewritten)
+        return;
+
+    const int oldNalSize = static_cast<int>(nextNal - buff);
+    auto tmpBuffer = std::make_unique<uint8_t[]>(unit->nalBufferLen() + 16);
+    const long newSpsLen = unit->serializeBuffer(tmpBuffer.get(), tmpBuffer.get() + unit->nalBufferLen() + 16);
     if (newSpsLen == -1)
         THROW(ERR_COMMON, "Not enough buffer")
 
@@ -295,8 +317,17 @@ unsigned VVCStreamReader::getStreamWidth() const { return m_sps ? m_sps->pic_wid
 
 unsigned VVCStreamReader::getStreamHeight() const { return m_sps ? m_sps->pic_height_max_in_luma_samples : 0; }
 
+// The unit asked about answers with its own rate when it has one, as in HEVCStreamReader::getStreamFPS. Always
+// answering with the VPS meant that once the VPS had been rewritten to the fps= rate, an SPS with timing of its own
+// was compared against that new rate, matched it, and kept the old one. The fallback is for the caller that wants
+// whatever rate the stream has.
 double VVCStreamReader::getStreamFPS(void* curNalUnit)
 {
+    if (curNalUnit == m_vps && m_vps != nullptr && m_vps->getFPS() != 0.0)
+        return m_vps->getFPS();
+    if (curNalUnit == m_sps && m_sps != nullptr && m_sps->getFPS() != 0.0)
+        return m_sps->getFPS();
+
     double fps = 0;
     if (m_vps)
         fps = m_vps->getFPS();
@@ -577,10 +608,12 @@ int VVCStreamReader::intDecodeNAL(uint8_t* buff)
                 m_spsPpsFound = true;
                 m_vpsCounter++;
                 m_vpsSizeDiff = 0;
-                if (m_vps->num_units_in_tick)
+                if (m_vps->m_vps_hrd.num_units_in_tick)
                     updateFPS(m_vps, curPos, nextNalWithStartCode, 0);
+                // A rewritten unit can end elsewhere: the new timing may need a different number of emulation
+                // prevention bytes. The copy kept for repeating the unit has to end where the unit now ends.
                 nextNal += m_vpsSizeDiff;
-                storeBuffer(m_vpsBuffer, curPos, nextNalWithStartCode);
+                storeBuffer(m_vpsBuffer, curPos, nextNalWithStartCode + m_vpsSizeDiff);
                 break;
             case VvcUnit::NalType::SPS:
                 if (!m_sps)
@@ -595,8 +628,10 @@ int VVCStreamReader::intDecodeNAL(uint8_t* buff)
                 if (rez)
                     return rez;
                 m_spsPpsFound = true;
+                m_vpsSizeDiff = 0;  // named for the VPS, it carries the size change of whichever unit was rewritten
                 updateFPS(m_sps, curPos, nextNalWithStartCode, 0);
-                storeBuffer(m_spsBuffer, curPos, nextNalWithStartCode);
+                nextNal += m_vpsSizeDiff;
+                storeBuffer(m_spsBuffer, curPos, nextNalWithStartCode + m_vpsSizeDiff);
                 break;
             case VvcUnit::NalType::PPS:
                 if (!m_pps)
