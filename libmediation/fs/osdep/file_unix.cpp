@@ -118,12 +118,35 @@ int File::read(void* buffer, uint32_t count) const
     return ::read(to_fd(m_impl), buffer, count);
 }
 
+// A failed or short write was returned as it came, the position moved on regardless, and none of the writers
+// looked. On a full drive a TS or Matroska output was cut short under "Mux successful", and an ISO never finished:
+// its padding loop waited for a file that could not grow. As on Windows, a write now completes or throws, with the
+// reason, and the job stops on it.
 int File::write(const void* buffer, uint32_t count)
 {
     if (!isOpen())
         return -1;
-    m_pos += count;
-    return ::write(to_fd(m_impl), buffer, count);
+    const auto* data = static_cast<const char*>(buffer);
+    uint32_t left = count;
+    while (left > 0)
+    {
+        const ssize_t written = ::write(to_fd(m_impl), data, left);
+        if (written < 0 && errno == EINTR)
+            continue;
+        if (written <= 0)
+        {
+            std::ostringstream ss;
+            ss << "Error writing file " << m_name << ": "
+               << (written < 0 ? strerror(errno) : "nothing could be written (is the drive full?)");
+            if (written < 0)
+                ss << " (" << errno << ")";
+            throw std::runtime_error(ss.str());
+        }
+        data += written;
+        left -= static_cast<uint32_t>(written);
+        m_pos += written;
+    }
+    return static_cast<int>(count);
 }
 
 bool File::isOpen() const { return to_fd(m_impl) != -1; }
