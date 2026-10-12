@@ -1,6 +1,6 @@
 ## tsMuxeR 2.19.1
 
-Thirty-five fixes, grouped below by area. Many are for damaged sources: a recording that lost part of a packet now gives a full output with a warning, where it used to stop the job or move every time after the damage. The others are for Matroska, MP4, subtitles, discs and the window.
+Thirty-eight changes, nearly all of them fixes, grouped below by area. Many are for damaged sources: a recording that lost part of a packet now gives a full output with a warning, where it used to stop the job or move every time after the damage. The others are for Matroska, MP4, subtitles, discs and the window.
 
 **The Intel macOS build is back since 2.19.0, and Mac users are still asked to test.** It has been built and checked, but it has not been run on an Intel Mac, because no Mac is available here. If you have one, please try it and report whether it works. On any Mac, please also try changing the subtitle font and colour in the window, and report what happens.
 
@@ -15,6 +15,8 @@ Thirty-five fixes, grouped below by area. Many are for damaged sources: a record
 * **level=4.1, timeshift=500ns and --cut-start=1.5s did not mean what they say.** level= dropped its decimal and wrote level 4.0, "ns" was read as seconds, and a fraction in --cut-start or --cut-end was cut off. Files made with such values should be made again.
 
 * **HE-AAC from Matroska or MP4 was labelled AAC Main in a transport stream.** The frames are AAC LC with the HE extension, and a player that trusts the label may refuse them. Mux such files again.
+
+* **On Linux and macOS, a mux onto a full drive reported success.** A TS or Matroska file was cut short under "Mux successful", and an ISO never finished. The mux now stops with "Error writing file ...: No space left on device", as it always did on Windows. A file made on a drive that ran full is shorter than its source: mux it again.
 
 ### Damaged sources
 
@@ -67,6 +69,8 @@ Thirty-five fixes, grouped below by area. Many are for damaged sources: a record
 * **A playlist or clip file that cannot be written stops the job by name.** A read-only file in the way, for instance, gave "Mux successful" over a disc without it, or with an old copy.
 
 * **A 3D playlist with a text subtitle wrote outside its stream list.** The stereo details of a text subtitle were written into the entry before the first one. They are kept only for an entry that has a place.
+
+* **A 3D movie split into parts kept 3D in its first part only, after BDMV folder to ISO.** With --3d-single-copy the .ssif file was rebuilt for the first part alone, so the later parts played in 2D, without a warning. Every part gets its .ssif now.
 
 * **Every Blu-ray warning that applies is shown.** One warning hid the others, so a disc with AAC was never told about a TrueHD track without its core. MPEG audio, Opus, VVC and AV1, which no Blu-ray player plays, are warned about too. The disc itself is unchanged.
 
