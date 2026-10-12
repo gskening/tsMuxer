@@ -545,7 +545,9 @@ int VvcSpsUnit::deserialize()
         const int CtbLog2SizeY = sps_log2_ctu_size_minus5 + 5;
         const unsigned CtbSizeY = 1 << CtbLog2SizeY;
         const bool sps_ptl_dpb_hrd_params_present_flag = m_reader.getBit();
-        if (sps_id == 0 && !sps_ptl_dpb_hrd_params_present_flag)
+        // H.266 7.4.3.4 requires the flag when the SPS refers to no VPS. It was tied to the SPS's own id instead, so an
+        // SPS numbered 0 that refers to a VPS was refused without it.
+        if (vps_id == 0 && !sps_ptl_dpb_hrd_params_present_flag)
             return 1;
         if (sps_ptl_dpb_hrd_params_present_flag)
             if (const int r = profile_tier_level(true, max_sublayers_minus1); r != 0)
@@ -726,7 +728,9 @@ int VvcSpsUnit::deserialize()
         weighted_pred_flag = m_reader.getBit();
         weighted_bipred_flag = m_reader.getBit();
         long_term_ref_pics_flag = m_reader.getBit();
-        inter_layer_prediction_enabled_flag = (sps_id != 0) ? m_reader.getBit() : false;
+        // Present only when the SPS refers to a VPS (H.266 7.3.2.4). It was tied to the SPS's own id instead, so an SPS
+        // numbered 1 without a VPS, or numbered 0 with one, was read one bit off from here on, its timing included.
+        inter_layer_prediction_enabled_flag = (vps_id != 0) ? m_reader.getBit() : false;
         m_reader.skipBit();  // sps_idr_rpl_present_flag
         const bool sps_rpl1_same_as_rpl0_flag = m_reader.getBit();
         for (size_t i = 0; i < (sps_rpl1_same_as_rpl0_flag ? 1 : 2); i++)
