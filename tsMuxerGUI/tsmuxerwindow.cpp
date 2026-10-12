@@ -471,14 +471,32 @@ struct Bdmv3dScan
     int missing = 0;
 };
 
+// A name inside a folder whatever its case. Discs and copies of them write BDMV, PLAYLIST, STREAM and the clip names
+// in either case, and on Linux and macOS a scan for the exact case found nothing in an upper-case copy: the 3D box was
+// greyed and forced off, and every .ssif was reported missing. The command line compares without case already.
+static QString pathNoCase(const QString& dir, const QString& name)
+{
+    const QDir d(dir);
+    if (d.exists(name))
+        return d.filePath(name);
+    for (const QString& entry : d.entryList(QDir::AllEntries | QDir::NoDotAndDotDot))
+        if (entry.compare(name, Qt::CaseInsensitive) == 0)
+            return d.filePath(entry);
+    return d.filePath(name);
+}
+
 static Bdmv3dScan scanBdmv3d(const QString& root)
 {
     Bdmv3dScan scan;
-    const QDir playlistDir(root + QStringLiteral("/BDMV/PLAYLIST"));
-    const QDir ssifDir(root + QStringLiteral("/BDMV/STREAM/SSIF"));
+    const QString bdmv = pathNoCase(root, QStringLiteral("BDMV"));
+    const QDir playlistDir(pathNoCase(bdmv, QStringLiteral("PLAYLIST")));
+    const QString streamPath = pathNoCase(bdmv, QStringLiteral("STREAM"));
+    const QString ssifPath = pathNoCase(streamPath, QStringLiteral("SSIF"));
     QStringList clips;
-    for (const QString& name : playlistDir.entryList({QStringLiteral("*.mpls")}, QDir::Files))
+    for (const QString& name : playlistDir.entryList(QDir::Files))
     {
+        if (!name.endsWith(QStringLiteral(".mpls"), Qt::CaseInsensitive))
+            continue;
         QFile file(playlistDir.filePath(name));
         if (file.size() > (1 << 20) || !file.open(QIODevice::ReadOnly))
             continue;
@@ -526,13 +544,12 @@ static Bdmv3dScan scanBdmv3d(const QString& root)
         }
     }
     // Only clips that are in the folder count: one whose .m2ts is missing too cannot be rebuilt either.
-    const QDir streamDir(root + QStringLiteral("/BDMV/STREAM"));
     for (const QString& clip : clips)
     {
-        if (!streamDir.exists(clip + QStringLiteral(".m2ts")))
+        if (!QFileInfo::exists(pathNoCase(streamPath, clip + QStringLiteral(".m2ts"))))
             continue;
         ++scan.clips;
-        if (!ssifDir.exists(clip + QStringLiteral(".ssif")))
+        if (!QFileInfo::exists(pathNoCase(ssifPath, clip + QStringLiteral(".ssif"))))
             ++scan.missing;
     }
     return scan;
@@ -1262,7 +1279,8 @@ TsMuxerWindow::TsMuxerWindow()
             // Only measure a folder that actually holds a BDMV. This also prevents walking huge
             // unrelated trees (a parent folder full of movies, or a bare drive root while a path is
             // being typed), which froze the GUI and left a misleading size on screen.
-            if (folder.isEmpty() || !QDir(folder).exists() || !QDir(folder).exists(QStringLiteral("BDMV")))
+            if (folder.isEmpty() || !QDir(folder).exists() ||
+                !QFileInfo::exists(pathNoCase(folder, QStringLiteral("BDMV"))))
             {
                 *folderBytes = -1;
                 return;
@@ -1307,7 +1325,7 @@ TsMuxerWindow::TsMuxerWindow()
         {
             const QString folder = folderEdit->text().trimmed();
             const Bdmv3dScan scan =
-                !folder.isEmpty() && QDir(folder).exists("BDMV") ? scanBdmv3d(folder) : Bdmv3dScan();
+                !folder.isEmpty() && QFileInfo::exists(pathNoCase(folder, "BDMV")) ? scanBdmv3d(folder) : Bdmv3dScan();
             singleCopy3dCheck->setEnabled(scan.clips > 0);
             if (scan.clips == 0)
             {
@@ -1334,7 +1352,7 @@ TsMuxerWindow::TsMuxerWindow()
                 folderStatusLabel->setText(QString());
                 return;
             }
-            if (!QDir(folder).exists("BDMV"))
+            if (!QFileInfo::exists(pathNoCase(folder, "BDMV")))
             {
                 folderStatusLabel->setStyleSheet(QStringLiteral("color:#b26a00; font-weight:bold;"));
                 folderStatusLabel->setText(
@@ -1765,7 +1783,7 @@ TsMuxerWindow::TsMuxerWindow()
                            "Build the ISO anyway?"),
                         QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
                     return;
-                if (!QDir(folder).exists("BDMV") &&
+                if (!QFileInfo::exists(pathNoCase(folder, "BDMV")) &&
                     QMessageBox::question(this, tr("tsMuxeR"),
                                           tr("The selected folder has no BDMV subfolder. Continue anyway?")) !=
                         QMessageBox::Yes)
