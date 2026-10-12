@@ -64,7 +64,7 @@ Thirty-nine changes, nearly all of them fixes, grouped below by area. Several ar
 
 ### Blu-ray and 3D
 
-* **The clip information named the wrong clock PID.** Without --no-pcr-on-video-pid the clock is on the video PID, but the clip information said 4097. It names the real one now. The window puts that option into every meta it makes, so discs muxed in the window were not affected, unless the meta was opened from a file or changed in the Meta file box and did not have the option.
+* **The clip information named the wrong clock PID.** Without --no-pcr-on-video-pid the clock is on the video PID, or on PID 0 when there is no video, but the clip information said 4097. It names the real one now. The window puts that option into every meta it makes, so discs muxed in the window were not affected, unless the meta was opened from a file or changed in the Meta file box and did not have the option.
 
 * **A playlist or clip file that cannot be written now stops the job, and the error names the file.** A read-only file in the way, for instance, gave "Mux successful" over a disc without it, or with an old copy.
 
