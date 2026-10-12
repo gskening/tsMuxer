@@ -1258,7 +1258,10 @@ int HEVCStreamReader::intDecodeNAL(uint8_t* buff)
                 // After the fps rewrite, because that one can move the end of the NAL.
                 applyForcedLevel(m_vps, curPos, nextNalWithStartCode + m_vpsSizeDiff);
                 nextNal += m_vpsSizeDiff;
-                storeBuffer(m_vpsBuffer, curPos, nextNalWithStartCode);
+                // The copy kept for repeating the VPS ends where the unit now ends, as the SPS one below does. It
+                // used to end at the old end, so a VPS the rewrite had made longer lost its last byte in the copy
+                // written at the start of a split part or a cut.
+                storeBuffer(m_vpsBuffer, curPos, nextNalWithStartCode + m_vpsSizeDiff);
                 break;
             case HevcUnit::NalType::SPS:
                 if (!m_sps)
