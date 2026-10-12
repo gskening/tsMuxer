@@ -103,6 +103,8 @@ class MovDemuxer final : public IOContextDemuxer
     int64_t fileDuration;
     int isom;
     std::vector<std::pair<int64_t, int64_t>> chunks;
+    // The size of each chunk of `chunks` by its own track's tables (stsc and stsz), or -1 where they do not say.
+    std::vector<int64_t> m_chunkBytes;
     size_t m_curChunk;
     AVPacket m_deliveredPacket;
     std::vector<uint8_t> m_tmpChunkBuffer;

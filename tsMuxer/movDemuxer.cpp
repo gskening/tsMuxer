@@ -857,10 +857,41 @@ void MovDemuxer::openFile(const std::string& streamName)
     m_firstHeaderSize = m_processedBytes;
 }
 
+// The byte size of each chunk of a track by its own tables: stsc gives the samples of each chunk, stsz the size of
+// each sample. -1 where they do not say: a track with one size for every sample (raw audio counts its samples in
+// units that are not bytes), or tables that run out.
+static std::vector<int64_t> ownChunkBytes(const MOVStreamContext* st)
+{
+    std::vector<int64_t> bytes(st->chunk_offsets.size(), -1);
+    if (st->sample_size != 0 || st->stsc_data.empty())
+        return bytes;
+    size_t sample = 0;
+    for (size_t e = 0; e < st->stsc_data.size(); ++e)
+    {
+        const size_t first = st->stsc_data[e].first;  // 1-based
+        const size_t last =
+            e + 1 < st->stsc_data.size() ? st->stsc_data[e + 1].first : st->chunk_offsets.size() + 1;  // exclusive
+        if (first == 0 || last < first)
+            return bytes;
+        for (size_t c = first; c < last && c <= bytes.size(); ++c)
+        {
+            const size_t n = st->stsc_data[e].count;
+            if (sample + n > st->m_index.size())
+                return bytes;
+            int64_t sum = 0;
+            for (size_t s = sample; s < sample + n; ++s) sum += st->m_index[s];
+            bytes[c - 1] = sum;
+            sample += n;
+        }
+    }
+    return bytes;
+}
+
 void MovDemuxer::buildIndex()
 {
     m_curChunk = 0;
     chunks.clear();
+    m_chunkBytes.clear();
 
     if (num_tracks == 1 && reinterpret_cast<MOVStreamContext*>(tracks[0])->chunk_offsets.empty())
     {
@@ -868,18 +899,28 @@ void MovDemuxer::buildIndex()
     }
     else
     {
+        std::map<std::pair<int64_t, int64_t>, int64_t> ownBytes;
         for (int i = 0; i < num_tracks; ++i)
         {
             const auto st = reinterpret_cast<MOVStreamContext*>(tracks[i]);
-            for (const auto& j : st->chunk_offsets)
+            const std::vector<int64_t> bytes = found_moof ? std::vector<int64_t>() : ownChunkBytes(st);
+            for (size_t k = 0; k < st->chunk_offsets.size(); ++k)
             {
+                const int64_t j = st->chunk_offsets[k];
                 if (!found_moof)
                     if (j < m_mdat_pos || j > m_mdat_pos + m_mdat_size)
                         THROW(ERR_MOV_PARSE, "Invalid chunk offset " << j)
                 chunks.emplace_back(j - m_mdat_pos, i);
+                if (k < bytes.size())
+                    ownBytes[chunks.back()] = bytes[k];
             }
         }
         sort(chunks.begin(), chunks.end());
+        for (const auto& c : chunks)
+        {
+            const auto it = ownBytes.find(c);
+            m_chunkBytes.push_back(it == ownBytes.end() ? -1 : it->second);
+        }
     }
 }
 
@@ -944,8 +985,15 @@ int MovDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepte
                 m_mdat_pos = 0;
             }
         }
-        const auto chunkSize = static_cast<int>(
+        auto chunkSize = static_cast<int>(
             found_moof ? fragmentChunkSize(mdatPos, offset, next, m_curChunk + 1 == chunks.size()) : next - offset);
+        // A chunk ends where its own samples end when its track's tables say so and that comes first. The distance to
+        // the next chunk of any track alone took in the data of a track whose tables were lost (a damaged box before
+        // them), and the AAC reader then stopped the job with "Out of index". The bytes up to the next chunk are
+        // skipped below.
+        if (!found_moof && m_curChunk < m_chunkBytes.size() && m_chunkBytes[m_curChunk] >= 0 &&
+            m_chunkBytes[m_curChunk] < chunkSize)
+            chunkSize = static_cast<int>(m_chunkBytes[m_curChunk]);
         const int trackId = static_cast<int>(chunks[m_curChunk].second);
         auto filterItr = m_pidFilters.find(trackId + 1);
         if (filterItr == m_pidFilters.end() && acceptedPIDs.find(trackId + 1) == acceptedPIDs.end())
@@ -1025,8 +1073,12 @@ int MovDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepte
                 }
             }
         }
-        if (found_moof && m_curChunk < chunks.size() - 1 && next - offset > chunkSize)
+        if (m_curChunk < chunks.size() - 1 && next - offset > chunkSize)
+        {
+            if (!found_moof)
+                discardSize += next - offset - chunkSize;
             skip_bytes(next - offset - chunkSize);
+        }
         m_curChunk++;
     }
 
