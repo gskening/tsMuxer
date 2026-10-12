@@ -221,7 +221,7 @@ int HevcUnitWithProfile::profile_tier_level(const int subLayers)
     }
     catch (BitStreamException&)
     {
-        return NOT_ENOUGH_BUFFER;
+        return UNIT_DAMAGED;  // the unit ends inside its profile: damaged or cut (the caller passes this on)
     }
 }
 
@@ -265,8 +265,8 @@ int HevcVpsUnit::deserialize()
         if (vps_max_sub_layers > 7)
             return 1;
         m_reader.skipBits(17);  // vps_temporal_id_nesting_flag, vps_reserved_0xffff_16bits
-        if (profile_tier_level(vps_max_sub_layers) != 0)
-            return 1;
+        if (const int r = profile_tier_level(vps_max_sub_layers); r != 0)
+            return r == UNIT_DAMAGED ? UNIT_DAMAGED : 1;
 
         const bool vps_sub_layer_ordering_info_present_flag = m_reader.getBit();
         for (int i = (vps_sub_layer_ordering_info_present_flag ? 0 : vps_max_sub_layers - 1);
@@ -615,8 +615,8 @@ int HevcSpsUnit::deserialize()
         if (max_sub_layers > 7)
             return 1;
         m_reader.skipBit();  // temporal_id_nesting_flag
-        if (profile_tier_level(max_sub_layers) != 0)
-            return 1;
+        if (const int r = profile_tier_level(max_sub_layers); r != 0)
+            return r == UNIT_DAMAGED ? UNIT_DAMAGED : 1;
         sps_id = extractUEGolombCode();
         if (sps_id > 15)
             return 1;

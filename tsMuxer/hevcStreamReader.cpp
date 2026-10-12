@@ -268,6 +268,7 @@ CheckStreamRez HEVCStreamReader::checkStream(uint8_t* buffer, const int len)
     };
 
     uint8_t* end = buffer + len;
+    bool auOpen = true;  // a delimiter, SEI or parameter set came after the last slice: the next slice begins a picture
     for (uint8_t* nal = NALUnit::findNextNAL(buffer, end); nal < end - 4; nal = NALUnit::findNextNAL(nal, end))
     {
         if (*nal & 0x80)
@@ -353,13 +354,22 @@ CheckStreamRez HEVCStreamReader::checkStream(uint8_t* buffer, const int len)
             break;
         }
 
-        // check Frame Depth on first slices
-        if (isSlice(nalType) && (nal[2] & 0x80))
+        // check Frame Depth on first slices. As in the mux, the first slice of an access unit begins its picture even
+        // when it does not say so (N44).
+        if (!isSlice(nalType) && !isSuffix(nalType))
+            auOpen = true;
+        else if (isSlice(nalType) && ((nal[2] & 0x80) || auOpen))
         {
+            auOpen = false;
             m_slice->decodeBuffer(nal, FFMIN(nal + MAX_SLICE_HEADER, nextNal));
-            const int r = m_slice->deserialize(m_sps, m_pps);
+            int r = m_slice->deserialize(m_sps, m_pps);
+            if (!(nal[2] & 0x80))
+                r = UNIT_DAMAGED;
+            // The same guess as the mux: an IDR picture starts the count again. Taking the next time in sequence for it
+            // left the count of the IDR period before running, every later picture looked a dozen frames deep, and that
+            // depth, which the mux keeps, moved every decoding time of the file.
             if (r == UNIT_DAMAGED)
-                m_fullPicOrder = m_frameNum;  // the check only counts pictures; its times are reset
+                m_fullPicOrder = guessPicOrder(nalType);
             else if (r)
                 return rez;  // not enough buffer or error
             else
@@ -1151,7 +1161,12 @@ int HEVCStreamReader::intDecodeNAL(uint8_t* buff)
         const auto nalType = static_cast<HevcUnit::NalType>((*curPos >> 1) & 0x3f);
         if (isSlice(nalType))
         {
-            if (curPos[2] & 0x80)  // slice.first_slice
+            // The first slice of an access unit must say so (first_slice_segment_in_pic_flag). One that does not, after
+            // the delimiter or SEI that began the access unit, has lost the flag with the rest of its header, or the
+            // slice before it was lost (N44). It used to be taken for a further slice of the picture before: the two
+            // pictures were written as one, and every decoding time after them moved. It begins its picture now.
+            const bool firstSliceFlag = curPos[2] & 0x80;
+            if (firstSliceFlag || !sliceFound)
             {
                 if (sliceFound)
                 {  // first slice of next frame: case where there is no non-VCL NAL between the two frames
@@ -1176,6 +1191,8 @@ int HEVCStreamReader::intDecodeNAL(uint8_t* buff)
                     sliceEnd = nextNal[-4] == 0 ? nextNal - 4 : nextNal - 3;
                 m_slice->decodeBuffer(curPos, FFMIN(curPos + MAX_SLICE_HEADER, sliceEnd));
                 rez = m_slice->deserialize(m_sps, m_pps);
+                if (!firstSliceFlag)
+                    rez = UNIT_DAMAGED;  // its own order is not to be trusted: a dependent segment carries none
                 // A slice header that ends before its fields do (a recording that lost part of a packet) ended
                 // the whole job with "Bitstream exception", and nothing was written. The picture is kept, as it
                 // came; its own order cannot be read, so guessPicOrder gives it one.
