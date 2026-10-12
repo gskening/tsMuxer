@@ -3855,6 +3855,21 @@ Build the ISO anyway?</source>
         <translation>קובץ הפלט &quot;%1&quot; יש סיומת לא חוקית. אנא שנה את סיומת הקובץ ל- &quot;.iso&quot;</translation>
     </message>
     <message>
+        <location filename="../tsmuxerwindow.cpp" line="5330"/>
+        <source>The output file &quot;%1&quot; has invalid extension. Please, change file extension to &quot;%2&quot;</source>
+        <translation>קובץ הפלט &quot;%1&quot; יש סיומת לא חוקית. אנא שנה את סיומת הקובץ ל- &quot;%2&quot;</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.cpp" line="3646"/>
+        <source>File not added</source>
+        <translation>הקובץ לא נוסף</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.cpp" line="3647"/>
+        <source>tsMuxeR could not read the file &quot;%1&quot; (error code %2).</source>
+        <translation>tsMuxeR לא הצליח לקרוא את הקובץ &quot;%1&quot; (קוד שגיאה %2).</translation>
+    </message>
+    <message>
         <location filename="../tsmuxerwindow.cpp" line="3101"/>
         <source>file</source>
         <extracomment>Used in expressions &quot;Overwrite existing %1&quot; and &quot;The output %1 already exists&quot;.</extracomment>

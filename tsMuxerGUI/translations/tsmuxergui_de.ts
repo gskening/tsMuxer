@@ -3855,6 +3855,21 @@ ISO trotzdem erstellen?</translation>
         <translation>Die Ausgabedatei &quot;%1&quot; hat eine ungültige Erweiterung. Bitte die Erweiterung der Datei ändern in &quot;.iso&quot;</translation>
     </message>
     <message>
+        <location filename="../tsmuxerwindow.cpp" line="5330"/>
+        <source>The output file &quot;%1&quot; has invalid extension. Please, change file extension to &quot;%2&quot;</source>
+        <translation>Die Ausgabedatei &quot;%1&quot; hat eine ungültige Erweiterung. Bitte die Erweiterung der Datei ändern in &quot;%2&quot;</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.cpp" line="3646"/>
+        <source>File not added</source>
+        <translation>Datei nicht hinzugefügt</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.cpp" line="3647"/>
+        <source>tsMuxeR could not read the file &quot;%1&quot; (error code %2).</source>
+        <translation>tsMuxeR konnte die Datei &quot;%1&quot; nicht lesen (Fehlercode %2).</translation>
+    </message>
+    <message>
         <location filename="../tsmuxerwindow.cpp" line="3101"/>
         <source>file</source>
         <extracomment>Used in expressions &quot;Overwrite existing %1&quot; and &quot;The output %1 already exists&quot;.</extracomment>

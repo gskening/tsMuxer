@@ -3855,6 +3855,21 @@ Build the ISO anyway?</source>
         <translation>出力ファイル「%1」の拡張子が無効です。拡張子を「.iso」に変更してください。</translation>
     </message>
     <message>
+        <location filename="../tsmuxerwindow.cpp" line="5330"/>
+        <source>The output file &quot;%1&quot; has invalid extension. Please, change file extension to &quot;%2&quot;</source>
+        <translation>出力ファイル「%1」の拡張子が無効です。拡張子を「%2」に変更してください。</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.cpp" line="3646"/>
+        <source>File not added</source>
+        <translation>ファイルを追加できませんでした</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.cpp" line="3647"/>
+        <source>tsMuxeR could not read the file &quot;%1&quot; (error code %2).</source>
+        <translation>tsMuxeR はファイル「%1」を読み込めませんでした (エラーコード %2)。</translation>
+    </message>
+    <message>
         <location filename="../tsmuxerwindow.cpp" line="3101"/>
         <source>file</source>
         <extracomment>Used in expressions &quot;Overwrite existing %1&quot; and &quot;The output %1 already exists&quot;.</extracomment>

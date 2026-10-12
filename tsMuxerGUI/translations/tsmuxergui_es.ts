@@ -3855,6 +3855,21 @@ Mantener la imagen en torno a 66 GB (las dos primeras capas) mejora las probabil
         <translation>El archivo de salida &quot;%1&quot; tiene una extensión inválida. Por favor, cámbiela a &quot;.iso&quot;</translation>
     </message>
     <message>
+        <location filename="../tsmuxerwindow.cpp" line="5330"/>
+        <source>The output file &quot;%1&quot; has invalid extension. Please, change file extension to &quot;%2&quot;</source>
+        <translation>El archivo de salida &quot;%1&quot; tiene una extensión inválida. Por favor, cámbiela a &quot;%2&quot;</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.cpp" line="3646"/>
+        <source>File not added</source>
+        <translation>Archivo no añadido</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.cpp" line="3647"/>
+        <source>tsMuxeR could not read the file &quot;%1&quot; (error code %2).</source>
+        <translation>tsMuxeR no pudo leer el archivo &quot;%1&quot; (código de error %2).</translation>
+    </message>
+    <message>
         <location filename="../tsmuxerwindow.cpp" line="3101"/>
         <source>file</source>
         <extracomment>Used in expressions &quot;Overwrite existing %1&quot; and &quot;The output %1 already exists&quot;.</extracomment>
