@@ -2492,6 +2492,9 @@ void TsMuxerWindow::onTsMuxerCodecInfoReceived()
         msgBox.setIcon(QMessageBox::Warning);
         msgBox.setStandardButtons(QMessageBox::Ok);
         msgBox.exec();
+        // As after a refusal (onProcessFinished): the files chosen after this one are still examined.
+        if (!addFileList.isEmpty() && m_addNextFile)
+            (this->*m_addNextFile)();
         return;
     }
     if (!unsupportedTracks.isEmpty())
@@ -3647,7 +3650,13 @@ void TsMuxerWindow::onProcessFinished(int exitCode, QProcess::ExitStatus exitSta
     if (processExitCode == 0)
         emit tsMuxerSuccessFinished();
     else if (!runInMuxMode && exitStatus == QProcess::NormalExit)
+    {
         showProbeRefusal();
+        // Adding several files went on only from a file that was added, so every file chosen after a refused one
+        // was dropped without a word. The rest is examined now, as if the refused one had not been chosen.
+        if (!addFileList.isEmpty() && m_addNextFile)
+            (this->*m_addNextFile)();
+    }
 }
 
 // tsMuxeR examined a file that was being added and ended with an error. Nothing at all appeared: the file was simply
@@ -6047,8 +6056,14 @@ void TsMuxerWindow::processAddFileList(OnCodecListReadyFn onCodecListReady, Post
     if (lastSourceDir.isEmpty())
         lastSourceDir = QFileInfo(newFileName).absolutePath();
     addFileList.removeAt(0);
+    m_addNextFile = postActionFn;
     if (!checkFileDuplicate(newFileName))
+    {
+        // The box has said so; the files chosen after this one are still added.
+        if (!addFileList.isEmpty())
+            (this->*postActionFn)();
         return;
+    }
     // disconnect(this, SIGNAL(tsMuxerSuccessFinished()));
     // disconnect(this, SIGNAL(codecListReady()));
     disconnect();

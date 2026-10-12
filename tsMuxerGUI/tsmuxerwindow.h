@@ -223,6 +223,9 @@ class TsMuxerWindow : public QWidget
     bool outFileNameDisableChange;
     MuxForm* muxForm;
     QString newFileName;
+    // The step that takes the next file of addFileList (addFile or appendFile), so that a file that is refused, or
+    // already in the list, does not end the adding of the files chosen after it.
+    void (TsMuxerWindow::*m_addNextFile)() = nullptr;
     QList<QtvCodecInfo> codecList;
     ChapterList chapters;
     double fileDuration;
