@@ -96,6 +96,8 @@ Thirty-five fixes, grouped below by area. Many are for damaged sources: a record
 
 * **The new window texts are translated** into every language of the window.
 
+* **The window keeps its settings under tsMuxeR now.** They were kept under the name of the company the original program came from; on Windows that was the registry key HKEY_CURRENT_USER\Software\Network Optix\tsMuxeR. On the first start, the settings are copied over once, so nothing chosen before is lost. The old place is left as it is, so an older version still finds its own.
+
 ## tsMuxeR 2.19.0
 
 Ninety-eight changes: ninety-two fixes and six additions, grouped below by area. Most of them are to Matroska output, to subtitles and to Blu-ray discs.

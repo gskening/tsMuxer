@@ -1,15 +1,32 @@
 #include <QApplication>
 #include <QFileInfo>
+#include <QSettings>
 #include <QUrl>
 
 #include "systemcolours.h"
 #include "tsmuxerwindow.h"
 
+// The window kept its settings under the name of the company the original program came from: on Windows the registry
+// key HKEY_CURRENT_USER/Software/Network Optix/tsMuxeR. They are kept under tsMuxeR now. On the first start under the
+// new name the old settings are copied over once, so nothing chosen before is lost; the old place is left as it is,
+// so an older version still finds its own.
+static void copySettingsFromOldName()
+{
+    QSettings current;
+    if (!current.allKeys().isEmpty())
+        return;  // already in use under the new name
+    QSettings old(QStringLiteral("Network Optix"), QStringLiteral("tsMuxeR"));
+    const QStringList keys = old.allKeys();
+    for (const QString& key : keys) current.setValue(key, old.value(key));
+    current.sync();
+}
+
 int main(int argc, char* argv[])
 {
     QApplication app(argc, argv);
-    app.setOrganizationName("Network Optix");
+    app.setOrganizationName("tsMuxeR");
     app.setApplicationName("tsMuxeR");
+    copySettingsFromOldName();
     // Before any window exists. On Windows 7 Qt paints selections black; see systemcolours.cpp.
     useSystemColoursWhereQtHasNone();
     TsMuxerWindow win;
