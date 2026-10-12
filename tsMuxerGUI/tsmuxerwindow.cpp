@@ -3256,18 +3256,21 @@ void TsMuxerWindow::modifyOutFileName(const QString fileName)
         else
             dstPath = getOutputDir();
 
+        // The output folder of the window already ends in a separator, and adding another one in front of the name
+        // showed two of them in the field. The folder is closed once, whichever way it came.
+        const QString dir = QDir::toNativeSeparators(closeDirPath(dstPath));
         if (ui->radioButtonTS->isChecked())
-            ui->outFileName->setText(dstPath + QDir::separator() + name + ".ts");
+            ui->outFileName->setText(dir + name + ".ts");
         else if (ui->radioButtonM2TS->isChecked())
-            ui->outFileName->setText(dstPath + QDir::separator() + name + ".m2ts");
+            ui->outFileName->setText(dir + name + ".m2ts");
         else if (ui->radioButtonMKV->isChecked())
-            ui->outFileName->setText(dstPath + QDir::separator() + name + ".mkv");
+            ui->outFileName->setText(dir + name + ".mkv");
         else if (ui->radioButtonBluRayISO->isChecked())
-            ui->outFileName->setText(dstPath + QDir::separator() + name + ".iso");
+            ui->outFileName->setText(dir + name + ".iso");
         else
             ui->outFileName->setText(dstPath);
         if (ui->outFileName->text() == fileName)
-            ui->outFileName->setText(dstPath + QDir::separator() + name + "_new." + fi.suffix());
+            ui->outFileName->setText(dir + name + "_new." + fi.suffix());
     }
 }
 
