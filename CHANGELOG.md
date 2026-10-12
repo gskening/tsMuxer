@@ -34,7 +34,7 @@ Thirty-eight changes, nearly all of them fixes, grouped below by area. Many are 
 
 * **DD+ 7.1 said 6 channels.** The track header counted only the 5.1 part. It says 8 now.
 
-* **MPEG-1 video, MLP and DTS Express were labelled as their bigger relatives.** They were written as MPEG-2, TrueHD and DTS, so a player that trusts the label decoded the wrong thing. Each has its own label now, and DTS Express frames are marked so a player can seek in them. Opus tracks now carry the delay the Matroska rules ask for.
+* **MPEG-1 video, MLP and DTS Express were labelled as their bigger relatives.** They were written as MPEG-2, TrueHD and DTS, so a player that trusts the label decoded the wrong thing. Each has its own label now, and DTS Express frames are marked so a player can seek in them. Opus tracks now also carry the encoder delay (CodecDelay), which the Matroska rules ask for.
 
 * **A file without video lost a delay given to its audio.** The file started at its first audio frame, so a timeshift on the audio was dropped. A file without video now keeps the source's times.
 
