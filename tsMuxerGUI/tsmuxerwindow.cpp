@@ -754,6 +754,18 @@ TsMuxerWindow::TsMuxerWindow()
     connect(ui->langComboBox, comboBoxIndexChanged, this, &TsMuxerWindow::onAudioSubtitlesParamsChanged);
     connect(ui->offsetsComboBox, comboBoxIndexChanged, this, &TsMuxerWindow::onAudioSubtitlesParamsChanged);
     connect(ui->langCodesComboBox, comboBoxIndexChanged, this, &TsMuxerWindow::onSavedParamChanged);
+    // The language box listed every code in its terminological form, so with Bibliographic chosen a track tagged
+    // "cze" showed "ces (Czech)", although "cze" is what the track keeps and what is written. The box now shows the
+    // codes in the chosen form. "As the source says" has no single form, so it shows the list as it is.
+    auto showLangCodeForm = [this]()
+    {
+        if (ui->langCodesComboBox->currentData().toString() == QLatin1String("bibliographic"))
+            langCodesModel->setShownCode([](const QString& code) { return toBibliographicLang(code); });
+        else
+            langCodesModel->setShownCode(nullptr);
+    };
+    showLangCodeForm();
+    connect(ui->langCodesComboBox, comboBoxIndexChanged, this, showLangCodeForm);
     connect(ui->comboBoxPipCorner, comboBoxIndexChanged, this, &TsMuxerWindow::onSavedParamChanged);
     connect(ui->comboBoxPipSize, comboBoxIndexChanged, this, &TsMuxerWindow::onSavedParamChanged);
     connect(ui->spinBoxPipOffsetH, spinBoxValueChanged, this, &TsMuxerWindow::onSavedParamChanged);

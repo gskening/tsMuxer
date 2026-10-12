@@ -2,6 +2,7 @@
 #define LANG_CODES_H_
 
 #include <array>
+#include <functional>
 
 #include <QAbstractListModel>
 
@@ -12,14 +13,18 @@ class LangCodesModel : public QAbstractListModel
     LangCodesModel(QObject* parent = nullptr) : QAbstractListModel(parent) { onLanguageChanged(); }
 
     void onLanguageChanged();
+    // How a code is shown. The rows always hold the terminological code, which is what the window matches tracks
+    // against; with the bibliographic form chosen on the General tab, "ces (Czech)" is shown as "cze (Czech)".
+    void setShownCode(std::function<QString(const QString&)> shownCode);
 
    private:
     struct QtvLangCode
     {
         const char* code;
         QString lang;
-        QVariant toVariant(int role) const;
+        QVariant toVariant(int role, const std::function<QString(const QString&)>& shownCode) const;
     };
+    std::function<QString(const QString&)> m_shownCode;
 
     std::array<QtvLangCode, 13> m_shortLangList;
     std::array<QtvLangCode, 486> m_fullLangList;

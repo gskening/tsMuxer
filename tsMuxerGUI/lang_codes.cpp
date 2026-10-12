@@ -1,11 +1,12 @@
 #include "lang_codes.h"
 
-QVariant LangCodesModel::QtvLangCode::toVariant(int role) const
+QVariant LangCodesModel::QtvLangCode::toVariant(int role,
+                                                const std::function<QString(const QString&)>& shownCode) const
 {
     switch (role)
     {
     case Qt::DisplayRole:
-        return QString("%1 (%2)").arg(code).arg(lang);
+        return QString("%1 (%2)").arg(shownCode ? shownCode(QString::fromLatin1(code)) : QString::fromLatin1(code)).arg(lang);
     case Qt::UserRole:
         return code;
     default:
@@ -26,7 +27,7 @@ QVariant LangCodesModel::data(const QModelIndex& index, int role) const
     {
     case UND_ROW_IDX:
     {
-        return m_undLang.toVariant(role);
+        return m_undLang.toVariant(role, m_shownCode);
     }
     case COMMON_ROW_IDX:
     {
@@ -41,11 +42,11 @@ QVariant LangCodesModel::data(const QModelIndex& index, int role) const
     {
         if (row > ALL_ROW_IDX)
         {
-            return m_fullLangList[row - (ALL_ROW_IDX + 1)].toVariant(role);
+            return m_fullLangList[row - (ALL_ROW_IDX + 1)].toVariant(role, m_shownCode);
         }
         else
         {
-            return m_shortLangList[row - (COMMON_ROW_IDX + 1)].toVariant(role);
+            return m_shortLangList[row - (COMMON_ROW_IDX + 1)].toVariant(role, m_shownCode);
         }
     }
     }
@@ -59,6 +60,13 @@ Qt::ItemFlags LangCodesModel::flags(const QModelIndex& index) const
     // which then dropped lang= from the meta. Disabled, they are passed over and show greyed out.
     return (index.row() == COMMON_ROW_IDX || index.row() == ALL_ROW_IDX) ? Qt::NoItemFlags
                                                                          : QAbstractListModel::flags(index);
+}
+
+void LangCodesModel::setShownCode(std::function<QString(const QString&)> shownCode)
+{
+    m_shownCode = std::move(shownCode);
+    const QVector<int> roles{Qt::DisplayRole};
+    emit dataChanged(index(0, 0), index(ROW_COUNT - 1, 0), roles);
 }
 
 void LangCodesModel::onLanguageChanged()
