@@ -2,6 +2,8 @@
 
 Thirty-five fixes, grouped below by area. Many are for damaged sources: a recording that lost part of a packet now gives a full output with a warning, where it used to stop the job or move every time after the damage. The others are for Matroska, MP4, subtitles, discs and the window.
 
+**The Intel macOS build is back since 2.19.0, and Mac users are still asked to test.** It has been built and checked, but it has not been run on an Intel Mac, because no Mac is available here. If you have one, please try it and report whether it works. On any Mac, please also try changing the subtitle font and colour in the window, and report what happens.
+
 **If something goes wrong, please report it** with the bug report form on GitHub, and include as much as you can: the version line and the full log, the meta file (the text in the Meta file box of the window), what you expected and what happened instead, and the player you used. A short sample of the source helps most.
 
 ### Worth acting on
