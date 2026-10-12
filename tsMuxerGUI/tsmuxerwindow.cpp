@@ -5155,10 +5155,10 @@ void TsMuxerWindow::RadioButtonMuxClick()
         {
             oldFileName = fi.fileName();
             // A name with no folder in front, as "default.ts" is while no file has been added with the output going
-            // into the input's folder, was resolved against the program's own folder. That folder then stuck: the
-            // name was no longer "default", so adding a file did not replace it, and the disc went into the
-            // program folder (#564). Such a name gives the output folder the window would use now, empty until a
-            // file is added.
+            // into the input's folder, was resolved against the current folder, on Windows usually the program's
+            // own. That folder then stuck: the name was no longer "default", so adding a file did not replace it,
+            // and the disc went into that folder (justdan96/tsMuxer#564). Such a name now gives the output folder
+            // the window would use, which is empty until a file is added and is then taken from that file.
             if (fi.isRelative() && !ui->outFileName->text().contains('/') && !ui->outFileName->text().contains('\\'))
                 ui->outFileName->setText(getOutputDir());
             else
@@ -5197,9 +5197,13 @@ void TsMuxerWindow::RadioButtonMuxClick()
 
 void TsMuxerWindow::outFileNameChanged()
 {
-    outFileNameModified = true;
+    // Only a name the user gives counts as theirs. The window's own changes, made while outFileNameDisableChange is
+    // set (choosing another output does that), used to count too, so a name the window had put there was kept when a
+    // file was added: "default.mkv" stayed after choosing Matroska first, and an output folder that was still empty
+    // stayed empty, and the mux was then refused for the missing output.
     if (outFileNameDisableChange)
         return;
+    outFileNameModified = true;
     if (ui->radioButtonDemux->isChecked() || ui->radioButtonBluRay->isChecked() || ui->radioButtonAVCHD->isChecked())
         return;
 
