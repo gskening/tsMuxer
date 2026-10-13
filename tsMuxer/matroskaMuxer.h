@@ -309,7 +309,9 @@ class MatroskaMuxer final : public AbstractMuxer
     static int writeColourInfo(uint8_t* dst, const MkvTrackInfo& track);
 
     // Start a new cluster at the given timecode (milliseconds)
-    void startCluster(int64_t timecodeMs);
+    // Returns how far the cluster it closed moved the part's timeline back (flushCluster): a time taken before the call
+    // is that much later than the same time taken after it.
+    int64_t startCluster(int64_t timecodeMs);
     // Flush the current cluster to the file
     void flushCluster();
 
@@ -334,6 +336,11 @@ class MatroskaMuxer final : public AbstractMuxer
     void putCrcElement(uint8_t* at, uint32_t crc) const;
     // A .webm output: DocType webm and the WebM subset of Matroska (openDstFile).
     bool m_webm = false;
+    // A split part starts at the earliest time any picture of it might show, which is not yet known when it is cut. Its
+    // first cluster is still in memory when that time is known, and is moved back to it (flushCluster).
+    bool m_partOriginPending = false;
+    int64_t m_partMinRelMs = INT64_MAX;
+    int64_t m_partShiftApplied = 0;  // set by flushCluster when it moved a part back, taken by startCluster
     // --keep-editions: the source's Chapters body and segment identity, written as they stand.
     bool m_keepEditions = false;
     AbstractDemuxer::SourceEditions m_sourceEditions;

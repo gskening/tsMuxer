@@ -2482,10 +2482,14 @@ void MatroskaMuxer::replayBufferedPackets()
 
 // ──────────────── Cluster writing ────────────────────────────────────────────
 
-void MatroskaMuxer::startCluster(int64_t timecodeMs)
+int64_t MatroskaMuxer::startCluster(int64_t timecodeMs)
 {
     if (m_clusterOpen)
         flushCluster();
+    // The cluster just closed may have moved the part back; this one is on the moved timeline.
+    const int64_t shift = m_partShiftApplied;
+    m_partShiftApplied = 0;
+    timecodeMs -= shift;
 
     m_clusterTimecodeMs = timecodeMs;
     m_clusterBuf.clear();
@@ -2506,6 +2510,7 @@ void MatroskaMuxer::startCluster(int64_t timecodeMs)
     const int len = ebml_write_uint(buf, MATROSKA_ID_CLUSTERTIMECODE, static_cast<uint64_t>(timecodeMs));
     m_clusterBuf.insert(m_clusterBuf.end(), buf, buf + len);
     m_clusterDataSize += len;
+    return shift;
 }
 
 // ──────────────── Frame data conversion ──────────────────────────────────────
@@ -2861,6 +2866,33 @@ void MatroskaMuxer::flushCluster()
     if (!m_clusterOpen || m_clusterBuf.empty())
         return;
 
+    // The first cluster of a split part, cut at the earliest time a picture of it could show, which for a keyframe that
+    // nothing is shown before is a frame or two early. Now its pictures are known: the cluster moves back by the
+    // earliest of them, every block of the part with it, so its first picture is at 0 as the first part's is. An
+    // audio frame that began before it stays where it is in time, a few milliseconds before 0. The cluster's timestamp
+    // stays the same width, so no position in the cluster moves; where it would not, the part keeps the start it has.
+    if (m_partOriginPending)
+    {
+        m_partOriginPending = false;
+        const int64_t delta = m_partMinRelMs;
+        const int64_t newTc = m_clusterTimecodeMs - delta;
+        uint8_t oldBuf[16], newBuf[16];
+        const int oldLen =
+            ebml_write_uint(oldBuf, MATROSKA_ID_CLUSTERTIMECODE, static_cast<uint64_t>(m_clusterTimecodeMs));
+        if (delta != INT64_MAX && delta > 0 && newTc >= 0 &&
+            ebml_write_uint(newBuf, MATROSKA_ID_CLUSTERTIMECODE, static_cast<uint64_t>(newTc)) == oldLen &&
+            m_clusterBuf.size() >= static_cast<size_t>(CRC_ELEMENT_BYTES + oldLen) &&
+            memcmp(m_clusterBuf.data() + CRC_ELEMENT_BYTES, oldBuf, oldLen) == 0)
+        {
+            memcpy(m_clusterBuf.data() + CRC_ELEMENT_BYTES, newBuf, oldLen);
+            m_clusterTimecodeMs = newTc;
+            m_firstTimecode += delta * INTERNAL_PTS_PER_MS;
+            for (CueEntry& cue : m_cueEntries) cue.timecodeMs -= delta;
+            for (auto& [trackNumber, ms] : m_lastAudioCueMs) ms -= delta;
+            m_partShiftApplied = delta;
+        }
+    }
+
     // Write Cluster master element with known size
     uint8_t header[16];
     int hdrLen = ebml_write_id(header, MATROSKA_ID_CLUSTER);
@@ -2985,7 +3017,7 @@ void MatroskaMuxer::writeTextBlock(MkvTrackInfo& track, const uint8_t* data, con
     }
     // The start and the end on the same millisecond grid as every other block, so that the end
     // written is where the subtitle really ends, whatever the fraction of a millisecond the start had
-    const int64_t relMs = internalToRoundedMs(pts - m_firstTimecode);
+    int64_t relMs = internalToRoundedMs(pts - m_firstTimecode);
     const int64_t durationMs = (std::max)(int64_t{1}, internalToRoundedMs(pts + duration - m_firstTimecode) - relMs);
     if (!track.hasMaxBlockPts || pts > track.maxBlockPts)
     {
@@ -3001,7 +3033,7 @@ void MatroskaMuxer::writeTextBlock(MkvTrackInfo& track, const uint8_t* data, con
                                 m_clusterDataSize >= CLUSTER_MAX_SIZE;
     const int64_t offset = relMs - m_clusterTimecodeMs;
     if (needNewCluster || (m_clusterOpen && relMs >= 0 && (offset < INT16_MIN || offset > INT16_MAX)))
-        startCluster(relMs);
+        relMs -= startCluster(relMs);
     const auto relTimeMs = static_cast<int16_t>(relMs - m_clusterTimecodeMs);
     addCue(track, relMs, durationMs);
 
@@ -3056,7 +3088,7 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
     if (track.trackType != MKV_TRACK_TYPE_SUBTITLE && !m_heldText.empty())
         flushHeldText(pts);
     // Compute PTS relative to stream start (convert internal PTS units to milliseconds)
-    const int64_t relMs = internalToRoundedMs(pts - m_firstTimecode);
+    int64_t relMs = internalToRoundedMs(pts - m_firstTimecode);
 
     // This track's two largest timestamps, for the Segment Duration at close
     if (!track.hasMaxBlockPts || pts > track.maxBlockPts)
@@ -3086,7 +3118,7 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
     // cluster timestamp is unsigned
     const int64_t offset = relMs - m_clusterTimecodeMs;
     if (needNewCluster || (m_clusterOpen && relMs >= 0 && (offset < INT16_MIN || offset > INT16_MAX)))
-        startCluster(relMs);
+        relMs -= startCluster(relMs);
 
     // Cue points, as RFC 9559 (22.1) recommends: every video keyframe, every subtitle a player can show from, and in a
     // file without video each audio track at most once every 500 ms. Only video keyframes had one, so a player could
@@ -3095,6 +3127,8 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
                                                  (track.trackType == 2 && audioCueDue(track, relMs))))
         addCue(track, relMs, -1);
 
+    if (m_partOriginPending && track.trackNumber == m_mainTrackNumber)
+        m_partMinRelMs = (std::min)(m_partMinRelMs, relMs);
     const int16_t relTimeMs = static_cast<int16_t>(relMs - m_clusterTimecodeMs);
 
     // The last frame of a track that ends in padding goes into a BlockGroup with its DiscardPadding, which a
@@ -4295,8 +4329,9 @@ bool MatroskaMuxer::splitDue(const int64_t pts)
 {
     if (m_splitSize > 0)
         return m_file.pos() + static_cast<int64_t>(m_clusterBuf.size()) > m_splitSize;
+    // At the first keyframe at or after the length asked for: a keyframe exactly on it starts the next part.
     if (m_splitDuration > 0)
-        return pts - m_firstTimecode > m_splitDuration;
+        return pts - m_firstTimecode >= m_splitDuration;
     bool due = false;
     // Step past every chapter already reached: two marks closer together than the next key frame give one split.
     while (m_nextChapterSplit < m_chapterSplitPts.size() &&
@@ -4339,6 +4374,8 @@ void MatroskaMuxer::startNextPart(MkvTrackInfo& current, const int64_t origin)
         track.hasTextEnd = false;
     }
     m_firstTimecode = origin;
+    m_partOriginPending = true;
+    m_partMinRelMs = INT64_MAX;
 
     openDestination();
     writeSegmentInfo();
