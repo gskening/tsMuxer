@@ -1,3 +1,17 @@
+## tsMuxeR 2.19.4
+
+Two fixes for MP4 and M4A files: a mux that had read the whole file could still end with "The output is incomplete", and a file with its moov after a large mdat could fail at random with "moov atom not found".
+
+**The Intel macOS build has been back since 2.19.0, and Mac users are still asked to test.** It has been built and checked, but it has not been run on an Intel Mac, because no Mac is available here. If you have an Intel Mac, please try it and report whether it works. On any Mac, please also try changing the subtitle font and colour in the window, and report what happens.
+
+**If something goes wrong, please report it** with the bug report form on GitHub, and include as much as you can: the version line and the full log, the meta file (the text in the Meta file box of the window), what you expected and what happened instead, and the player you used. A short sample of the source helps most.
+
+### Matroska and MP4 input
+
+* **A complete mux from an MP4 with the moov at the end, or from a fragmented MP4, no longer fails.** Since 2.18.16 a mux stops with exit code -2 when it has read less than 99 % of its sources, and the MP4 reader left the moov after the media data and the headers between the fragments out of that count. A short M4A with the moov at the end, or a fragmented MP4, could fail this way although the output was complete. That output is unchanged. A join of fragmented MP4 files without an mfra box stopped after the first file, and now goes on to the next.
+
+* **An MP4 with its moov after a large mdat no longer fails at random with "moov atom not found".** Since 2.19.1 the MP4 reader steps over a box larger than 4 MiB with a seek. A read still under way could land after the seek and mark the file as finished, so the moov was not found and the job stopped. On an 11 MB file with the moov at the end, 9 of 40 runs failed this way. A job that failed this way can be run again.
+
 ## tsMuxeR 2.19.3
 
 One fix, for TrueHD merged with its AC-3 core and moved by a timeshift: the audio could reach the player seconds after it was due.
