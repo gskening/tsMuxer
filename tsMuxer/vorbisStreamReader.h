@@ -14,8 +14,8 @@
 // own. The first gives nothing, and is timed as a container places it: one packet length early, with the length of
 // a packet whose block before it was the same as its own, so the sound starts at the time of the second.
 //
-// Vorbis has no form in a transport stream or on a Blu-ray disc, so a Matroska output is the only one that can carry
-// it (MuxerManager::checkTrackList).
+// Vorbis has no form in a transport stream or on a Blu-ray disc: it goes into a Matroska output, or is demuxed into an
+// Ogg file (writeAdditionData). MuxerManager::checkTrackList refuses the rest.
 class VorbisStreamReader final : public SimplePacketizerReader
 {
    public:
@@ -42,8 +42,14 @@ class VorbisStreamReader final : public SimplePacketizerReader
     double getFrameDuration() override;
     const CodecInfo& getCodecInfo() override;
     const std::string getStreamInfo() override;
+    // Demux: the Ogg page header of each packet, the header packets' pages in front of the first.
+    int writeAdditionData(uint8_t* dstBuffer, uint8_t* dstEnd, AVPacket& avPacket,
+                          PriorityDataInfo* priorityData) override;
 
    private:
+    // An Ogg page header (RFC 3533) for packets of the given sizes, its CRC over the header and the payload.
+    int oggPageHeader(uint8_t* dst, const uint8_t* dstEnd, const std::vector<int>& packets, uint8_t headerType,
+                      int64_t granule, const uint8_t* payload, int payloadSize);
     bool parseIdentification(const uint8_t* data, int size);
     bool parseSetup(const uint8_t* data, int size);
 
@@ -57,6 +63,12 @@ class VorbisStreamReader final : public SimplePacketizerReader
     int m_prevBlock;               // the block size of the packet before, 0 before the first
     int m_curFrameSamples;
     int m_leadSamples;
+    // the three header packets, cut out of the CodecPrivate (setCodecPrivate)
+    std::vector<uint8_t> m_headers[3];
+    bool m_oggHeadersWritten = false;
+    int64_t m_granulePos = 0;
+    int m_oggPrevBlock = 0;
+    uint32_t m_oggPageSeqNo = 0;
 };
 
 #endif  // VORBIS_STREAM_READER_H_

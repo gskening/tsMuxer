@@ -301,10 +301,11 @@ void MuxerManager::checkTrackList(const vector<StreamInfo>& ci) const
 {
     // VP8, VP9, Vorbis and ALAC have no form in a transport stream or on a Blu-ray disc, and tsMuxeR writes no file of
     // their own for a demux: a Matroska output is the only one that can carry them.
+    // A demux writes Vorbis into an Ogg file.
     if (m_demuxMode || !dynamic_cast<MatroskaMuxer*>(m_mainMuxer.get()))
         for (const StreamInfo& si : ci)
             for (const CodecInfo* only : {&vp8CodecInfo, &vp9CodecInfo, &vorbisCodecInfo, &alacCodecInfo})
-                if (si.m_codec == only->programName)
+                if (si.m_codec == only->programName && !(m_demuxMode && only == &vorbisCodecInfo))
                     THROW(ERR_COMMON, only->displayName
                                           << " can only be muxed into a Matroska file (.mkv). It has no form in a "
                                              "transport stream or on a Blu-ray disc, and a demux has no file to write "

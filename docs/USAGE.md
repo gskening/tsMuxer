@@ -149,7 +149,7 @@ A_MP3             | MPEG audio layer 1/2/3
 A_LPCM            | raw pcm data or PCM WAV file 
 A_FLAC            | FLAC (MKV and demux output only)
 A_OPUS            | Opus (TS, MKV, and demux output only)
-A_VORBIS          | Vorbis (read from MKV and WebM; MKV output only)
+A_VORBIS          | Vorbis (read from MKV and WebM; MKV output, or demuxed to an .ogg file)
 A_ALAC            | Apple Lossless (read from MKV; MKV output only)
 S_HDMV/PGS        | Presentation graphic stream (BD subtitle format) 
 S_TEXT/UTF8       | SRT subtitle format.  Encoding MUST be  UTF-8/UTF-16/UTF-32 

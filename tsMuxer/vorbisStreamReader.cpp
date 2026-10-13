@@ -263,6 +263,9 @@ bool VorbisStreamReader::setCodecPrivate(const uint8_t* data, const int size)
         return false;
     const uint8_t* ident = data + pos;
     const uint8_t* setup = ident + sizes[0] + sizes[1];
+    m_headers[0].assign(ident, ident + sizes[0]);
+    m_headers[1].assign(ident + sizes[0], setup);
+    m_headers[2].assign(setup, data + size);
     if (!parseIdentification(ident, sizes[0]) || !parseSetup(setup, static_cast<int>(size - (setup - data))))
         return false;
     // The same headers again are the next file of a join, and the stream goes on: the packet after them overlaps the
@@ -335,6 +338,98 @@ int VorbisStreamReader::decodeFrame(uint8_t* buff, uint8_t* end, int& skipBytes,
         m_prevBlock = block;
     }
     return static_cast<int>(len);
+}
+
+int VorbisStreamReader::oggPageHeader(uint8_t* dst, const uint8_t* dstEnd, const std::vector<int>& packets,
+                                      const uint8_t headerType, const int64_t granule, const uint8_t* payload,
+                                      const int payloadSize)
+{
+    std::vector<uint8_t> lacing;
+    for (const int size : packets)
+    {
+        for (int left = size; left >= 255; left -= 255) lacing.push_back(255);
+        lacing.push_back(static_cast<uint8_t>(size % 255));
+    }
+    const int headerSize = 27 + static_cast<int>(lacing.size());
+    if (lacing.size() > 255 || dstEnd - dst < headerSize)
+        return 0;
+    uint8_t* p = dst;
+    memcpy(p, "OggS", 4);
+    p[4] = 0;  // version
+    p[5] = headerType;
+    for (int i = 0; i < 8; i++) p[6 + i] = static_cast<uint8_t>(granule >> (8 * i));
+    for (int i = 0; i < 4; i++) p[14 + i] = static_cast<uint8_t>(0x56726273u >> (8 * i));  // serial "Vrbs"
+    for (int i = 0; i < 4; i++) p[18 + i] = static_cast<uint8_t>(m_oggPageSeqNo >> (8 * i));
+    memset(p + 22, 0, 4);  // CRC, below
+    p[26] = static_cast<uint8_t>(lacing.size());
+    memcpy(p + 27, lacing.data(), lacing.size());
+    // CRC-32 with polynomial 0x04C11DB7, no reflection, over the header and the payload (RFC 3533, 6)
+    uint32_t crc = 0;
+    const auto add = [&crc](const uint8_t* b, const int n)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            crc ^= static_cast<uint32_t>(b[i]) << 24;
+            for (int k = 0; k < 8; k++) crc = crc & 0x80000000u ? crc << 1 ^ 0x04C11DB7u : crc << 1;
+        }
+    };
+    add(p, headerSize);
+    add(payload, payloadSize);
+    for (int i = 0; i < 4; i++) p[22 + i] = static_cast<uint8_t>(crc >> (8 * i));
+    m_oggPageSeqNo++;
+    return headerSize;
+}
+
+int VorbisStreamReader::writeAdditionData(uint8_t* dstBuffer, uint8_t* dstEnd, AVPacket& avPacket,
+                                          PriorityDataInfo* priorityData)
+{
+    if (!m_demuxMode)
+        return 0;
+    uint8_t* dst = dstBuffer;
+    // The identification header on a page of its own, the first of the stream; the comment and setup headers on the
+    // next (Vorbis I, A.2).
+    if (!m_oggHeadersWritten && !m_headers[0].empty())
+    {
+        m_oggHeadersWritten = true;
+        const int h0 = oggPageHeader(dst, dstEnd, {static_cast<int>(m_headers[0].size())}, 0x02, 0, m_headers[0].data(),
+                                     static_cast<int>(m_headers[0].size()));
+        if (h0 == 0 || dstEnd - (dst + h0) < static_cast<int64_t>(m_headers[0].size()))
+            return 0;
+        dst += h0;
+        memcpy(dst, m_headers[0].data(), m_headers[0].size());
+        dst += m_headers[0].size();
+        std::vector<uint8_t> second(m_headers[1]);
+        second.insert(second.end(), m_headers[2].begin(), m_headers[2].end());
+        const int h1 =
+            oggPageHeader(dst, dstEnd, {static_cast<int>(m_headers[1].size()), static_cast<int>(m_headers[2].size())},
+                          0, 0, second.data(), static_cast<int>(second.size()));
+        if (h1 == 0 || dstEnd - (dst + h1) < static_cast<int64_t>(second.size()))
+            return static_cast<int>(dst - dstBuffer);
+        dst += h1;
+        memcpy(dst, second.data(), second.size());
+        dst += second.size();
+    }
+    // The packet's page: the muxer writes the packet itself after it. Its granule position is the number of samples
+    // decoded once the packet is: none for the first packet.
+    if (avPacket.data != nullptr && avPacket.size > 0)
+    {
+        // From the packet itself, as the reader may already be further on: its mode gives its block, and it adds a
+        // quarter of the block before it and a quarter of its own.
+        if ((avPacket.data[0] & 1) == 0 && !m_modeLong.empty())
+        {
+            const uint32_t mode = m_modeBits ? (avPacket.data[0] >> 1) & ((1u << m_modeBits) - 1) : 0;
+            if (mode < m_modeLong.size())
+            {
+                const int block = m_blockSize[m_modeLong[mode] ? 1 : 0];
+                if (m_oggPrevBlock)
+                    m_granulePos += m_oggPrevBlock / 4 + block / 4;
+                m_oggPrevBlock = block;
+            }
+        }
+        const int h = oggPageHeader(dst, dstEnd, {avPacket.size}, 0, m_granulePos, avPacket.data, avPacket.size);
+        dst += h;
+    }
+    return static_cast<int>(dst - dstBuffer);
 }
 
 double VorbisStreamReader::getFrameDuration()

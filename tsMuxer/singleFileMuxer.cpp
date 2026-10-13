@@ -96,6 +96,10 @@ void SingleFileMuxer::intAddStream(const std::string& streamName, const std::str
     {
         fileExt = ".opus";
     }
+    else if (codecName == "A_VORBIS")
+    {
+        fileExt = ".ogg";
+    }
     else if (codecName == "A_AC3")
     {
         const auto ac3Reader = dynamic_cast<AC3StreamReader*>(codecReader);
