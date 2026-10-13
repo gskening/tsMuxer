@@ -21,6 +21,10 @@ class AV1StreamReader final : public MPEGStreamReader
     void setBuffer(uint8_t* data, uint32_t dataLen, bool lastBlock = false) override;
     int prepareDemuxPacket(uint8_t* data, int size, const uint8_t** outData) override;
 
+    // The last sequence header OBU of the stream as a file stores it: with its size field, without emulation
+    // prevention. Empty before one was found.
+    [[nodiscard]] std::vector<uint8_t> sequenceHeaderObu() const;
+
    protected:
     const CodecInfo& getCodecInfo() override;
     int intDecodeNAL(uint8_t* buff) override;

@@ -813,18 +813,19 @@ std::vector<uint8_t> MatroskaMuxer::buildAV1ConfigRecord(AbstractStreamReader* r
     const uint8_t bitDepth = hdr.getBitDepth();
     const uint8_t highBitdepth = (bitDepth > 8) ? 1 : 0;
     const uint8_t twelveBit = (bitDepth == 12) ? 1 : 0;
-    record.push_back(static_cast<uint8_t>((0 << 7) |             // seq_tier_0
-                                          (highBitdepth << 6) |  // high_bitdepth
-                                          (twelveBit << 5) |     // twelve_bit
+    record.push_back(static_cast<uint8_t>(((hdr.seq_tier_0 & 1) << 7) |  // seq_tier_0, which was always written 0
+                                          (highBitdepth << 6) |          // high_bitdepth
+                                          (twelveBit << 5) |             // twelve_bit
                                           (hdr.mono_chrome << 4) | (hdr.chroma_subsampling_x << 3) |
                                           (hdr.chroma_subsampling_y << 2) | (hdr.chroma_sample_position & 0x03)));
     // initial_presentation_delay_present(1) | reserved/initial_presentation_delay_minus_one(3) | padding(4)
     record.push_back(0x00);
 
-    // Note: We only write the 4-byte AV1CodecConfigurationRecord here.
-    // The sequence header OBU is included in the first frame's data (as part of
-    // the low-overhead OBU stream), so the decoder will pick it up from there.
-    // This avoids issues with emulation prevention byte round-tripping.
+    // configOBUs: the sequence header OBU, as the file stores it (low overhead format, with its size field, no
+    // emulation prevention). The record ended after its four bytes, which is allowed, but the Matroska mapping of AV1
+    // has the CodecPrivate carry the sequence header so that a reader need not look for it in the first block.
+    const std::vector<uint8_t> seqHdrObu = av1->sequenceHeaderObu();
+    record.insert(record.end(), seqHdrObu.begin(), seqHdrObu.end());
 
     return record;
 }

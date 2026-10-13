@@ -327,6 +327,18 @@ CheckStreamRez AV1StreamReader::checkStream(uint8_t* buffer, const int len)
 // intDecodeNAL - process OBUs between start codes
 // ---------------------------------------------------------------------------
 
+std::vector<uint8_t> AV1StreamReader::sequenceHeaderObu() const
+{
+    std::vector<uint8_t> onDisk;
+    if (m_seqHdrBuffer.isEmpty())
+        return onDisk;
+    std::vector<uint8_t> framed{0, 0, 1};
+    framed.insert(framed.end(), m_seqHdrBuffer.data(), m_seqHdrBuffer.data() + m_seqHdrBuffer.size());
+    if (av1_start_codes_to_low_overhead(framed.data(), framed.data() + framed.size(), onDisk) <= 0)
+        onDisk.clear();
+    return onDisk;
+}
+
 int AV1StreamReader::intDecodeNAL(uint8_t* buff)
 {
     bool frameFound = false;
