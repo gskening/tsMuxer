@@ -227,7 +227,9 @@ void BufferedReader::thread_main()
                         if (data->itr)
                         {
                             std::string nextFileName = data->itr->getNextName();
-                            if (nextFileName != data->m_streamName)
+                            // The next part may be the same file again ("a.mkv"+"a.mkv"): it is opened again
+                            // and read from its start. A name equal to the current one used to be taken for no
+                            // next part at all, and the second pass was never read.
                             {
                                 data->closeStream();
                                 data->m_streamName = nextFileName;
@@ -261,7 +263,7 @@ void BufferedReader::thread_main()
                                         while (bytesReaded == 0 && data->itr)
                                         {
                                             const std::string moreName = data->itr->getNextName();
-                                            if (moreName.empty() || moreName == data->m_streamName)
+                                            if (moreName.empty())
                                                 break;
                                             data->closeStream();
                                             data->m_streamName = moreName;
