@@ -916,8 +916,9 @@ All parameters in this group start with two dashes:
                       is ell, deu, nld, and bibliographic is gre, ger, dut, which
                       is what eac3to shows. Takes source, terminological or
                       bibliographic; terminological is the default and is what
-                      earlier versions did. This changes nothing about what gets
-                      WRITTEN: a lang= reaches the disc exactly as it is typed.
+                      earlier versions did. A lang= of three letters reaches the
+                      disc exactly as it is typed; a lang= given as a BCP 47 tag
+                      (pt-BR) is written as its ISO 639-2 code in this form.
                       Unlike the options below it is a command line argument, not
                       a MUXOPT entry, so that it also applies when listing a file.
 --split-chapters      Split the output at the chapter marks the source carries,

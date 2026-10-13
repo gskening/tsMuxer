@@ -335,7 +335,10 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
         track.language = src->second;
 
     // Only beside a language taken from the source: a lang= in the meta replaces the source's language, tag and all.
-    if (params.find("lang") == params.end())
+    // A lang= given as a BCP 47 tag (langbcp47) is written as that tag.
+    if (const auto tag = params.find("langbcp47"); tag != params.end())
+        track.languageBCP47 = tag->second;
+    else if (params.find("lang") == params.end())
         if (const auto tag = params.find("srclangbcp47"); tag != params.end())
             track.languageBCP47 = tag->second;
 

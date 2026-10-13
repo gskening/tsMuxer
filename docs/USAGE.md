@@ -157,7 +157,7 @@ Common additional parameters for any type of track:
 Parameter         | Description 
 ---               | --- 
 track             | track number if input file is a container.
-lang              | track language. MUST contain exactly 3 letters. 
+lang              | track language: three letters, an ISO 639-2 code such as eng or deu, or a BCP 47 tag such as de, pt-BR or zh-Hant. A tag becomes its ISO 639-2 code (in the form --lang-codes asks for) on a disc, in a transport stream and in a demuxed file name; a Matroska output writes the tag as well. 
 
 Additional parameters for audio tracks:
 

@@ -250,6 +250,67 @@ static bool isLangCodeForMeta(const std::string& value)
     return true;
 }
 
+// A well formed BCP 47 language tag (RFC 5646, 2.1) that starts with a language of two or three letters: the language,
+// up to three extended languages, then a script, a region, variants, extensions and a private part, each in its
+// place. "de", "pt-BR", "zh-Hant-TW", "sr-Latn-RS" and "de-CH-1996" are; "german", "en_US" and "x-klingon" are not.
+static bool isBcp47Tag(const std::string& value)
+{
+    std::vector<std::string> parts;
+    size_t start = 0;
+    while (true)
+    {
+        const size_t dash = value.find('-', start);
+        parts.push_back(value.substr(start, dash == std::string::npos ? std::string::npos : dash - start));
+        if (dash == std::string::npos)
+            break;
+        start = dash + 1;
+    }
+    const auto all = [](const std::string& s, auto test)
+    {
+        if (s.empty())
+            return false;
+        for (const char c : s)
+            if (!test(static_cast<unsigned char>(c)))
+                return false;
+        return true;
+    };
+    const auto alpha = [&](const std::string& s) { return all(s, [](unsigned char c) { return isalpha(c) != 0; }); };
+    const auto digit = [&](const std::string& s) { return all(s, [](unsigned char c) { return isdigit(c) != 0; }); };
+    const auto alnum = [&](const std::string& s) { return all(s, [](unsigned char c) { return isalnum(c) != 0; }); };
+
+    size_t i = 0;
+    if (!(alpha(parts[0]) && (parts[0].size() == 2 || parts[0].size() == 3)))
+        return false;
+    ++i;
+    for (int ext = 0; ext < 3 && i < parts.size() && parts[i].size() == 3 && alpha(parts[i]); ++ext) ++i;  // extlang
+    if (i < parts.size() && parts[i].size() == 4 && alpha(parts[i]))
+        ++i;  // script
+    if (i < parts.size() && ((parts[i].size() == 2 && alpha(parts[i])) || (parts[i].size() == 3 && digit(parts[i]))))
+        ++i;  // region
+    while (i < parts.size() && alnum(parts[i]) &&
+           ((parts[i].size() >= 5 && parts[i].size() <= 8) ||
+            (parts[i].size() == 4 && isdigit(static_cast<unsigned char>(parts[i][0])) != 0)))
+        ++i;  // variants
+    while (i < parts.size() && parts[i].size() == 1 && alnum(parts[i]) && tolower(parts[i][0]) != 'x')
+    {
+        // an extension: its singleton, then one or more parts of 2 to 8
+        ++i;
+        const size_t first = i;
+        while (i < parts.size() && parts[i].size() >= 2 && parts[i].size() <= 8 && alnum(parts[i])) ++i;
+        if (i == first)
+            return false;
+    }
+    if (i < parts.size() && parts[i].size() == 1 && tolower(parts[i][0]) == 'x')
+    {
+        ++i;
+        const size_t first = i;
+        while (i < parts.size() && !parts[i].empty() && parts[i].size() <= 8 && alnum(parts[i])) ++i;
+        if (i == first)
+            return false;
+    }
+    return i == parts.size();
+}
+
 static NamedAs familyOfContent(const uint8_t* buf, const int len, const char** name, bool* isM2ts)
 {
     if (len >= 192 * 17)
@@ -1088,18 +1149,32 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
         // a word, a demux tried to make a file name of it, and a long one overran a buffer in the Matroska output. So
         // it has to be three letters, as the help has always said. lang= with nothing after it stays allowed: it
         // leaves the track without a language.
+        //
+        // Or a BCP 47 tag (de, pt-BR, zh-Hant-TW), as a Matroska file names a language. The track then gets the
+        // ISO 639-2 code the tag stands for, in the form --lang-codes asks for, which is what a disc, a transport
+        // stream and a demuxed file name carry; a Matroska output writes the tag itself as well.
         if (!itr->second.empty() && !isLangCodeForMeta(itr->second))
         {
             const std::string& value = itr->second;
-            const std::string shown =
-                value.size() <= 40 ? value
-                                   : value.substr(0, 40) + "... (" + std::to_string(value.size()) + " characters)";
-            THROW(ERR_COMMON, "lang=" << shown << " on the line of " << codec
-                                      << " is not a language code. lang= takes three letters, an ISO 639-2 code "
-                                         "such as eng, ger or deu; lang=und marks an undetermined language, and "
-                                         "lang= with nothing after it leaves the track without one.")
+            const std::string code = isBcp47Tag(value) ? iso639FromBcp47(value) : std::string();
+            if (code.empty())
+            {
+                const std::string shown =
+                    value.size() <= 40 ? value
+                                       : value.substr(0, 40) + "... (" + std::to_string(value.size()) + " characters)";
+                THROW(ERR_COMMON, "lang=" << shown << " on the line of " << codec
+                                          << " is not a language code. lang= takes three letters, an ISO 639-2 code "
+                                             "such as eng, ger or deu, or a BCP 47 tag such as en, de-CH or pt-BR; "
+                                             "lang=und marks an undetermined language, and lang= with nothing after "
+                                             "it leaves the track without one.")
+            }
+            streamInfo.m_lang = applyLangCodeStyle(code);
+            streamInfo.m_langBCP47 = value;
+            streamInfo.m_addParams["lang"] = streamInfo.m_lang;
+            streamInfo.m_addParams["langbcp47"] = value;
         }
-        streamInfo.m_lang = itr->second;
+        else
+            streamInfo.m_lang = itr->second;
     }
     else if (dataReader != &m_containerReader && !fileList.empty() && !langFromFileName(fileList[0]).empty())
     {
@@ -1230,7 +1305,7 @@ static bool isKnownTrackParam(const std::string& name)
         // not warn. srcdefault is the source container's own default track flag.
         "forced", "hearing-impaired", "visual-impaired", "text-descriptions", "original", "commentary", "srclang",
         "srclangbcp47", "srcdefault", "srcname", "srcflags", "srccolour", "srcdisplay", "srcendpadding", "srcpgsrate",
-        "srccrop", "srcfieldorder", "srcprojection", "srccodecdelay"};
+        "srccrop", "srcfieldorder", "srcprojection", "srccodecdelay", "langbcp47"};
     return known.find(name) != known.end();
 }
 
