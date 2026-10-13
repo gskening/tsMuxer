@@ -10,6 +10,7 @@
 #include "abstractDemuxer.h"
 #include "bufferedReader.h"
 #include "bufferedReaderManager.h"
+#include "ioContextDemuxer.h"
 #include "tsPacket.h"
 
 // typedef StreamReaderMap std::map<int, AbstractStreamReader*>;
@@ -67,6 +68,21 @@ class TSDemuxer final : public AbstractDemuxer
 
    private:
     [[nodiscard]] bool mvcContinueExpected() const;
+
+    // DVB subtitles (stream type 0x06 with a subtitling descriptor), which tsMuxeR writes as PGS: each PES is gathered,
+    // and when the next one begins, its pictures are drawn as PGS display sets, handed on as the PID's data.
+    struct DvbSubtitlePes
+    {
+        std::vector<uint8_t> pes;  // the payload of the PES being gathered
+        int64_t pts = -1;          // its time, internal clock, on the timeline the PGS of a TS is on
+        std::shared_ptr<ParsedTrackPrivData> converter;
+    };
+    std::map<int, DvbSubtitlePes> m_dvbSubtitles;
+    bool m_dvbSubtitlesFinished = false;
+    [[nodiscard]] bool isDvbSubtitlePid(int pid) const;
+    // The PGS handed on is read by the PGS reader and counted as read there; the DVB bytes it came from count as
+    // discarded, less what was handed on, so that the two add up to the file.
+    void convertDvbSubtitlePes(int pid, DvbSubtitlePes& sub, DemuxedData& demuxedData, bool last, int64_t& discardSize);
     void readProgramTables(uint8_t* data, const uint8_t* lastFrameAddr, bool laterClip);
 
     int64_t m_firstPCRTime;

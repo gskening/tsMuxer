@@ -3,6 +3,8 @@
 #include <fs/systemlog.h>
 
 #include "abstractStreamReader.h"
+#include "bitmapSubtitles.h"
+#include "matroskaParser.h"
 #include "vodCoreException.h"
 #include "vod_common.h"
 
@@ -143,8 +145,10 @@ void TSDemuxer::getTrackList(std::map<int32_t, TrackInfo>& trackList)
                             m_nonMVCVideoFound = true;
                         pmtBufferLen = 0;
                         for (const auto& [fst, snd] : m_pmt.pidList)
-                            trackList.insert(std::make_pair(snd.m_pid, TrackInfo(static_cast<int>(snd.m_streamType),
-                                                                                 snd.m_lang, 0, snd.m_dvbDescriptor)));
+                            trackList.insert(std::make_pair(
+                                snd.m_pid, TrackInfo(isDvbSubtitlePid(snd.m_pid) ? TRACKTYPE_PGS
+                                                                                 : static_cast<int>(snd.m_streamType),
+                                                     snd.m_lang, 0, snd.m_dvbDescriptor)));
                         nonProcPMTPid.erase(pid);
                         if (nonProcPMTPid.empty() && !mvcContinueExpected())
                         {  // all pmt pids processed
@@ -303,6 +307,15 @@ int TSDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepted
     }
     if (readedBytes + m_tmpBufferLen == 0 || (readedBytes == 0 && m_lastReadRez == BufferedReader::DATA_EOF))
     {
+        if (!m_dvbSubtitles.empty() && !m_dvbSubtitlesFinished)
+        {
+            m_dvbSubtitlesFinished = true;
+            for (auto& [pid, sub] : m_dvbSubtitles)
+                if (m_acceptedPidCache[pid])
+                    convertDvbSubtitlePes(pid, sub, demuxedData, true, discardSize);
+            m_lastReadRez = readRez;
+            return 0;
+        }
         m_lastReadRez = readRez;
         return BufferedReader::DATA_EOF;
     }
@@ -442,6 +455,19 @@ int TSDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepted
                     m_firstPtsTime[pid] = curPts;
             }
 
+            if (m_acceptedPidCache[pid] && isDvbSubtitlePid(pid))
+            {
+                DvbSubtitlePes& sub = m_dvbSubtitles[pid];
+                convertDvbSubtitlePes(pid, sub, demuxedData, false, discardSize);
+                if ((pesPacket->flagsLo & 0x80) == 0x80)
+                {
+                    // on the PGS timeline: from the first video picture, joined files one after another
+                    const int64_t ptsBase = m_firstVideoPTS != -1 ? m_firstVideoPTS : m_firstPTS;
+                    sub.pts = (pesPacket->getPts() - ptsBase + m_prevFileLen) * INTERNAL_PTS_FREQ / 90000;
+                }
+                else
+                    sub.pts = -1;
+            }
             if (streamInfo != m_pmt.pidList.end() &&
                 streamInfo->second.m_streamType != StreamType::SUB_PGS)  // demux PGS with PES headers
                 frameData += pesPacket->getHeaderLength();
@@ -467,6 +493,12 @@ int TSDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepted
             continue;
 
         const int64_t payloadLen = TS_FRAME_SIZE - (frameData - m_curPos);
+        if (payloadLen > 0 && isDvbSubtitlePid(pid))
+        {
+            DvbSubtitlePes& sub = m_dvbSubtitles[pid];
+            sub.pes.insert(sub.pes.end(), frameData, frameData + payloadLen);
+            continue;
+        }
         if (payloadLen > 0)
         {
             if (pid != lastPid)
@@ -492,12 +524,77 @@ int TSDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepted
     return 0;
 }
 
+bool TSDemuxer::isDvbSubtitlePid(const int pid) const
+{
+    const auto info = m_pmt.pidList.find(pid);
+    return info != m_pmt.pidList.end() && info->second.m_streamType == StreamType::PRIVATE_DATA &&
+           info->second.m_dvbDescriptor == static_cast<int>(TSDescriptorTag::DVB_SUBTITLING);
+}
+
+void TSDemuxer::convertDvbSubtitlePes(const int pid, DvbSubtitlePes& sub, DemuxedData& demuxedData, const bool last,
+                                      int64_t& discardSize)
+{
+    if (!sub.converter)
+    {
+        // The composition and ancillary page of the subtitling descriptor, as a Matroska track keeps them.
+        uint8_t pages[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+        bool havePages = false;
+        const auto info = m_pmt.pidList.find(pid);
+        if (info != m_pmt.pidList.end())
+            for (int i = 0; i + 2 <= info->second.m_esInfoLen;)
+            {
+                const uint8_t tag = info->second.m_esInfoData[i];
+                const uint8_t len = info->second.m_esInfoData[i + 1];
+                if (tag == static_cast<uint8_t>(TSDescriptorTag::DVB_SUBTITLING) && len >= 8 &&
+                    i + 2 + 8 <= info->second.m_esInfoLen)
+                {
+                    memcpy(pages, info->second.m_esInfoData + i + 2 + 4, 4);
+                    havePages = true;
+                    break;
+                }
+                i += 2 + len;
+            }
+        sub.converter = std::make_shared<ParsedBitmapSubTrackData>(
+            new DvbSubDecoder(havePages ? pages : nullptr, havePages ? 4 : 0, 0.0));
+    }
+    StreamData& out = demuxedData[pid];
+    const auto append = [&out, &discardSize](const AVPacket& pkt)
+    {
+        if (pkt.size <= 0 || !pkt.data)
+            return;
+        discardSize -= pkt.size;
+        out.grow(pkt.size);
+        memcpy(out.data() + out.size() - pkt.size, pkt.data, pkt.size);
+    };
+    if (!sub.pes.empty() && sub.pts >= 0)
+    {
+        AVPacket pkt;
+        pkt.pts = sub.pts;
+        pkt.duration = AV_NOPTS_VALUE_INTERNAL;
+        sub.converter->extractData(&pkt, sub.pes.data(), static_cast<int>(sub.pes.size()));
+        append(pkt);
+        delete[] pkt.data;
+    }
+    sub.pes.clear();
+    if (last)
+    {
+        AVPacket pkt;
+        if (sub.converter->finish(&pkt))
+        {
+            append(pkt);
+            delete[] pkt.data;
+        }
+    }
+}
+
 void TSDemuxer::openFile(const std::string& streamName)
 {
     m_streamName = streamName;
     m_streamNameLow = strToLowerCase(unquoteStr(streamName));
     readClose();
     m_lastPesPts.clear();
+    m_dvbSubtitles.clear();
+    m_dvbSubtitlesFinished = false;
     m_lastPesDts.clear();
     m_fullPtsTime.clear();
     m_fullDtsTime.clear();

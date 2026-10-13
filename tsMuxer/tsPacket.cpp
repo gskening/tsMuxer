@@ -385,6 +385,9 @@ uint32_t TS_program_map_section::extractDescriptors(uint8_t* curPos, const int e
         else if (tag == TSDescriptorTag::DVB_SUBTITLING || tag == TSDescriptorTag::DVB_TELETEXT)
         {
             pmtInfo.m_dvbDescriptor = static_cast<int>(tag);
+            // The language of a DVB subtitle track is in this descriptor, which as a rule is the only one it has.
+            if (tag == TSDescriptorTag::DVB_SUBTITLING && len >= 3 && pmtInfo.m_lang[0] == 0)
+                for (int i = 0; i < 3; i++) pmtInfo.m_lang[i] = static_cast<char>(descrBuf[i]);
         }
         else if (tag == TSDescriptorTag::REGISTRATION && len >= 4)
         {
