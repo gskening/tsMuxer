@@ -1533,9 +1533,24 @@ int MatroskaDemuxer::matroska_read_header()
             {
                 track->parsed_priv_data = new ParsedOpusTrackData(track->codec_priv, track->codec_priv_size);
             }
-            else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SRT))
+            else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SRT) ||
+                     !strcmp(track->codec_id, MATROSKA_CODEC_ID_TEXT_ASCII))
             {
                 track->parsed_priv_data = new ParsedSRTTrackData(track->codec_priv, track->codec_priv_size);
+            }
+            else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_TEXT_ASS) ||
+                     !strcmp(track->codec_id, MATROSKA_CODEC_ID_TEXT_SSA))
+            {
+                track->parsed_priv_data =
+                    new ParsedSRTTrackData(track->codec_priv, track->codec_priv_size, ParsedSRTTrackData::Form::Ass);
+            }
+            else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_TEXT_WEBVTT) ||
+                     !strcmp(track->codec_id, MATROSKA_CODEC_ID_WEBM_WEBVTT))
+            {
+                track->parsed_priv_data = new ParsedSRTTrackData(track->codec_priv, track->codec_priv_size,
+                                                                 !strcmp(track->codec_id, MATROSKA_CODEC_ID_WEBM_WEBVTT)
+                                                                     ? ParsedSRTTrackData::Form::WebmVtt
+                                                                     : ParsedSRTTrackData::Form::WebVtt);
             }
             else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_PGS))
             {
@@ -3804,7 +3819,10 @@ int MatroskaDemuxer::getTrackType(const MatroskaTrack* track)
     if (track->codec_id == nullptr)
         return 0;
 
-    if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SRT))
+    if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SRT) || !strcmp(track->codec_id, MATROSKA_CODEC_ID_TEXT_ASCII) ||
+        !strcmp(track->codec_id, MATROSKA_CODEC_ID_TEXT_ASS) || !strcmp(track->codec_id, MATROSKA_CODEC_ID_TEXT_SSA) ||
+        !strcmp(track->codec_id, MATROSKA_CODEC_ID_TEXT_WEBVTT) ||
+        !strcmp(track->codec_id, MATROSKA_CODEC_ID_WEBM_WEBVTT))
         return TRACKTYPE_SRT;
     if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_AUDIO_PCM_BIG))
         return TRACKTYPE_WAV;

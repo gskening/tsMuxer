@@ -514,13 +514,156 @@ void ParsedAC3TrackData::extractData(AVPacket* pkt, uint8_t* buff, const int siz
 
 // ------------ SRT ---------------
 
-ParsedSRTTrackData::ParsedSRTTrackData(uint8_t* buff, const int size) : ParsedTrackPrivData(buff, size)
+// The text of an ASS or SSA event as SRT text. The block holds ReadOrder, Layer, Style, Name, MarginL, MarginR,
+// MarginV, Effect and Text (Matroska codec mapping, 5.3); the text is everything after the eighth comma. Override codes
+// in braces turn italic, bold and underline on and off, which SRT has as <i>, <b> and <u>; the others (position,
+// colour, karaoke and the like) are dropped, and so is the text of a drawing (\p1 up to \p0). \N and \n are line
+// breaks and \h a hard space.
+static std::string assToSrtText(const std::string& event)
+{
+    size_t start = 0;
+    for (int comma = 0; comma < 8 && start != std::string::npos; ++comma)
+    {
+        start = event.find(',', start);
+        if (start != std::string::npos)
+            ++start;
+    }
+    const std::string text = start == std::string::npos ? event : event.substr(start);
+    std::string out;
+    bool italic = false, bold = false, underline = false, drawing = false;
+    const auto toggle = [&out](bool& state, const bool on, const char* tag)
+    {
+        if (on == state)
+            return;
+        state = on;
+        out += on ? std::string("<") + tag + ">" : std::string("</") + tag + ">";
+    };
+    for (size_t i = 0; i < text.size(); ++i)
+    {
+        const char c = text[i];
+        if (c == '{')
+        {
+            const size_t close = text.find('}', i);
+            if (close == std::string::npos)
+                break;
+            const std::string block = text.substr(i + 1, close - i - 1);
+            for (size_t t = block.find('\\'); t != std::string::npos; t = block.find('\\', t + 1))
+            {
+                const std::string code = block.substr(t + 1, block.find('\\', t + 1) - t - 1);
+                if (code.size() >= 2 && code[0] == 'i' && isdigit(static_cast<unsigned char>(code[1])))
+                    toggle(italic, code[1] != '0', "i");
+                else if (code.size() >= 2 && code[0] == 'b' && isdigit(static_cast<unsigned char>(code[1])))
+                    toggle(bold, code[1] != '0', "b");
+                else if (code.size() >= 2 && code[0] == 'u' && isdigit(static_cast<unsigned char>(code[1])))
+                    toggle(underline, code[1] != '0', "u");
+                else if (code.size() >= 2 && code[0] == 'p' && isdigit(static_cast<unsigned char>(code[1])))
+                    drawing = code[1] != '0';
+                else if (code == "r")
+                {
+                    toggle(italic, false, "i");
+                    toggle(bold, false, "b");
+                    toggle(underline, false, "u");
+                }
+            }
+            i = close;
+            continue;
+        }
+        if (drawing)
+            continue;
+        if (c == '\\' && i + 1 < text.size() && (text[i + 1] == 'N' || text[i + 1] == 'n'))
+        {
+            out += '\n';
+            ++i;
+            continue;
+        }
+        if (c == '\\' && i + 1 < text.size() && text[i + 1] == 'h')
+        {
+            out += ' ';
+            ++i;
+            continue;
+        }
+        out += c;
+    }
+    toggle(underline, false, "u");
+    toggle(bold, false, "b");
+    toggle(italic, false, "i");
+    return out;
+}
+
+// The text of a WebVTT cue as SRT text: <i>, <b> and <u> kept, the other tags (classes, voices, languages, ruby,
+// timestamps) dropped with their text kept, the character references of the format turned into their characters.
+static std::string webVttToSrtText(const std::string& cue)
+{
+    std::string out;
+    for (size_t i = 0; i < cue.size(); ++i)
+    {
+        if (cue[i] == '<')
+        {
+            const size_t close = cue.find('>', i);
+            if (close == std::string::npos)
+                break;
+            std::string tag = cue.substr(i + 1, close - i - 1);
+            const bool end = !tag.empty() && tag[0] == '/';
+            std::string name = tag.substr(end ? 1 : 0);
+            name = name.substr(0, name.find_first_of(". \t"));
+            if (name == "i" || name == "b" || name == "u")
+                out += std::string("<") + (end ? "/" : "") + name + ">";
+            i = close;
+            continue;
+        }
+        if (cue[i] == '&')
+        {
+            static const std::pair<const char*, const char*> REFS[] = {{"&amp;", "&"},
+                                                                       {"&lt;", "<"},
+                                                                       {"&gt;", ">"},
+                                                                       {"&nbsp;", "\xC2\xA0"},
+                                                                       {"&lrm;", "\xE2\x80\x8E"},
+                                                                       {"&rlm;", "\xE2\x80\x8F"}};
+            bool done = false;
+            for (const auto& [ref, value] : REFS)
+                if (cue.compare(i, strlen(ref), ref) == 0)
+                {
+                    out += value;
+                    i += strlen(ref) - 1;
+                    done = true;
+                    break;
+                }
+            if (done)
+                continue;
+        }
+        out += cue[i];
+    }
+    return out;
+}
+
+ParsedSRTTrackData::ParsedSRTTrackData(uint8_t* buff, const int size, const Form form)
+    : ParsedTrackPrivData(buff, size), m_form(form)
 {
     m_packetCnt = 0;
 }
 
-void ParsedSRTTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int size)
+void ParsedSRTTrackData::extractData(AVPacket* pkt, uint8_t* buff, int size)
 {
+    // ASS, SSA and WebVTT reach the SRT reader as SRT text, which tsMuxeR renders to PGS or keeps as text. They were
+    // not read at all: a Matroska file with such a track listed it as a stream of unknown type.
+    std::string converted;
+    if (m_form != Form::Srt)
+    {
+        std::string text(reinterpret_cast<const char*>(buff), static_cast<size_t>(size));
+        if (m_form == Form::WebmVtt)
+        {
+            // the cue identifier and the cue settings, a line each, come first
+            for (int line = 0; line < 2; ++line)
+            {
+                const size_t nl = text.find('\n');
+                text = nl == std::string::npos ? std::string() : text.substr(nl + 1);
+            }
+        }
+        converted = m_form == Form::Ass ? assToSrtText(text) : webVttToSrtText(text);
+        buff = reinterpret_cast<uint8_t*>(converted.data());
+        size = static_cast<int>(converted.size());
+    }
+
     std::string prefix;
     if (m_packetCnt == 0)
         prefix = "\xEF\xBB\xBF";  // UTF-8 header

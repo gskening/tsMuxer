@@ -264,6 +264,11 @@ constexpr auto MATROSKA_CODEC_ID_VIDEO_VFW_FOURCC = "V_MS/VFW/FOURCC";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_ACM = "A_MS/ACM";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_AC3 = "A_AC3";
 constexpr auto MATROSKA_CODEC_ID_SRT = "S_TEXT/UTF8";
+constexpr auto MATROSKA_CODEC_ID_TEXT_ASCII = "S_TEXT/ASCII";
+constexpr auto MATROSKA_CODEC_ID_TEXT_ASS = "S_TEXT/ASS";
+constexpr auto MATROSKA_CODEC_ID_TEXT_SSA = "S_TEXT/SSA";
+constexpr auto MATROSKA_CODEC_ID_TEXT_WEBVTT = "S_TEXT/WEBVTT";
+constexpr auto MATROSKA_CODEC_ID_WEBM_WEBVTT = "D_WEBVTT/SUBTITLES";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_AAC = "A_AAC";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_PCM_BIG = "A_PCM/INT/BIG";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_PCM_LIT = "A_PCM/INT/LIT";
@@ -386,12 +391,22 @@ class ParsedLPCMTrackData final : public ParsedTrackPrivData
 class ParsedSRTTrackData final : public ParsedTrackPrivData
 {
    public:
-    ParsedSRTTrackData(uint8_t* buff, int size);
+    // The text subtitle formats of Matroska, all handed on as SRT: S_TEXT/UTF8 as it is, and the others turned into
+    // its text, which keeps italic, bold and underline and drops what SRT cannot carry.
+    enum class Form
+    {
+        Srt,     // S_TEXT/UTF8, S_TEXT/ASCII
+        Ass,     // S_TEXT/ASS, S_TEXT/SSA
+        WebVtt,  // S_TEXT/WEBVTT: the cue text
+        WebmVtt  // D_WEBVTT/SUBTITLES: the cue identifier and settings lines first
+    };
+    ParsedSRTTrackData(uint8_t* buff, int size, Form form = Form::Srt);
     void extractData(AVPacket* pkt, uint8_t* buff, int size) override;
     ~ParsedSRTTrackData() override = default;
 
    private:
     int m_packetCnt;
+    Form m_form;
 };
 
 class ParsedVC1TrackData final : public ParsedTrackPrivData
