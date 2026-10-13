@@ -24,6 +24,17 @@ class MatroskaDemuxer final : public IOContextDemuxer
     int simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& acceptedPIDs, int64_t& discardSize) override;
     void getTrackList(std::map<int32_t, TrackInfo>& trackList) override;
     std::vector<AVChapter> getChapters() override;
+    // The end of the data only once the stream has been demuxed to its end. The last block of a file comes with the
+    // end flag, and this demuxer reads it byte by byte and may stop part way through it, its demux block full. The
+    // flag was passed on as it stood, and the reader of the track took the data of that call for the last: the rest of
+    // the block was never demuxed. A join of two Matroska files of 1.26 MB each lost 45 of its 254 pictures that way.
+    int getLastReadRez() override
+    {
+        if (m_demuxEnded)
+            return m_lastReadRez;
+        return m_lastReadRez == AbstractReader::DATA_EOF && (m_curPos < m_bufEnd || !packets.empty()) ? 0
+                                                                                                      : m_lastReadRez;
+    }
     // The parts a player plays for this file, in order: those of its default edition when that edition is ordered,
     // or the files of a hard-linked chain when this file is the first of it. Empty when the file plays as it is.
     // `how` says what was found, for the log.
@@ -94,6 +105,7 @@ class MatroskaDemuxer final : public IOContextDemuxer
     int level_up;
     int peek_id;
     bool done;
+    bool m_demuxEnded = false;      // simpleDemuxBlock has met the end of the stream
     bool m_tracksFinished = false;  // the converters were asked for what they still held
     bool queueFinalPackets();
     char m_title[1024];

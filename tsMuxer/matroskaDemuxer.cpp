@@ -4278,6 +4278,7 @@ int MatroskaDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& ac
         const int readRez = readPacket(packet);
         if (readRez == BufferedReader::DATA_EOF)
         {
+            m_demuxEnded = true;
             discardSize = m_processedBytes - m_lastProcessedBytes - demuxedSize;
             m_lastProcessedBytes = m_processedBytes;
             return readRez;
