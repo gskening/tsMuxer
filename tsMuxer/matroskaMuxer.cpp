@@ -2140,6 +2140,11 @@ void MatroskaMuxer::writeChapters()
         p += ebml_write_uint(atom.data() + p, MATROSKA_ID_CHAPTERUID, ++uid);
         p += ebml_write_uint(atom.data() + p, MATROSKA_ID_CHAPTERTIMESTART,
                              static_cast<uint64_t>(startSec * 1000000000.0 + 0.5));
+        // The end the source gave, which was dropped. Optional for chapters that are not ordered (RFC 9559, 20.2.2).
+        if (index < m_chapterInfo.size() &&
+            m_chapterInfo[index].end > static_cast<int64_t>(startSec * 1000000000.0 + 0.5))
+            p += ebml_write_uint(atom.data() + p, MATROSKA_ID_CHAPTERTIMEEND,
+                                 static_cast<uint64_t>(m_chapterInfo[index].end));
         p += ebml_write_uint(atom.data() + p, MATROSKA_ID_CHAPTERFLAGHIDDEN, 0);
         atom.resize(p);
         atom.insert(atom.end(), displays.begin(), displays.end());
@@ -4031,7 +4036,13 @@ void MatroskaMuxer::writePartChapters(const int64_t partEndPts)
         if (m_allChapters[i] < partStart - 0.0005 || m_allChapters[i] >= partEnd - 0.0005)
             continue;
         m_chapters.push_back((std::max)(0.0, m_allChapters[i] - partStart));
-        m_chapterInfo.push_back(i < m_allChapterInfo.size() ? m_allChapterInfo[i] : AVChapter());
+        AVChapter info = i < m_allChapterInfo.size() ? m_allChapterInfo[i] : AVChapter();
+        if (info.end >= 0)  // counted from the part's start too, and not past the part's end
+        {
+            const double endSec = (std::min)(static_cast<double>(info.end) / 1e9, partEnd) - partStart;
+            info.end = endSec > 0 ? static_cast<int64_t>(endSec * 1e9 + 0.5) : -1;
+        }
+        m_chapterInfo.push_back(info);
     }
     writeChapters();
 }

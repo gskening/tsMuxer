@@ -24,6 +24,9 @@ struct AVChapter
     }
     bool operator<(const AVChapter& other) const { return start < other.start; }
     int64_t start;
+    // Where the chapter ends, in nanoseconds on the same clock as start; -1 where the source did not say (a Matroska
+    // ChapterTimeEnd is optional). Whatever moves start moves this too.
+    int64_t end = -1;
     std::string cTitle;
     // The language the title is written in, as the source spelled it. Empty where the source did
     // not say, which Matroska allows: ChapterLanguage has a default rather than being required.

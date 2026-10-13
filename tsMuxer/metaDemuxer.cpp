@@ -1291,6 +1291,8 @@ static std::vector<AVChapter> joinedMatroskaChapters(const BufferedReaderManager
         for (AVChapter chapter : partDemuxer.getChapters())
         {
             chapter.start += offsetNano;
+            if (chapter.end >= 0)
+                chapter.end += offsetNano;
             if (chapter.start >= 0)
                 chapters.push_back(std::move(chapter));
         }
@@ -1379,7 +1381,12 @@ std::vector<AVChapter> METADemuxer::getChapters()
         {
             // A play timeline: a chapter where each part starts, named as the chapter of the edition it comes from.
             chapters.clear();
-            for (const JoinRange& range : join->getRanges()) chapters.emplace_back(range.offsetNs, range.name);
+            for (const JoinRange& range : join->getRanges())
+            {
+                if (!chapters.empty())
+                    chapters.back().end = range.offsetNs;  // a part ends where the next one starts
+                chapters.emplace_back(range.offsetNs, range.name);
+            }
         }
         else if (join && join->getFiles().size() > 1 && dynamic_cast<MatroskaDemuxer*>(demuxerData.m_demuxer))
             chapters = joinedMatroskaChapters(m_readManager, join->getFiles(), nullptr);

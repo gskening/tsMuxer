@@ -2767,6 +2767,7 @@ void MatroskaDemuxer::loadChapters(const std::string& fileName)
     {
         uint64_t uid = 0;
         int64_t start = -1;
+        int64_t end = -1;
         bool hidden = false;
         std::vector<AVChapter::Name> names;
         std::vector<std::pair<int64_t, int64_t>> nested;
@@ -2781,6 +2782,8 @@ void MatroskaDemuxer::loadChapters(const std::string& fileName)
                 uid = readUInt(b, len);
             else if (id == MATROSKA_ID_CHAPTERTIMESTART)
                 start = static_cast<int64_t>(readUInt(b, len));
+            else if (id == MATROSKA_ID_CHAPTERTIMEEND)
+                end = static_cast<int64_t>(readUInt(b, len));
             else if (id == MATROSKA_ID_CHAPTERFLAGHIDDEN)
                 hidden = readUInt(b, len) != 0;
             else if (id == MATROSKA_ID_CHAPTERATOM)
@@ -2816,6 +2819,8 @@ void MatroskaDemuxer::loadChapters(const std::string& fileName)
             AVChapter chapter(start, names.empty() ? "" : names.front().title,
                               names.empty() ? "" : names.front().language);
             chapter.names = names;
+            if (end > start)
+                chapter.end = end;
             found[uid != 0 && found.find(uid) == found.end() ? uid : noUid++] = chapter;
         }
         for (const auto& [b, len] : nested) readAtom(b, len);

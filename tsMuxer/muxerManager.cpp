@@ -395,6 +395,8 @@ std::vector<AVChapter> MuxerManager::readSourceChapters()
         {
             AVChapter moved = chapter;
             moved.start -= startNano;
+            if (moved.end >= 0)
+                moved.end -= startNano;
             kept.push_back(std::move(moved));
         }
     }
@@ -402,6 +404,7 @@ std::vector<AVChapter> MuxerManager::readSourceChapters()
     {
         AVChapter first = *playing;
         first.start = 0;
+        first.end = first.end > startNano ? first.end - startNano : -1;
         kept.insert(kept.begin(), std::move(first));
     }
     std::sort(kept.begin(), kept.end());
