@@ -6,7 +6,7 @@
 #include "simplePacketizerReader.h"
 
 // Vorbis audio, read from Matroska and WebM. Like Opus, a Vorbis packet has no sync code: the Matroska parser
-// (ParsedVorbisTrackData) puts a 4 byte big endian length in front of each, and the three header packets of the
+// (ParsedMarkedTrackData) puts a 4 byte big endian length in front of each, and the three header packets of the
 // track's CodecPrivate in front of the first, behind the mark "VORBISCP" and their own length.
 //
 // A packet's length in samples is not written anywhere. It follows from the setup header: each packet names a mode,

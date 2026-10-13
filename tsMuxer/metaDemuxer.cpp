@@ -16,6 +16,7 @@ static bool isKnownTrackParam(const std::string& name);
 
 #include "aacStreamReader.h"
 #include "ac3StreamReader.h"
+#include "alacStreamReader.h"
 #include "av1StreamReader.h"
 #include "avCodecs.h"
 #include "bufferedReaderManager.h"
@@ -2278,6 +2279,8 @@ CheckStreamRez METADemuxer::detectTrackReader(uint8_t* tmpBuffer, int len,
     // Vorbis the same way: its packets have no sync code to find.
     if (containerDataType == TRACKTYPE_VORBIS)
         return VorbisStreamReader().checkStream(tmpBuffer, len, containerType, containerDataType, containerStreamIndex);
+    if (containerDataType == TRACKTYPE_ALAC)
+        return AlacStreamReader().checkStream(tmpBuffer, len, containerType, containerDataType, containerStreamIndex);
 
     // The container says what the track is, and that was being thrown away. Every video probe
     // below runs before the MPEG audio one, which is alone among the audio readers in sitting
@@ -2623,6 +2626,8 @@ AbstractStreamReader* METADemuxer::createCodec(const string& codecName, const ma
         rez = new OpusStreamReader();
     else if (codecName == "A_VORBIS")
         rez = new VorbisStreamReader();
+    else if (codecName == "A_ALAC")
+        rez = new AlacStreamReader();
     else if (codecName == "A_DTS")
     {
         rez = new DTSStreamReader();

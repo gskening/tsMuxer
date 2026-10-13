@@ -281,11 +281,11 @@ void MuxerManager::preinitMux(const std::string& outFileName, FileFactory* fileF
 
 void MuxerManager::checkTrackList(const vector<StreamInfo>& ci) const
 {
-    // VP8, VP9 and Vorbis have no form in a transport stream or on a Blu-ray disc, and tsMuxeR writes no file of their
-    // own for a demux: a Matroska output is the only one that can carry them.
+    // VP8, VP9, Vorbis and ALAC have no form in a transport stream or on a Blu-ray disc, and tsMuxeR writes no file of
+    // their own for a demux: a Matroska output is the only one that can carry them.
     if (m_demuxMode || !dynamic_cast<MatroskaMuxer*>(m_mainMuxer.get()))
         for (const StreamInfo& si : ci)
-            for (const CodecInfo* only : {&vp8CodecInfo, &vp9CodecInfo, &vorbisCodecInfo})
+            for (const CodecInfo* only : {&vp8CodecInfo, &vp9CodecInfo, &vorbisCodecInfo, &alacCodecInfo})
                 if (si.m_codec == only->programName)
                     THROW(ERR_COMMON, only->displayName
                                           << " can only be muxed into a Matroska file (.mkv). It has no form in a "

@@ -17,6 +17,7 @@ extern "C"
 #include "aac.h"
 #include "aacStreamReader.h"
 #include "ac3StreamReader.h"
+#include "alacStreamReader.h"
 #include "av1.h"
 #include "av1StreamReader.h"
 #include "avCodecs.h"
@@ -941,6 +942,14 @@ void MatroskaMuxer::buildCodecPrivate(MkvTrackInfo& track)
             track.codecPrivate = opus->getCodecPrivate();
         break;
     }
+    case CODEC_A_ALAC:
+    {
+        // The ALACSpecificConfig, as the source had it.
+        const auto alac = dynamic_cast<AlacStreamReader*>(track.codecReader);
+        if (alac)
+            track.codecPrivate = alac->getCodecPrivate();
+        break;
+    }
     case CODEC_A_VORBIS:
     {
         // The three header packets, Xiph laced, as the source had them.
@@ -1853,12 +1862,14 @@ void MatroskaMuxer::refreshTrackProperties()
                 track.bitDepth = flac->getBitsPerSample();
             if (const auto dts = dynamic_cast<DTSStreamReader*>(track.codecReader); dts && dts->getHDBitDepth() > 0)
                 track.bitDepth = dts->getHDBitDepth();
+            if (const auto alac = dynamic_cast<AlacStreamReader*>(track.codecReader); alac && alac->getBitDepth() > 0)
+                track.bitDepth = alac->getBitDepth();
             // DefaultDuration for audio whose frames are all of one length: the step the reader moves each frame's
-            // time by, so it is the spacing of the blocks written. Not for E-AC-3, DTS-HD, TrueHD, FLAC, Opus or LPCM,
-            // whose frames may differ in length.
+            // time by, so it is the spacing of the blocks written. Not for E-AC-3, DTS-HD, TrueHD, FLAC, Opus, Vorbis
+            // or LPCM, whose frames may differ in length. ALAC's do only in the last, which says so (writeBlock).
             const std::string kind = track.codecReader->getCodecInfo().displayName;
             if (simpleReader &&
-                (track.codecID == CODEC_A_AAC || track.codecID == CODEC_A_MPEG_AUDIO ||
+                (track.codecID == CODEC_A_AAC || track.codecID == CODEC_A_MPEG_AUDIO || track.codecID == CODEC_A_ALAC ||
                  (track.codecID == CODEC_A_AC3 && kind == "AC3") || (track.codecID == CODEC_A_DTS && kind == "DTS")))
             {
                 const double frame = simpleReader->frameDurationInternal();
@@ -3043,7 +3054,17 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
 
     // The last frame of a track that ends in padding goes into a BlockGroup with its DiscardPadding, which a
     // SimpleBlock cannot carry (RFC 9559, 10.4), so that a player drops the padding as the source said.
-    if (track.finalFlush && track.endPaddingNs > 0)
+    // An ALAC track's last frame is a partial one, as a rule, shorter than the DefaultDuration says: it gets its own
+    // BlockDuration, so that a player does not take it for a whole frame.
+    int64_t lastFrameMs = 0;
+    if (track.finalFlush && track.codecID == CODEC_A_ALAC && track.audioFrameNs > 0)
+        if (const auto simple = dynamic_cast<SimplePacketizerReader*>(track.codecReader))
+        {
+            const double lastNs = simple->frameDurationInternal() * 1e9 / INTERNAL_PTS_FREQ;
+            if (lastNs > 0 && lastNs + 500000 < static_cast<double>(track.audioFrameNs))
+                lastFrameMs = (std::max)(int64_t{1}, static_cast<int64_t>(llround(lastNs / 1e6)));
+        }
+    if (track.finalFlush && (track.endPaddingNs > 0 || lastFrameMs > 0))
     {
         uint8_t trackNumBuf[8];
         const int trackNumLen = ebml_write_size(trackNumBuf, track.trackNumber);
@@ -3051,8 +3072,14 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
         uint8_t blockHeader[16];
         int blockHeaderLen = ebml_write_id(blockHeader, MATROSKA_ID_BLOCK);
         blockHeaderLen += ebml_write_size(blockHeader + blockHeaderLen, blockPayloadSize);
-        uint8_t paddingElement[16];
-        const int paddingLen = ebml_write_sint(paddingElement, MATROSKA_ID_DISCARDPADDING, track.endPaddingNs);
+        // after the Block: its BlockDuration, its DiscardPadding, or both
+        uint8_t paddingElement[32];
+        int paddingLen = 0;
+        if (lastFrameMs > 0)
+            paddingLen +=
+                ebml_write_uint(paddingElement, MATROSKA_ID_BLOCKDURATION, static_cast<uint64_t>(lastFrameMs));
+        if (track.endPaddingNs > 0)
+            paddingLen += ebml_write_sint(paddingElement + paddingLen, MATROSKA_ID_DISCARDPADDING, track.endPaddingNs);
         const int groupPayloadSize = blockHeaderLen + blockPayloadSize + paddingLen;
         uint8_t groupHeader[16];
         int groupHeaderLen = ebml_write_id(groupHeader, MATROSKA_ID_BLOCKGROUP);
@@ -4151,8 +4178,15 @@ void MatroskaMuxer::finishPart(const int64_t partEndPts)
         if (!track.hasMaxBlockPts)
             continue;
         double endMs = static_cast<double>(track.maxBlockPts - m_firstTimecode) / INTERNAL_PTS_PER_MS;
+        const auto simple = dynamic_cast<SimplePacketizerReader*>(track.codecReader);
         if (track.trackType == 1 && track.fps > 0)
             endMs += 1000.0 / track.fps;
+        // Opus, Vorbis and ALAC: the length of the last frame itself, which their readers know and which may be
+        // shorter than the one before it (a partial ALAC frame, a shorter Opus packet).
+        else if (simple &&
+                 (track.codecID == CODEC_A_OPUS || track.codecID == CODEC_A_VORBIS || track.codecID == CODEC_A_ALAC) &&
+                 simple->frameDurationInternal() > 0)
+            endMs += simple->frameDurationInternal() / INTERNAL_PTS_PER_MS;
         else if (track.trackType != MKV_TRACK_TYPE_SUBTITLE && track.hasNextMaxBlockPts)
             endMs += static_cast<double>(track.maxBlockPts - track.nextMaxBlockPts) / INTERNAL_PTS_PER_MS;
         if (track.hasTextEnd)

@@ -686,6 +686,7 @@ Names of codecs in the meta file:
 - A_DTS             DTS/DTS-Express/DTS-HD
 - A_MP3             MPEG audio layer 1/2/3
 - A_VORBIS          Vorbis, from MKV/WebM, to MKV output only
+- A_ALAC            Apple Lossless, from MKV, to MKV output only
 - A_LPCM            raw pcm data or PCM WAV file
 - S_HDMV/PGS        Presentation graphic stream (BD subtitle format)
 - S_TEXT/UTF8        SRT subtitle format. Encoding MUST be UTF-8/UTF-16/UTF-32

@@ -1666,7 +1666,13 @@ int MatroskaDemuxer::matroska_read_header()
             }
             else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_AUDIO_VORBIS))
             {
-                track->parsed_priv_data = new ParsedVorbisTrackData(track->codec_priv, track->codec_priv_size);
+                track->parsed_priv_data =
+                    new ParsedMarkedTrackData("VORBISCP", track->codec_priv, track->codec_priv_size);
+            }
+            else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_AUDIO_ALAC))
+            {
+                track->parsed_priv_data =
+                    new ParsedMarkedTrackData("ALACCPRV", track->codec_priv, track->codec_priv_size);
             }
             else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_VP8) || !strcmp(track->codec_id, MATROSKA_CODEC_ID_VP9))
             {
@@ -4514,6 +4520,8 @@ int MatroskaDemuxer::getTrackType(const MatroskaTrack* track)
         return TRACKTYPE_VP9;
     if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_AUDIO_VORBIS))
         return TRACKTYPE_VORBIS;
+    if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_AUDIO_ALAC))
+        return TRACKTYPE_ALAC;
 
     return 0;
 }

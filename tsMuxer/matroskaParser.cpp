@@ -748,14 +748,15 @@ void ParsedVpxTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int siz
     pkt->size = encoded + 4;
 }
 
-// ------------ Vorbis ---------------
-ParsedVorbisTrackData::ParsedVorbisTrackData(const uint8_t* buff, const int size)
+// ------------ Vorbis and ALAC ---------------
+ParsedMarkedTrackData::ParsedMarkedTrackData(const char* mark, const uint8_t* buff, const int size)
 {
+    memcpy(m_mark, mark, 8);
     if (buff && size > 0)
         m_codecPrivate.assign(buff, buff + size);
 }
 
-void ParsedVorbisTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int size)
+void ParsedMarkedTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int size)
 {
     const int head = m_firstPacket && !m_codecPrivate.empty() ? 12 + static_cast<int>(m_codecPrivate.size()) : 0;
     pkt->size = head + 4 + size;
@@ -767,7 +768,7 @@ void ParsedVorbisTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int 
     };
     if (head)
     {
-        memcpy(dst, "VORBISCP", 8);
+        memcpy(dst, m_mark, 8);
         dst += 8;
         be32(static_cast<uint32_t>(m_codecPrivate.size()));
         memcpy(dst, m_codecPrivate.data(), m_codecPrivate.size());

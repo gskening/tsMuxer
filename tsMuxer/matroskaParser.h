@@ -288,6 +288,7 @@ constexpr auto MATROSKA_CODEC_ID_AV1 = "V_AV1";
 constexpr auto MATROSKA_CODEC_ID_VP8 = "V_VP8";
 constexpr auto MATROSKA_CODEC_ID_VP9 = "V_VP9";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_VORBIS = "A_VORBIS";
+constexpr auto MATROSKA_CODEC_ID_AUDIO_ALAC = "A_ALAC";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_DTS = "A_DTS";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_EAC3 = "A_EAC3";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_TRUEHD = "A_TRUEHD";
@@ -458,16 +459,17 @@ class ParsedVpxTrackData final : public ParsedTrackPrivData
     void extractData(AVPacket* pkt, uint8_t* buff, int size) override;
 };
 
-// Vorbis: each packet gets a 4 byte big endian length in front, and the first one the track's CodecPrivate (the three
-// header packets) in front of that, behind "VORBISCP" and its length. VorbisStreamReader reads both.
-class ParsedVorbisTrackData final : public ParsedTrackPrivData
+// Vorbis and ALAC: each packet gets a 4 byte big endian length in front, and the first one the track's CodecPrivate in
+// front of that, behind an 8 character mark ("VORBISCP", "ALACCPRV") and its length. Their readers read both.
+class ParsedMarkedTrackData final : public ParsedTrackPrivData
 {
    public:
-    ParsedVorbisTrackData(const uint8_t* buff, int size);
-    ~ParsedVorbisTrackData() override = default;
+    ParsedMarkedTrackData(const char* mark, const uint8_t* buff, int size);
+    ~ParsedMarkedTrackData() override = default;
     void extractData(AVPacket* pkt, uint8_t* buff, int size) override;
 
    private:
+    char m_mark[8];
     std::vector<uint8_t> m_codecPrivate;
     bool m_firstPacket = true;
 };
