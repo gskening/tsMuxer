@@ -47,6 +47,9 @@ class SimplePacketizerReader : public AbstractStreamReader
                                     int containerStreamIndex);
 
     virtual int getFreq() = 0;
+    // The length of one frame in the internal clock, as far as the stream read so far tells: the step the frame
+    // times go by. 0 where it is not known yet.
+    double frameDurationInternal() { return getFrameDuration(); }
     virtual int getAltFreq() { return getFreq(); }
     virtual uint8_t getChannels() = 0;
     void setStretch(const double value) { m_stretch = value; }

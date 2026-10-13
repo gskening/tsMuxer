@@ -1253,6 +1253,8 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
         const uint64_t durationNs = static_cast<uint64_t>(1000000000.0 / track.fps);
         pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_TRACKDEFAULTDURATION, durationNs);
     }
+    else if (track.trackType == 2 && track.audioFrameNs > 0)
+        pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_TRACKDEFAULTDURATION, track.audioFrameNs);
 
     // Video sub-element
     if (track.trackType == 1 && track.width > 0 && track.height > 0)
@@ -1696,6 +1698,25 @@ void MatroskaMuxer::refreshTrackProperties()
             const auto lpcmReader = dynamic_cast<LPCMStreamReader*>(track.codecReader);
             if (lpcmReader)
                 track.bitDepth = lpcmReader->m_bitsPerSample;
+            // BitDepth for the lossless codecs whose readers know it: FLAC from its STREAMINFO, DTS-HD from its
+            // extension. It was written for LPCM alone.
+            if (const auto flac = dynamic_cast<FLACStreamReader*>(track.codecReader);
+                flac && flac->getBitsPerSample() > 0)
+                track.bitDepth = flac->getBitsPerSample();
+            if (const auto dts = dynamic_cast<DTSStreamReader*>(track.codecReader); dts && dts->getHDBitDepth() > 0)
+                track.bitDepth = dts->getHDBitDepth();
+            // DefaultDuration for audio whose frames are all of one length: the step the reader moves each frame's
+            // time by, so it is the spacing of the blocks written. Not for E-AC-3, DTS-HD, TrueHD, FLAC, Opus or LPCM,
+            // whose frames may differ in length.
+            const std::string kind = track.codecReader->getCodecInfo().displayName;
+            if (simpleReader &&
+                (track.codecID == CODEC_A_AAC || track.codecID == CODEC_A_MPEG_AUDIO ||
+                 (track.codecID == CODEC_A_AC3 && kind == "AC3") || (track.codecID == CODEC_A_DTS && kind == "DTS")))
+            {
+                const double frame = simpleReader->frameDurationInternal();
+                if (frame > 0)
+                    track.audioFrameNs = static_cast<uint64_t>(llround(frame * 1e9 / INTERNAL_PTS_FREQ));
+            }
         }
     }
 

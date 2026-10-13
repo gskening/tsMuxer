@@ -62,6 +62,8 @@ class DTSStreamReader final : public SimplePacketizerReader
     bool isIFrame(AVPacket* packet) override { return isPriorityData(packet); }
     void setTestMode(const bool value) override { m_testMode = value; }
     bool isSecondary() override;
+    // The bit depth of the DTS-HD extension, 0 without one.
+    [[nodiscard]] int getHDBitDepth() const { return hd_bitDepth; }
 
    protected:
     int getHeaderLen() override { return DTS_HEADER_SIZE; }

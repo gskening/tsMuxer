@@ -176,6 +176,7 @@ class MatroskaMuxer final : public AbstractMuxer
         int sampleRate;
         int channels;
         int bitDepth;
+        uint64_t audioFrameNs = 0;  // DefaultDuration for audio of a fixed frame length, 0 for the others
 
         // A Blu-ray TrueHD stream is two things braided onto one PID: the lossless MLP frames and a
         // 448 kbps AC-3 core beside them, so a player that cannot decode the lossless stream still
