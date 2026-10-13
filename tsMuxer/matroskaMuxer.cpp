@@ -68,6 +68,16 @@ using namespace std;
 // INTERNAL_PTS_PER_MS, the divisor from the internal PTS frequency to milliseconds, now lives in
 // vod_common.h: the Dolby Vision splitter has to convert the same way round on the way back.
 
+// A time in the internal clock as whole milliseconds, the nearest one, a half going up. The block times were cut
+// down to the millisecond below, and a reader can only take a time as written (RFC 9559, 11): of 312 pictures at
+// 23.976 fps, 143 were stored more than half a millisecond early. A time before the start goes to the nearest
+// millisecond as well, not towards zero.
+static int64_t internalToRoundedMs(const int64_t value)
+{
+    const int64_t shifted = value + INTERNAL_PTS_PER_MS / 2;
+    return shifted >= 0 ? shifted / INTERNAL_PTS_PER_MS : -((-shifted + INTERNAL_PTS_PER_MS - 1) / INTERNAL_PTS_PER_MS);
+}
+
 // ═══════════════════════════════ EBML Writing Utilities ═══════════════════════════════
 
 int ebml_id_size(uint32_t id)
@@ -2714,8 +2724,8 @@ void MatroskaMuxer::writeTextBlock(MkvTrackInfo& track, const uint8_t* data, con
     }
     // The start and the end on the same millisecond grid as every other block, so that the end
     // written is where the subtitle really ends, whatever the fraction of a millisecond the start had
-    const int64_t relMs = (pts - m_firstTimecode) / INTERNAL_PTS_PER_MS;
-    const int64_t durationMs = (std::max)(int64_t{1}, (pts + duration - m_firstTimecode) / INTERNAL_PTS_PER_MS - relMs);
+    const int64_t relMs = internalToRoundedMs(pts - m_firstTimecode);
+    const int64_t durationMs = (std::max)(int64_t{1}, internalToRoundedMs(pts + duration - m_firstTimecode) - relMs);
     if (!track.hasMaxBlockPts || pts > track.maxBlockPts)
     {
         track.maxBlockPts = pts;
@@ -2780,7 +2790,7 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
     if (track.trackType != MKV_TRACK_TYPE_SUBTITLE && !m_heldText.empty())
         flushHeldText(pts);
     // Compute PTS relative to stream start (convert internal PTS units to milliseconds)
-    const int64_t relMs = (pts - m_firstTimecode) / INTERNAL_PTS_PER_MS;
+    const int64_t relMs = internalToRoundedMs(pts - m_firstTimecode);
 
     // This track's two largest timestamps, for the Segment Duration at close
     if (!track.hasMaxBlockPts || pts > track.maxBlockPts)
@@ -3637,7 +3647,7 @@ void MatroskaMuxer::writeAttachments()
     int64_t previousMs = INT64_MIN;
     for (const auto* entry : ordered)
     {
-        const int64_t ms = (entry->pts - m_firstTimecode) / INTERNAL_PTS_PER_MS;
+        const int64_t ms = internalToRoundedMs(entry->pts - m_firstTimecode);  // as the block's time
         if (ms == previousMs)
             THROW(ERR_COMMON,
                   "Dolby Vision: two pictures land on the same millisecond, so the original RPUs "
