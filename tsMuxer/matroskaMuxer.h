@@ -88,6 +88,8 @@ class MatroskaMuxer final : public AbstractMuxer
         std::map<std::string, double> srcColour;  // m, r, t, p, cll, fall, rx ... lmin, as present
         unsigned srcDisplayWidth = 0;
         unsigned srcDisplayHeight = 0;
+        int64_t endPaddingNs = 0;  // DiscardPadding for the track's last block (Opus), from the source
+        bool finalFlush = false;   // the frame being written is the track's last
         AbstractStreamReader* codecReader;
 
         // Video-specific

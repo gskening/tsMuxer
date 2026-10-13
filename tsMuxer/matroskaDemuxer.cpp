@@ -1999,7 +1999,7 @@ void walkTrackBlocks(EbmlScan& scan, const int64_t from, const int64_t segmentEn
 // (6.1) lets the Chapters, Tags and Tracks follow the clusters as long as a SeekHead before them says so; a chapter
 // editor puts the Chapters there when the head has no room for them.
 static bool findTopLevelElement(EbmlScan& scan, const int64_t fileSize, const uint32_t wanted, int64_t& bodyPos,
-                                int64_t& size)
+                                int64_t& size, int64_t* segmentDataOut = nullptr)
 {
     const auto readUInt = [&](const int64_t at, const int64_t width, uint64_t& out) -> bool
     {
@@ -2069,6 +2069,8 @@ static bool findTopLevelElement(EbmlScan& scan, const int64_t fileSize, const ui
     }
     if (segmentData < 0)
         return false;
+    if (segmentDataOut)
+        *segmentDataOut = segmentData;
 
     int64_t wantedAt = 0;
     int64_t nextSeekHead = 0;
@@ -2349,6 +2351,61 @@ void MatroskaDemuxer::loadTrackExtras(const std::string& fileName)
         return out;
     };
 
+    // The DiscardPadding of each track's LAST block, in nanoseconds: the samples at the end of an Opus track that
+    // are only there to fill its last frame (RFC 9559, 5.1.3.5.7). Taken from the clusters from the last cue point
+    // on, so only the end of the file is read; a file without Cues gives none. A remux dropped it, and the track
+    // played that much longer than its source, 13.5 ms for a usual encoder.
+    std::map<int64_t, int64_t> endPadding;
+    {
+        int64_t cuesBody = 0, cuesSize = 0, segmentData = 0;
+        int64_t lastCluster = -1;
+        if (findTopLevelElement(scan, fileSize, MATROSKA_ID_CUES, cuesBody, cuesSize, &segmentData))
+            for (const auto& [pid, pb, plen] : elementsOf(cuesBody, cuesSize))
+                for (const auto& [tid, tb, tlen] : elementsOf(pb, plen))
+                    if (tid == MATROSKA_ID_CUETRACKPOSITION)
+                        for (const auto& [kid, kb, klen] : elementsOf(tb, tlen))
+                            if (kid == MATROSKA_ID_CUECLUSTERPOSITION)
+                                lastCluster = std::max(lastCluster, static_cast<int64_t>(readUInt(kb, klen)));
+        if (lastCluster >= 0)
+        {
+            scan.pos = segmentData + lastCluster;
+            while (scan.pos < fileSize)
+            {
+                uint32_t id = 0;
+                int64_t len = 0, b = 0;
+                if (!scan.readElement(id, len, b) || b + len > fileSize)
+                    break;
+                const int64_t next = b + len;
+                if (id == MATROSKA_ID_CLUSTER)
+                    for (const auto& [cid, cb, clen] : elementsOf(b, len))
+                    {
+                        if (cid != MATROSKA_ID_SIMPLEBLOCK && cid != MATROSKA_ID_BLOCKGROUP)
+                            continue;
+                        int64_t blockAt = cb, padding = 0;
+                        if (cid == MATROSKA_ID_BLOCKGROUP)
+                            for (const auto& [gid, gb, glen] : elementsOf(cb, clen))
+                            {
+                                if (gid == MATROSKA_ID_BLOCK)
+                                    blockAt = gb;
+                                else if (gid == MATROSKA_ID_DISCARDPADDING && glen > 0 && glen <= 8)
+                                {
+                                    // a signed number: negative pads the start, which is not what this is about
+                                    const uint64_t raw = readUInt(gb, glen);
+                                    const bool negative = raw >> (glen * 8 - 1) & 1;
+                                    padding = negative ? -1 : static_cast<int64_t>(raw);
+                                }
+                            }
+                        scan.pos = blockAt;
+                        int64_t trackNumber = 0;
+                        int width = 0;
+                        if (scan.readNumber(trackNumber, false, width))
+                            endPadding[trackNumber] = padding;  // the last block of the track decides
+                    }
+                scan.pos = next;
+            }
+        }
+    }
+
     for (const auto& [entryId, entryBody, entrySize] : elementsOf(body, size))
     {
         if (entryId != MATROSKA_ID_TRACKENTRY)
@@ -2427,6 +2484,8 @@ void MatroskaDemuxer::loadTrackExtras(const std::string& fileName)
         auto& extras = m_trackExtras[number];
         if (encrypted)
             extras["encrypted"] = "1";
+        if (const auto pad = endPadding.find(number); pad != endPadding.end() && pad->second > 0)
+            extras["srcendpadding"] = std::to_string(pad->second);
         if (!flags.empty())
             extras["srcflags"] = flags;
         if (!colour.empty())

@@ -368,6 +368,9 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
         for (const std::string& item : splitStr(src->second.c_str(), ';'))
             if (const size_t eq = item.find('='); eq != std::string::npos)
                 track.srcColour[item.substr(0, eq)] = strtod(item.c_str() + eq + 1, nullptr);
+    // The samples at the end of an Opus track that only fill its last frame (srcendpadding, in nanoseconds).
+    if (const auto src = params.find("srcendpadding"); src != params.end() && track.codecID == CODEC_A_OPUS)
+        track.endPaddingNs = strtoll(src->second.c_str(), nullptr, 10);
     // The size the container said to show the picture at (srcdisplay: 640x480). It says more than the stream's own
     // aspect ratio, which for square pixels is just the picture's shape; an ar= in the meta says more than both.
     if (const auto src = params.find("srcdisplay"); src != params.end() && params.find("ar") == params.end())
@@ -2762,8 +2765,38 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
                                                  (track.trackType == 2 && audioCueDue(track, relMs))))
         addCue(track, relMs, -1);
 
-    // Write SimpleBlock
     const int16_t relTimeMs = static_cast<int16_t>(relMs - m_clusterTimecodeMs);
+
+    // The last frame of a track that ends in padding goes into a BlockGroup with its DiscardPadding, which a
+    // SimpleBlock cannot carry (RFC 9559, 10.4), so that a player drops the padding as the source said.
+    if (track.finalFlush && track.endPaddingNs > 0)
+    {
+        uint8_t trackNumBuf[8];
+        const int trackNumLen = ebml_write_size(trackNumBuf, track.trackNumber);
+        const int blockPayloadSize = trackNumLen + 2 + 1 + frameSize;
+        uint8_t blockHeader[16];
+        int blockHeaderLen = ebml_write_id(blockHeader, MATROSKA_ID_BLOCK);
+        blockHeaderLen += ebml_write_size(blockHeader + blockHeaderLen, blockPayloadSize);
+        uint8_t paddingElement[16];
+        const int paddingLen = ebml_write_sint(paddingElement, MATROSKA_ID_DISCARDPADDING, track.endPaddingNs);
+        const int groupPayloadSize = blockHeaderLen + blockPayloadSize + paddingLen;
+        uint8_t groupHeader[16];
+        int groupHeaderLen = ebml_write_id(groupHeader, MATROSKA_ID_BLOCKGROUP);
+        groupHeaderLen += ebml_write_size(groupHeader + groupHeaderLen, groupPayloadSize);
+        m_clusterBuf.insert(m_clusterBuf.end(), groupHeader, groupHeader + groupHeaderLen);
+        m_clusterBuf.insert(m_clusterBuf.end(), blockHeader, blockHeader + blockHeaderLen);
+        m_clusterBuf.insert(m_clusterBuf.end(), trackNumBuf, trackNumBuf + trackNumLen);
+        m_clusterBuf.push_back(static_cast<uint8_t>((relTimeMs >> 8) & 0xFF));
+        m_clusterBuf.push_back(static_cast<uint8_t>(relTimeMs & 0xFF));
+        m_clusterBuf.push_back(0);  // Block flags: no lacing
+        m_clusterBuf.insert(m_clusterBuf.end(), frameData, frameData + frameSize);
+        m_clusterBuf.insert(m_clusterBuf.end(), paddingElement, paddingElement + paddingLen);
+        m_clusterDataSize += groupHeaderLen + groupPayloadSize;
+        m_clusterBlocks++;
+        return;
+    }
+
+    // Write SimpleBlock
 
     uint8_t trackNumBuf[8];
     const int trackNumLen = ebml_write_size(trackNumBuf, track.trackNumber);
@@ -3156,8 +3189,12 @@ bool MatroskaMuxer::muxPacketInternal(AVPacket& avPacket)
 
 bool MatroskaMuxer::doFlush()
 {
-    // Flush all pending accumulated frames
-    for (auto& [streamIdx, track] : m_tracks) flushPendingFrame(track);
+    // Flush all pending accumulated frames: the end of the stream, so each one is its track's last
+    for (auto& [streamIdx, track] : m_tracks)
+    {
+        track.finalFlush = true;
+        flushPendingFrame(track);
+    }
 
     finishFoldedTracks();
     flushHeldText(INT64_MAX);
@@ -3829,8 +3866,12 @@ bool MatroskaMuxer::close()
     // never while an exception is unwinding, so this cannot undo what a refusal protected.
     openDestination();
 
-    // Flush any pending accumulated frames for all tracks
-    for (auto& [streamIdx, track] : m_tracks) flushPendingFrame(track);
+    // Flush any pending accumulated frames for all tracks: each one's last frame
+    for (auto& [streamIdx, track] : m_tracks)
+    {
+        track.finalFlush = true;
+        flushPendingFrame(track);
+    }
     finishFoldedTracks();
     flushHeldText(INT64_MAX);
 
