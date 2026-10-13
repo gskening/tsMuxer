@@ -660,7 +660,7 @@ int MatroskaDemuxer::matroska_parse_block(uint8_t* data, int size, const int64_t
         const bool isVideo = tracks[track]->type == IOContextTrackType::VIDEO;
         const bool keepVideo = !timeline || !isVideo || keepBlock(tracks[track], blockNs, is_keyframe != 0);
         const int64_t timelineShiftNs =
-            timeline ? m_joinRanges[m_joinPart].offsetNs - m_joinRanges[m_joinPart].startNs : 0;
+            timeline ? m_joinRanges[m_joinPart].offsetNs - m_joinRanges[m_joinPart].startNs : m_joinShiftNs;
         if (!timeline && timecode != AV_NOPTS_VALUE &&
             m_firstTimecode.find(tracks[track]->num) == m_firstTimecode.end())
             m_firstTimecode[tracks[track]->num] = timecode;
@@ -1227,6 +1227,28 @@ void MatroskaDemuxer::nextJoinPart()
     m_partVideoOn = m_partVideoDone = false;
     if (++m_joinPart >= m_joinFiles.size())
         return;
+    // A plain join puts each file where the video of the one before ends (see METADemuxer::getChapters). The video
+    // and the audio follow by counting their frames; the tracks whose times come from the container, the subtitles,
+    // started again at the next file's own clock, so every subtitle of a second file came where the first one's
+    // were. Their times move by the same amount as the file's chapters.
+    if (m_joinRanges.empty())
+    {
+        const auto span = [this](const std::string& file, int64_t& start, int64_t& end)
+        {
+            MatroskaDemuxer part(m_readManager);
+            part.openFile(file);
+            if (!part.getVideoSpanNano(start, end))
+            {
+                start = 0;
+                end = part.getFileDurationNano();
+            }
+        };
+        int64_t prevStart = 0, prevEnd = 0, start = 0, end = 0;
+        span(m_joinFiles[m_joinPart - 1], prevStart, prevEnd);
+        span(m_joinFiles[m_joinPart], start, end);
+        if (prevEnd > 0)
+            m_joinShiftNs += prevEnd - start;
+    }
     m_attachments.clear();
     loadAttachments(m_joinFiles[m_joinPart]);
     applyStartCodeRule();

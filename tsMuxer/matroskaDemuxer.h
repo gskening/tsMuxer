@@ -106,6 +106,7 @@ class MatroskaDemuxer final : public IOContextDemuxer
     int peek_id;
     bool done;
     bool m_demuxEnded = false;      // simpleDemuxBlock has met the end of the stream
+    int64_t m_joinShiftNs = 0;      // a plain join: where the part being read is put, against its own clock
     bool m_tracksFinished = false;  // the converters were asked for what they still held
     bool queueFinalPackets();
     char m_title[1024];
