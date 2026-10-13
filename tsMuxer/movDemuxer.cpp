@@ -775,6 +775,18 @@ void MovDemuxer::takeFreshReader()
     m_readerUsed = true;
 }
 
+// A seek on the reader that has been reading the file races with the read it may still have in flight: gotoByte
+// clears the end of file, the late read lands afterwards and sets it again (measured in openFile below). The header
+// walk then stopped there with "moov atom not found" on a file whose moov follows a long mdat, in two or three runs of
+// ten. The seek is made on a reader with nothing in flight.
+void MovDemuxer::seekOnFreshReader(const int64_t pos)
+{
+    takeFreshReader();
+    if (!m_bufferedReader->openStream(m_readerID, m_fileName.c_str()))
+        THROW(ERR_FILE_NOT_FOUND, "Can't open stream " << m_fileName)
+    url_fseek(pos);
+}
+
 void MovDemuxer::readClose()
 {
     // Nothing used to free these. Every mp4 opened leaked its track contexts and the vectors
@@ -848,10 +860,7 @@ void MovDemuxer::openFile(const std::string& streamName)
         //   the read was still going  gotoByte saw atQueue=1 eof=0, cleared nothing, 1207 frames
         //
         // A reader that has not been asked for anything yet has nothing in flight to come back.
-        takeFreshReader();
-        if (!m_bufferedReader->openStream(m_readerID, streamName.c_str()))
-            THROW(ERR_FILE_NOT_FOUND, "Can't open stream " << streamName)
-        url_fseek(m_mdat_pos);
+        seekOnFreshReader(m_mdat_pos);
     }
     buildIndex();
     m_firstHeaderSize = m_processedBytes;
@@ -959,7 +968,7 @@ int MovDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepte
                 return m_lastReadRez;
             buildIndex();
             if (m_mdat_pos && m_processedBytes != m_mdat_pos)
-                url_fseek(m_mdat_pos);
+                seekOnFreshReader(m_mdat_pos);
         }
         discardSize += m_mdat_pos - beforeHeadersPos;
         if (!chunks.empty())
@@ -1272,10 +1281,10 @@ int MovDemuxer::mov_read_default(MOVAtom atom)
                        "Warning: the MP4 box '" << std::string(reinterpret_cast<const char*>(&a.type), 4)
                                                 << "' at byte " << start_pos - 8 << " holds less than its contents; "
                                                 << "reading goes on where the box says it ends.");
-            url_fseek(start_pos + a.size);
+            seekOnFreshReader(start_pos + a.size);
         }
         else if (left > SEEK_RATHER_THAN_READ && m_fileSize > 0 && m_processedBytes + left < m_fileSize)
-            url_fseek(m_processedBytes + left);
+            seekOnFreshReader(m_processedBytes + left);
         else
             skip_bytes(left);
 
