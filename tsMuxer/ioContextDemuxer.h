@@ -56,6 +56,7 @@ struct Track
         memset(languageBCP47, 0, sizeof(languageBCP47));
         hasLanguageElement = false;
         default_duration = 0;
+        timestampScale = 0;
         encodingAlgo = 0;
         type = IOContextTrackType::UNDEFINED;
     }
@@ -92,6 +93,7 @@ struct Track
     int codec_priv_size;
     ParsedTrackPrivData* parsed_priv_data;
     uint64_t default_duration;
+    double timestampScale;  // Matroska TrackTimestampScale; 0 when the track has none (as 1)
 
     int32_t encodingAlgo;                   // compression algorithm
     std::vector<uint8_t> encodingAlgoPriv;  // compression parameters

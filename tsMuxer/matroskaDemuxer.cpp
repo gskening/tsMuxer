@@ -650,6 +650,8 @@ int MatroskaDemuxer::matroska_parse_block(uint8_t* data, int size, const int64_t
 
         if (cluster_time != -1 && (block_time >= 0 || cluster_time >= -block_time))
             timecode = cluster_time + block_time;
+        if (timecode != AV_NOPTS_VALUE && tracks[track]->timestampScale > 0 && tracks[track]->timestampScale != 1.0)
+            timecode = llround(static_cast<double>(timecode) * tracks[track]->timestampScale);
         // A play timeline keeps each part's stretch only (keepBlock), a laced block frame by frame: an audio block
         // holds several frames, and a part may end inside it. Each frame is at its own time, a DefaultDuration after
         // the one before. What is kept moves to where the part plays, which matters for the tracks whose times come
@@ -720,7 +722,12 @@ int MatroskaDemuxer::matroska_parse_block(uint8_t* data, int size, const int64_t
                                ? AV_NOPTS_VALUE
                                : toInternal(timecode) + timelineShiftNs * (INTERNAL_PTS_FREQ / 1000000) / 1000;
                 pkt->pos = pos;
-                pkt->duration = duration == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : toInternal(duration);
+                const double trackScale = tracks[track]->timestampScale > 0 ? tracks[track]->timestampScale : 1.0;
+                pkt->duration =
+                    duration == AV_NOPTS_VALUE
+                        ? AV_NOPTS_VALUE
+                        : toInternal(trackScale == 1.0 ? duration
+                                                       : llround(static_cast<double>(duration) * trackScale));
 
                 pkt->stream_index = track + 1;  // tracks[track]->stream_index;
 
@@ -4287,6 +4294,18 @@ int MatroskaDemuxer::matroska_add_stream()
         case MATROSKA_ID_TRACKCONTENTENCODINGS:
             readTrackEncodings(track);
             break;
+
+            // The track's times are its block times times this (RFC 9559, 5.1.4.1.15, where it is deprecated, but
+            // files written with it exist). It was skipped, so such a track's subtitles came at their unscaled times.
+        case MATROSKA_ID_TRACKTIMESTAMPSCALE:
+        {
+            double num;
+            if ((res = ebml_read_float(&id, &num)) < 0)
+                break;
+            if (num > 0 && std::isfinite(num))
+                track->timestampScale = num;
+            break;
+        }
             /* we ignore these because they're nothing useful. */
         case EBML_ID_VOID:
         case EBML_ID_CRC32:
