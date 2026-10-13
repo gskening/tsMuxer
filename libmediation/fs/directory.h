@@ -20,4 +20,7 @@ bool deleteFile(const std::string& fileName);
 
 bool findFilesRecursive(const std::string& path, const std::string& mask, std::vector<std::string>* fileList);
 
+// The files of one folder that match the mask, its subfolders left out; with their folder in front when savePaths.
+bool findFiles(const std::string& path, const std::string& mask, std::vector<std::string>* fileList, bool savePaths);
+
 #endif  // directory_h

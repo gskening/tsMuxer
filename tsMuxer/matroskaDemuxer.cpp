@@ -7,6 +7,7 @@
 #include <sstream>
 #include <tuple>
 
+#include <fs/directory.h>
 #include <fs/systemlog.h>
 #include <types/types.h>
 
@@ -648,14 +649,38 @@ int MatroskaDemuxer::matroska_parse_block(uint8_t* data, int size, const int64_t
         int64_t timecode = AV_NOPTS_VALUE;
 
         if (cluster_time != -1 && (block_time >= 0 || cluster_time >= -block_time))
-        {
             timecode = cluster_time + block_time;
-            if (m_firstTimecode.find(tracks[track]->num) == m_firstTimecode.end())
-                m_firstTimecode[tracks[track]->num] = timecode;
-        }
+        // A play timeline keeps each part's stretch only (keepBlock), a laced block frame by frame: an audio block
+        // holds several frames, and a part may end inside it. Each frame is at its own time, a DefaultDuration after
+        // the one before. What is kept moves to where the part plays, which matters for the tracks whose times come
+        // from the container, the subtitles.
+        const bool timeline = m_joinPart < m_joinRanges.size() && m_joinRanges[m_joinPart].startNs >= 0;
+        const int64_t blockNs =
+            timecode == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : timecode * static_cast<int64_t>(time_scale);
+        const bool isVideo = tracks[track]->type == IOContextTrackType::VIDEO;
+        const bool keepVideo = !timeline || !isVideo || keepBlock(tracks[track], blockNs, is_keyframe != 0);
+        const int64_t timelineShiftNs =
+            timeline ? m_joinRanges[m_joinPart].offsetNs - m_joinRanges[m_joinPart].startNs : 0;
+        if (!timeline && timecode != AV_NOPTS_VALUE &&
+            m_firstTimecode.find(tracks[track]->num) == m_firstTimecode.end())
+            m_firstTimecode[tracks[track]->num] = timecode;
 
         for (n = 0; n < laces; n++)
         {
+            if (timeline)
+            {
+                const int64_t laceNs = blockNs == AV_NOPTS_VALUE
+                                           ? AV_NOPTS_VALUE
+                                           : blockNs + n * static_cast<int64_t>(tracks[track]->default_duration);
+                if (isVideo ? !keepVideo : !keepBlock(tracks[track], laceNs, false))
+                {
+                    data += lace_size[n];
+                    size -= lace_size[n];
+                    continue;
+                }
+                if (timecode != AV_NOPTS_VALUE && m_firstTimecode.find(tracks[track]->num) == m_firstTimecode.end())
+                    m_firstTimecode[tracks[track]->num] = timecode;
+            }
             int slices = 1;
 
             if (real_v)
@@ -691,7 +716,9 @@ int MatroskaDemuxer::matroska_parse_block(uint8_t* data, int size, const int64_t
                 // for a millisecond is exactly what it was, and ten hours still fit in 64 bits.
                 const auto toInternal = [this](const int64_t t)
                 { return t * static_cast<int64_t>(time_scale) * (INTERNAL_PTS_FREQ / 1000000) / 1000; };
-                pkt->pts = timecode == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : toInternal(timecode);
+                pkt->pts = timecode == AV_NOPTS_VALUE
+                               ? AV_NOPTS_VALUE
+                               : toInternal(timecode) + timelineShiftNs * (INTERNAL_PTS_FREQ / 1000000) / 1000;
                 pkt->pos = pos;
                 pkt->duration = duration == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : toInternal(duration);
 
@@ -1163,6 +1190,32 @@ void MatroskaDemuxer::setFileIterator(FileNameIterator* itr)
     IOContextDemuxer::setFileIterator(itr);  // the reader moves on to the next file through it
     const auto* join = dynamic_cast<const FileListIterator*>(itr);
     m_joinFiles = join != nullptr ? join->getFiles() : std::vector<std::string>();
+    m_joinRanges = join != nullptr ? join->getRanges() : std::vector<JoinRange>();
+    m_partVideoOn = m_partVideoDone = false;
+}
+
+// A block of a play timeline's part is kept when it lies in the part's stretch. The video is cut in the order the
+// blocks are stored, from the key frame the stretch starts at up to the key frame it ends at, so that no picture is
+// kept without the pictures it is predicted from. The other tracks are cut at the same times.
+bool MatroskaDemuxer::keepBlock(const MatroskaTrack* track, const int64_t ns, const bool keyFrame)
+{
+    if (m_joinPart >= m_joinRanges.size() || m_joinRanges[m_joinPart].startNs < 0)
+        return true;
+    const JoinRange& range = m_joinRanges[m_joinPart];
+    if (ns == AV_NOPTS_VALUE)
+        return false;
+    if (track->type == IOContextTrackType::VIDEO)
+    {
+        if (!m_partVideoOn && !m_partVideoDone && keyFrame && ns >= range.startNs)
+            m_partVideoOn = true;
+        if (m_partVideoOn && keyFrame && range.endNs != INT64_MAX && ns >= range.endNs)
+        {
+            m_partVideoOn = false;
+            m_partVideoDone = true;
+        }
+        return m_partVideoOn;
+    }
+    return ns >= range.startNs && ns < range.endNs;
 }
 
 // The stream of a joined input, "a"+"b", has just reached the header of its next file, and the tracks were read
@@ -1171,6 +1224,7 @@ void MatroskaDemuxer::setFileIterator(FileNameIterator* itr)
 // that part, and a part without one is framed as a file without one always was.
 void MatroskaDemuxer::nextJoinPart()
 {
+    m_partVideoOn = m_partVideoDone = false;
     if (++m_joinPart >= m_joinFiles.size())
         return;
     m_attachments.clear();
@@ -2194,6 +2248,439 @@ static bool findTopLevelElement(EbmlScan& scan, const int64_t fileSize, const ui
 //   - a hidden chapter was taken as a visible one (20.2.5: each chapter's own flag says, nested ones included)
 //   - a nested chapter was dropped (20.2.3)
 //   - of a chapter's names in several languages the LAST was kept. Now the first is the title, and all are kept
+// --------------------------- the play timeline: ordered editions and linked segments ---------------------------
+//
+// An edition with EditionFlagOrdered set is a timeline of its own: its chapters are played one after the other, each
+// from its ChapterTimeStart to its ChapterTimeEnd, and a chapter with a ChapterSegmentUUID takes that stretch from
+// another segment, a file of its own in the same folder (RFC 9559, 17.2 and 20.1.3). A player plays the default
+// edition that way. A Matroska input was read from start to end whatever its edition said, so a file whose ordered
+// edition plays 0 to 2 s and 5 to 8 s came out ten seconds long, and the parts kept in other files were not there.
+//
+// The parts are read as a join of the files they come from, a file as often as the timeline uses it, and the
+// demuxer keeps each part's stretch only (MatroskaDemuxer::keepBlock). A stretch cannot start or end anywhere: the
+// video can only be cut before a key frame. Each end of a part is moved to the key frame of the file's first video
+// track that is nearest to it, and every other track is cut at the same times, so the tracks stay together.
+namespace
+{
+constexpr uint32_t MATROSKA_ID_PREVUUID = 0x3CB923;
+constexpr uint32_t MATROSKA_ID_NEXTUUID = 0x3EB923;
+constexpr uint16_t MATROSKA_ID_CHAPTERFLAGENABLED_ = 0x4598;
+constexpr uint16_t MATROSKA_ID_CHAPTERSEGMENTUUID = 0x6E67;
+constexpr uint16_t MATROSKA_ID_CHAPTERSEGMENTEDITIONUID = 0x6EBC;
+
+struct SegmentFacts
+{
+    struct Atom
+    {
+        int64_t start = -1;
+        int64_t end = -1;
+        bool enabled = true;
+        std::string segmentUuid;
+        uint64_t segmentEdition = 0;
+        std::string name;
+    };
+    struct Edition
+    {
+        uint64_t uid = 0;
+        bool isDefault = false;
+        bool ordered = false;
+        std::vector<Atom> atoms;  // the top-level chapters, in their order
+    };
+    std::string uuid, prevUuid, nextUuid;  // 16 bytes each, empty where the file has none
+    uint64_t timestampScale = 1000000;
+    int64_t durationNs = -1;
+    int64_t videoTrack = -1;
+    int64_t segmentData = -1, segmentEnd = 0, firstCluster = -1;
+    std::vector<Edition> editions;
+
+    [[nodiscard]] const Edition* defaultEdition() const
+    {
+        for (const Edition& e : editions)
+            if (e.isDefault)
+                return &e;
+        return editions.empty() ? nullptr : &editions.front();
+    }
+    [[nodiscard]] const Edition* edition(const uint64_t uid) const
+    {
+        for (const Edition& e : editions)
+            if (e.uid == uid)
+                return &e;
+        return nullptr;
+    }
+};
+
+// What the timeline needs of one file, read from its head without the media.
+bool readSegmentFacts(const std::string& path, SegmentFacts& facts)
+{
+    File f;
+    if (!f.open(path.c_str(), File::ofRead))
+        return false;
+    const int64_t fileSize = f.size();
+    EbmlScan scan(f);
+    const auto children = [&](const int64_t at, const int64_t len)
+    {
+        std::vector<std::tuple<uint32_t, int64_t, int64_t>> out;
+        scan.pos = at;
+        while (scan.pos < at + len)
+        {
+            uint32_t id = 0;
+            int64_t size = 0, body = 0;
+            if (!scan.readElement(id, size, body) || size > at + len - body)
+                break;
+            out.emplace_back(id, body, size);
+            scan.pos = body + size;
+        }
+        return out;
+    };
+    const auto bytes = [&](const int64_t at, const int64_t len)
+    {
+        std::string out(static_cast<size_t>((std::max)(int64_t{0}, (std::min)(len, int64_t{1024}))), '\0');
+        scan.f.seek(at);
+        if (!out.empty() && scan.f.read(out.data(), static_cast<uint32_t>(out.size())) != static_cast<int>(out.size()))
+            out.clear();
+        return out;
+    };
+    const auto uint = [&](const int64_t at, const int64_t len)
+    {
+        uint64_t v = 0;
+        return scan.readUInt(at, len, v) ? v : 0;
+    };
+
+    int64_t body = 0, size = 0;
+    if (findTopLevelElement(scan, fileSize, MATROSKA_ID_INFO, body, size, &facts.segmentData))
+        for (const auto& [id, b, len] : children(body, size))
+        {
+            if (id == MATROSKA_ID_TIMECODESCALE)
+                facts.timestampScale = uint(b, len);
+            else if (id == MATROSKA_ID_DURATION && (len == 4 || len == 8))
+            {
+                const std::string raw = bytes(b, len);
+                if (raw.size() == static_cast<size_t>(len))
+                {
+                    uint64_t v = 0;
+                    for (const char c : raw) v = v << 8 | static_cast<uint8_t>(c);
+                    double d = 0;
+                    if (len == 4)
+                    {
+                        const auto v32 = static_cast<uint32_t>(v);
+                        float fl = 0;
+                        memcpy(&fl, &v32, 4);
+                        d = fl;
+                    }
+                    else
+                        memcpy(&d, &v, 8);
+                    facts.durationNs = static_cast<int64_t>(d * static_cast<double>(facts.timestampScale));
+                }
+            }
+            else if (id == MATROSKA_ID_SEGMENTUID && len == 16)
+                facts.uuid = bytes(b, len);
+            else if (id == MATROSKA_ID_PREVUUID && len == 16)
+                facts.prevUuid = bytes(b, len);
+            else if (id == MATROSKA_ID_NEXTUUID && len == 16)
+                facts.nextUuid = bytes(b, len);
+        }
+    if (facts.timestampScale == 0)
+        facts.timestampScale = 1000000;
+    if (findTopLevelElement(scan, fileSize, MATROSKA_ID_TRACKS, body, size))
+        for (const auto& [id, b, len] : children(body, size))
+        {
+            if (id != MATROSKA_ID_TRACKENTRY || facts.videoTrack >= 0)
+                continue;
+            int64_t number = -1, type = 0;
+            for (const auto& [tid, tb, tlen] : children(b, len))
+            {
+                if (tid == MATROSKA_ID_TRACKNUMBER)
+                    number = static_cast<int64_t>(uint(tb, tlen));
+                else if (tid == MATROSKA_ID_TRACKTYPE)
+                    type = static_cast<int64_t>(uint(tb, tlen));
+            }
+            if (type == 1)
+                facts.videoTrack = number;
+        }
+    if (findTopLevelElement(scan, fileSize, MATROSKA_ID_CHAPTERS, body, size))
+        for (const auto& [id, b, len] : children(body, size))
+        {
+            if (id != MATROSKA_ID_EDITIONENTRY)
+                continue;
+            SegmentFacts::Edition edition;
+            for (const auto& [eid, eb, elen] : children(b, len))
+            {
+                if (eid == MATROSKA_ID_EDITIONUID)
+                    edition.uid = uint(eb, elen);
+                else if (eid == MATROSKA_ID_EDITIONFLAGDEFAULT)
+                    edition.isDefault = uint(eb, elen) != 0;
+                else if (eid == MATROSKA_ID_EDITIONFLAGORDERED)
+                    edition.ordered = uint(eb, elen) != 0;
+                else if (eid == MATROSKA_ID_CHAPTERATOM)
+                {
+                    SegmentFacts::Atom atom;
+                    for (const auto& [aid, ab, alen] : children(eb, elen))
+                    {
+                        if (aid == MATROSKA_ID_CHAPTERTIMESTART)
+                            atom.start = static_cast<int64_t>(uint(ab, alen));
+                        else if (aid == MATROSKA_ID_CHAPTERTIMEEND)
+                            atom.end = static_cast<int64_t>(uint(ab, alen));
+                        else if (aid == MATROSKA_ID_CHAPTERFLAGENABLED_)
+                            atom.enabled = uint(ab, alen) != 0;
+                        else if (aid == MATROSKA_ID_CHAPTERSEGMENTUUID && alen == 16)
+                            atom.segmentUuid = bytes(ab, alen);
+                        else if (aid == MATROSKA_ID_CHAPTERSEGMENTEDITIONUID)
+                            atom.segmentEdition = uint(ab, alen);
+                        else if (aid == MATROSKA_ID_CHAPTERDISPLAY && atom.name.empty())
+                            for (const auto& [did, db, dlen] : children(ab, alen))
+                                if (did == MATROSKA_ID_CHAPSTRING)
+                                {
+                                    atom.name = bytes(db, dlen);
+                                    atom.name.resize(strlen(atom.name.c_str()));
+                                }
+                    }
+                    edition.atoms.push_back(atom);
+                }
+            }
+            facts.editions.push_back(edition);
+        }
+
+    // where the clusters begin, for the key frames
+    facts.segmentData = -1;
+    scan.pos = 0;
+    while (scan.pos < fileSize)
+    {
+        uint32_t id = 0;
+        int64_t len = 0, b = 0;
+        if (!scan.readElement(id, len, b))
+            break;
+        if (id == MATROSKA_ID_SEGMENT)
+        {
+            facts.segmentData = b;
+            facts.segmentEnd = (len > 0 && len <= fileSize - b) ? b + len : fileSize;
+            break;
+        }
+        scan.pos = b + len;
+    }
+    if (facts.segmentData >= 0)
+    {
+        scan.pos = facts.segmentData;
+        while (scan.pos < facts.segmentEnd)
+        {
+            const int64_t at = scan.pos;
+            uint32_t id = 0;
+            int64_t len = 0, b = 0;
+            if (!scan.readElement(id, len, b))
+                break;
+            if (id == MATROSKA_ID_CLUSTER)
+            {
+                facts.firstCluster = at;
+                break;
+            }
+            scan.pos = b + len;
+        }
+    }
+    return true;
+}
+
+// The times of the key frames of a file's first video track, in nanoseconds, read from the block headers alone.
+std::vector<int64_t> keyFrameTimesNs(const std::string& path, const SegmentFacts& facts)
+{
+    std::vector<int64_t> times;
+    File f;
+    if (facts.videoTrack < 0 || facts.firstCluster < 0 || !f.open(path.c_str(), File::ofRead))
+        return times;
+    EbmlScan scan(f);
+    walkTrackBlocks(scan, facts.firstCluster, facts.segmentEnd, INT_MAX, facts.videoTrack,
+                    [&](const int64_t time, int64_t, const bool key, int)
+                    {
+                        if (key)
+                            times.push_back(time * static_cast<int64_t>(facts.timestampScale));
+                        return true;
+                    });
+    std::sort(times.begin(), times.end());
+    return times;
+}
+
+std::string hexUuid(const std::string& uuid)
+{
+    static const char* DIGITS = "0123456789abcdef";
+    std::string out;
+    for (const char c : uuid)
+    {
+        out += DIGITS[static_cast<uint8_t>(c) >> 4];
+        out += DIGITS[static_cast<uint8_t>(c) & 0x0F];
+    }
+    return out;
+}
+}  // namespace
+
+std::vector<MatroskaPlayPart> MatroskaDemuxer::playTimeline(const std::string& file, std::string& how)
+{
+    std::vector<MatroskaPlayPart> parts;
+    SegmentFacts first;
+    if (!readSegmentFacts(file, first))
+        return parts;
+    const SegmentFacts::Edition* edition = first.defaultEdition();
+    const bool ordered = edition && edition->ordered && !edition->atoms.empty();
+    // Hard linking (17.1): only from the first file of the chain, and an ordered edition takes precedence.
+    const bool linked = !ordered && !first.nextUuid.empty() && first.prevUuid.empty();
+    if (!ordered && !linked)
+        return parts;
+
+    // The other segments of the folder, by their SegmentUUID.
+    std::map<std::string, std::string> byUuid;
+    std::map<std::string, SegmentFacts> facts;
+    facts[file] = first;
+    {
+        std::string dir = extractFileDir(file);
+        if (dir.empty())
+            dir = ".";
+        while (dir.size() > 1 && (dir.back() == '/' || dir.back() == '\\')) dir.pop_back();
+        std::vector<std::string> names;
+        for (const char* mask : {"*.mkv", "*.mka", "*.mks", "*.mk3d", "*.webm"}) findFiles(dir, mask, &names, true);
+        for (const std::string& name : names)
+        {
+            SegmentFacts f;
+            if (readSegmentFacts(name, f) && !f.uuid.empty())
+            {
+                byUuid.emplace(f.uuid, name);
+                facts.emplace(name, f);
+            }
+        }
+        if (!first.uuid.empty())
+            byUuid[first.uuid] = file;
+    }
+
+    std::ostringstream text;
+    if (linked)
+    {
+        // The chain, by NextUUID, and where a file has none, by the file whose PrevUUID names it.
+        std::set<std::string> seen;
+        std::string current = file;
+        while (!current.empty() && seen.insert(current).second)
+        {
+            parts.push_back({current, JoinRange()});
+            const SegmentFacts& here = facts[current];
+            std::string next;
+            if (!here.nextUuid.empty())
+            {
+                const auto found = byUuid.find(here.nextUuid);
+                if (found != byUuid.end())
+                    next = found->second;
+                else
+                    LTRACE(LT_WARN, 2,
+                           "Warning: " << current << " is linked to a next segment (" << hexUuid(here.nextUuid)
+                                       << ") that is not in its folder. The linked files are read up to it.");
+            }
+            else
+                for (const auto& [name, f] : facts)
+                    if (!here.uuid.empty() && f.prevUuid == here.uuid && name != current)
+                        next = name;
+            current = next;
+        }
+        if (parts.size() < 2)
+            return {};
+        text << "it is the first of " << parts.size() << " linked files, which are joined in their order";
+        how = text.str();
+        return parts;
+    }
+
+    // The ordered edition, a chapter from another segment as the chapter says, and a linked edition (17.2.2) as that
+    // edition plays, one level deep.
+    struct Wanted
+    {
+        std::string file;
+        int64_t start, end;
+        std::string name;
+    };
+    std::vector<Wanted> wanted;
+    std::function<void(const std::string&, const SegmentFacts::Edition&, int)> expand =
+        [&](const std::string& path, const SegmentFacts::Edition& ed, const int depth)
+    {
+        for (const SegmentFacts::Atom& atom : ed.atoms)
+        {
+            if (!atom.enabled)
+                continue;
+            std::string source = path;
+            if (!atom.segmentUuid.empty() && atom.segmentUuid != facts[path].uuid)
+            {
+                const auto found = byUuid.find(atom.segmentUuid);
+                if (found == byUuid.end())
+                {
+                    LTRACE(LT_WARN, 2,
+                           "Warning: the chapter \"" << atom.name << "\" plays a segment (" << hexUuid(atom.segmentUuid)
+                                                     << ") that is not in the folder of " << path
+                                                     << ", so it is left out.");
+                    continue;
+                }
+                source = found->second;
+                if (atom.segmentEdition != 0 && depth < 3)
+                {
+                    const SegmentFacts& linkedFacts = facts[source];
+                    if (const SegmentFacts::Edition* linkedEdition = linkedFacts.edition(atom.segmentEdition))
+                    {
+                        if (linkedEdition->ordered)
+                            expand(source, *linkedEdition, depth + 1);
+                        else
+                            wanted.push_back({source, 0, INT64_MAX, atom.name});
+                        continue;
+                    }
+                }
+            }
+            if (atom.start < 0)
+                continue;
+            wanted.push_back({source, atom.start, atom.end > atom.start ? atom.end : INT64_MAX, atom.name});
+        }
+    };
+    expand(file, *edition, 0);
+
+    // Each end to the nearest key frame; the parts placed one after the other.
+    std::map<std::string, std::vector<int64_t>> keys;
+    const auto nearestKey = [&](const std::string& path, const int64_t t)
+    {
+        auto& times = keys[path];
+        if (times.empty())
+            times = keyFrameTimesNs(path, facts[path]);
+        if (times.empty() || t == INT64_MAX)
+            return t;
+        const auto after = std::lower_bound(times.begin(), times.end(), t);
+        if (after == times.begin())
+            return *after;
+        if (after == times.end())
+        {
+            // past the last key frame: the end of the file for an end, the last key frame for a start
+            return t;
+        }
+        const int64_t before = *(after - 1);
+        return t - before <= *after - t ? before : *after;
+    };
+    int64_t offset = 0;
+    for (const Wanted& w : wanted)
+    {
+        const SegmentFacts& f = facts[w.file];
+        int64_t start = nearestKey(w.file, w.start);
+        int64_t end = nearestKey(w.file, w.end);
+        if (f.durationNs > 0 && end >= f.durationNs)
+            end = INT64_MAX;
+        if (start == INT64_MAX || (end != INT64_MAX && end <= start))
+            continue;
+        const int64_t length = end != INT64_MAX ? end - start : (f.durationNs > start ? f.durationNs - start : 0);
+        JoinRange range;
+        range.startNs = start;
+        range.endNs = end;
+        range.offsetNs = offset;
+        range.name = w.name;
+        parts.push_back({w.file, range});
+        offset += length;
+    }
+    if (parts.empty())
+        return parts;
+    std::set<std::string> files;
+    for (const auto& p : parts) files.insert(p.file);
+    text << "its default edition is ordered: " << parts.size() << (parts.size() == 1 ? " part" : " parts");
+    if (files.size() > 1)
+        text << " from " << files.size() << " files";
+    text << ", " << floatToTime(static_cast<double>(offset) / 1e9) << " in all";
+    how = text.str();
+    return parts;
+}
+
 void MatroskaDemuxer::loadChapters(const std::string& fileName)
 {
     File f;

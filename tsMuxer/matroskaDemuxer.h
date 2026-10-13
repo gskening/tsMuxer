@@ -1,8 +1,16 @@
 #ifndef MATROSKA_STREAM_READER_H_
 #define MATROSKA_STREAM_READER_H_
 
+#include "bufferedFileReader.h"
 #include "ioContextDemuxer.h"
 #include "matroskaParser.h"
+
+// One part of the timeline a Matroska file plays (MatroskaDemuxer::playTimeline).
+struct MatroskaPlayPart
+{
+    std::string file;
+    JoinRange range;
+};
 
 class MatroskaDemuxer final : public IOContextDemuxer
 {
@@ -16,6 +24,10 @@ class MatroskaDemuxer final : public IOContextDemuxer
     int simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& acceptedPIDs, int64_t& discardSize) override;
     void getTrackList(std::map<int32_t, TrackInfo>& trackList) override;
     std::vector<AVChapter> getChapters() override;
+    // The parts a player plays for this file, in order: those of its default edition when that edition is ordered,
+    // or the files of a hard-linked chain when this file is the first of it. Empty when the file plays as it is.
+    // `how` says what was found, for the log.
+    static std::vector<MatroskaPlayPart> playTimeline(const std::string& file, std::string& how);
 
     [[nodiscard]] bool isPidFilterSupported() const override { return true; }
     int64_t getTrackDelay(const int32_t pid) override
@@ -116,6 +128,10 @@ class MatroskaDemuxer final : public IOContextDemuxer
     void applyStartCodeRule();
     std::vector<std::string> m_joinFiles;  // the files of a joined input, in order; empty for a single file
     size_t m_joinPart = 0;                 // the part being read: one more for each header met inside the stream
+    std::vector<JoinRange> m_joinRanges;   // a play timeline: the stretch of each part; empty for a plain join
+    bool m_partVideoOn = false;            // the part's video has reached its first key frame
+    bool m_partVideoDone = false;          // and its last
+    bool keepBlock(const MatroskaTrack* track, int64_t ns, bool keyFrame);
     void nextJoinPart();
 
     AVPacket* m_lastDeliveryPacket;

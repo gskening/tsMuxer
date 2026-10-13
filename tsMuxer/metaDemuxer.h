@@ -248,7 +248,8 @@ class METADemuxer final : public AbstractDemuxer
     ContainerToReaderWrapper m_containerReader;
     int m_lastProgressY;
     std::chrono::steady_clock::time_point m_lastReportTime;
-    double m_lastProgress = 0.0;  // the last value printed
+    std::set<std::string> m_timelinesReported;  // the Matroska files whose play timeline was said in the log
+    double m_lastProgress = 0.0;                // the last value printed
     int64_t m_totalSize;
     bool m_flushDataMode;
     const BufferedReaderManager& m_readManager;

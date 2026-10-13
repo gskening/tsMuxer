@@ -765,6 +765,29 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
         fileList = extractFileList(codecStreamName);
     }
 
+    // A Matroska file is played as a player plays it: by its ordered edition, or with the files linked after it.
+    std::vector<JoinRange> timelineRanges;
+    if (fileList.size() == 1)
+    {
+        const std::string ext = strToLowerCase(extractFileExt(fileList[0]));
+        if (ext == "mkv" || ext == "mka" || ext == "mks" || ext == "mk3d" || ext == "webm")
+        {
+            std::string how;
+            const std::vector<MatroskaPlayPart> parts = MatroskaDemuxer::playTimeline(fileList[0], how);
+            if (!parts.empty())
+            {
+                if (m_timelinesReported.insert(fileList[0]).second)
+                    LTRACE(LT_INFO, 2, "Reading " << fileList[0] << " as a player plays it: " << how << ".");
+                fileList.clear();
+                for (const MatroskaPlayPart& part : parts)
+                {
+                    fileList.push_back(part.file);
+                    timelineRanges.push_back(part.range);
+                }
+            }
+        }
+    }
+
     for (int i = static_cast<int>(fileList.size()) - 1; i >= 0; --i)
     {
         string trackKey = fileList[i] + string("_#") + int32ToStr(i) + string("_");
@@ -774,7 +797,11 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
             trackKey += string("_subtrack_");
         trackKey += int32ToStr(pid);
         if (m_processedTracks.find(trackKey) != m_processedTracks.end())
+        {
             fileList.erase(fileList.begin() + i);
+            if (static_cast<size_t>(i) < timelineRanges.size())
+                timelineRanges.erase(timelineRanges.begin() + i);
+        }
         else
             m_processedTracks.insert(trackKey);
     }
@@ -796,11 +823,15 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
     }
 
     FileListIterator* listIterator = nullptr;
-    if (fileList.size() > 1)
+    if (fileList.size() > 1 || !timelineRanges.empty())
     {
         listIterator = new FileListIterator();
         m_iterators.push_back(listIterator);
-        for (const string& fileName : fileList) listIterator->addFile(fileName);
+        for (size_t i = 0; i < fileList.size(); ++i)
+            if (i < timelineRanges.size())
+                listIterator->addFile(fileList[i], timelineRanges[i]);
+            else
+                listIterator->addFile(fileList[i]);
     }
 
     int64_t fileSize = 0;
@@ -1234,6 +1265,52 @@ std::vector<std::vector<uint8_t>> METADemuxer::getGlobalTags()
     return out;
 }
 
+// The chapters of Matroska files joined one after the other, each file's moved to where the join puts it: where the
+// video of the file before ends, less where the file's own video starts (see METADemuxer::getChapters). endNano, when
+// given, gets where the last file's video ends on that clock, 0 when a length could not be read.
+static std::vector<AVChapter> joinedMatroskaChapters(const BufferedReaderManager& readManager,
+                                                     const std::vector<std::string>& parts, int64_t* endNano)
+{
+    std::vector<AVChapter> chapters;
+    int64_t offsetNano = 0;
+    int64_t prevEndNano = 0;
+    if (endNano)
+        *endNano = 0;
+    for (size_t i = 0; i < parts.size(); ++i)
+    {
+        MatroskaDemuxer partDemuxer(readManager);
+        partDemuxer.openFile(parts[i]);
+        int64_t startNano = 0, partEndNano = 0;
+        if (!partDemuxer.getVideoSpanNano(startNano, partEndNano))
+        {
+            startNano = 0;
+            partEndNano = partDemuxer.getFileDurationNano();
+        }
+        if (i > 0)
+            offsetNano += prevEndNano - startNano;
+        for (AVChapter chapter : partDemuxer.getChapters())
+        {
+            chapter.start += offsetNano;
+            if (chapter.start >= 0)
+                chapters.push_back(std::move(chapter));
+        }
+        if (partEndNano <= 0)
+        {
+            if (i + 1 < parts.size())
+                LTRACE(LT_WARN, 2,
+                       "Warning: the length of "
+                           << parts[i]
+                           << " cannot be read (it has no Duration and no Cues), so the chapters of the "
+                              "files joined after it are left out.");
+            return chapters;
+        }
+        prevEndNano = partEndNano;
+        if (endNano && i + 1 == parts.size())
+            *endNano = offsetNano + partEndNano;
+    }
+    return chapters;
+}
+
 std::vector<AVChapter> METADemuxer::getChapters()
 {
     // A Blu-ray playlist keeps its chapters as playlist marks rather than in any demuxer, so it
@@ -1298,43 +1375,14 @@ std::vector<AVChapter> METADemuxer::getChapters()
         // the same way. A part whose video cannot be measured (no Cues) counts by its Duration, as before; a part with
         // neither ends the list, because the chapters after it could not be placed, and that is said.
         const auto* join = dynamic_cast<const FileListIterator*>(demuxerData.m_iterator);
-        if (join && join->getFiles().size() > 1 && dynamic_cast<MatroskaDemuxer*>(demuxerData.m_demuxer))
+        if (join && !join->getRanges().empty() && join->getRanges().front().startNs >= 0)
         {
+            // A play timeline: a chapter where each part starts, named as the chapter of the edition it comes from.
             chapters.clear();
-            const std::vector<std::string>& parts = join->getFiles();
-            int64_t offsetNano = 0;
-            int64_t prevEndNano = 0;
-            for (size_t i = 0; i < parts.size(); ++i)
-            {
-                MatroskaDemuxer partDemuxer(m_readManager);
-                partDemuxer.openFile(parts[i]);
-                int64_t startNano = 0, endNano = 0;
-                if (!partDemuxer.getVideoSpanNano(startNano, endNano))
-                {
-                    startNano = 0;
-                    endNano = partDemuxer.getFileDurationNano();
-                }
-                if (i > 0)
-                    offsetNano += prevEndNano - startNano;
-                for (AVChapter chapter : partDemuxer.getChapters())
-                {
-                    chapter.start += offsetNano;
-                    if (chapter.start >= 0)
-                        chapters.push_back(std::move(chapter));
-                }
-                if (endNano <= 0)
-                {
-                    if (i + 1 < parts.size())
-                        LTRACE(LT_WARN, 2,
-                               "Warning: the length of "
-                                   << parts[i]
-                                   << " cannot be read (it has no Duration and no Cues), so the chapters of the "
-                                      "files joined after it are left out.");
-                    break;
-                }
-                prevEndNano = endNano;
-            }
+            for (const JoinRange& range : join->getRanges()) chapters.emplace_back(range.offsetNs, range.name);
         }
+        else if (join && join->getFiles().size() > 1 && dynamic_cast<MatroskaDemuxer*>(demuxerData.m_demuxer))
+            chapters = joinedMatroskaChapters(m_readManager, join->getFiles(), nullptr);
         if (!chapters.empty())
             return chapters;
     }
@@ -1962,6 +2010,49 @@ DetectStreamRez METADemuxer::DetectStreamReader(const BufferedReaderManager& rea
             // Where a join would put the file after this one (see getChapters).
             if (!demuxer->getVideoSpanNano(videoStart, videoEnd))
                 videoStart = videoEnd = 0;
+        }
+        // A Matroska file played by its ordered edition or with the files linked after it is muxed as that timeline,
+        // so its length, its marks and its video span are the timeline's: the window takes the chapters it writes
+        // into the meta from the marks.
+        if (dynamic_cast<MatroskaDemuxer*>(demuxer.get()))
+        {
+            std::string how;
+            const std::vector<MatroskaPlayPart> parts = MatroskaDemuxer::playTimeline(fileName, how);
+            if (!parts.empty())
+            {
+                LTRACE(LT_INFO, 2, "Plays as: " << how);
+                chapters.clear();
+                if (parts.front().range.startNs >= 0)
+                {
+                    int64_t length = 0;
+                    for (const MatroskaPlayPart& part : parts)
+                    {
+                        chapters.emplace_back(part.range.offsetNs, part.range.name);
+                        length = part.range.offsetNs;
+                    }
+                    // the end of the last part: the timeline's length as playTimeline added it up
+                    const JoinRange& last = parts.back().range;
+                    MatroskaDemuxer lastPart(readManager);
+                    lastPart.openFile(parts.back().file);
+                    const int64_t lastEnd = last.endNs != INT64_MAX ? last.endNs : lastPart.getFileDurationNano();
+                    length += (std::max)(int64_t{0}, lastEnd - last.startNs);
+                    fileDuration = length;
+                    videoStart = 0;
+                    videoEnd = length;
+                }
+                else
+                {
+                    std::vector<std::string> files;
+                    for (const MatroskaPlayPart& part : parts) files.push_back(part.file);
+                    int64_t end = 0;
+                    chapters = joinedMatroskaChapters(readManager, files, &end);
+                    if (end > 0)
+                    {
+                        fileDuration = end - videoStart;
+                        videoEnd = end;
+                    }
+                }
+            }
         }
     }
     else
