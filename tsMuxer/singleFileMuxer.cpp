@@ -147,6 +147,10 @@ void SingleFileMuxer::intAddStream(const std::string& streamName, const std::str
         {
             fileExt = ".obu";
         }
+        else if (codecName == "V_VP8" || codecName == "V_VP9")
+        {
+            fileExt = ".ivf";
+        }
         else
         {
             fileExt = ".mpv";

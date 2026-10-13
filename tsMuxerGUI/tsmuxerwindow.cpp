@@ -2870,11 +2870,11 @@ bool TsMuxerWindow::isCodecIncompatibleWithFormat(const QString& programName) co
     if (programName == "A_FLAC")
         return !(ui->radioButtonMKV->isChecked() || ui->radioButtonDemux->isChecked());
 
-    // VP8, VP9 and ALAC: MKV output only. None has a form in a transport stream or on a disc, nor a file of its own for
-    // a demux. Vorbis is demuxed into an Ogg file.
-    if (programName == "V_VP8" || programName == "V_VP9" || programName == "A_ALAC")
+    // ALAC: MKV output only. VP8, VP9 and Vorbis: MKV, or a demux into an IVF or an Ogg file. None has a form in a
+    // transport stream or on a disc.
+    if (programName == "A_ALAC")
         return !ui->radioButtonMKV->isChecked();
-    if (programName == "A_VORBIS")
+    if (programName == "V_VP8" || programName == "V_VP9" || programName == "A_VORBIS")
         return !(ui->radioButtonMKV->isChecked() || ui->radioButtonDemux->isChecked());
 
     // Opus: supported for MKV, TS, and Demux output (not M2TS / Blu-ray)
@@ -2906,12 +2906,12 @@ void TsMuxerWindow::colorizeCurrentRow(const QtvCodecInfo* codecInfo, int rowInd
 
         // Set a tooltip on the whole row, codec-specific message
         QString tip;
-        if (codecInfo->programName == "V_VP8" || codecInfo->programName == "V_VP9" ||
-            codecInfo->programName == "A_ALAC")
+        if (codecInfo->programName == "A_ALAC")
             tip = tr("%1 is only supported for MKV output. "
                      "This track will be ignored for the selected output format.")
                       .arg(codecInfo->displayName);
-        else if (codecInfo->programName == "A_FLAC" || codecInfo->programName == "A_VORBIS")
+        else if (codecInfo->programName == "A_FLAC" || codecInfo->programName == "A_VORBIS" ||
+                 codecInfo->programName == "V_VP8" || codecInfo->programName == "V_VP9")
             tip = tr("%1 is only supported for MKV and Demux output. "
                      "This track will be ignored for the selected output format.")
                       .arg(codecInfo->displayName);

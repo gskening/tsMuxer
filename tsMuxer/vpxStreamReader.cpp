@@ -1,6 +1,7 @@
 #include "vpxStreamReader.h"
 
 #include <algorithm>
+#include <cmath>
 #include <sstream>
 
 #include "avCodecs.h"
@@ -28,6 +29,64 @@ std::vector<uint8_t> VpxStreamReader::unframe(const uint8_t* data, const int siz
     if (!frame.empty())
         frame.resize(NALUnit::decodeNAL(p, end, frame.data(), frame.size()));
     return frame;
+}
+
+int VpxStreamReader::prepareDemuxPacket(uint8_t* data, const int size, const uint8_t** outData)
+{
+    // An IVF file: a 32 byte file header, then each frame behind 12 bytes of its own, its size and its time. A frame
+    // larger than a packet comes in several; it is written whole at its first, which still has all of it in the
+    // reader's buffer, and the packets that follow with the rest of it are left out.
+    *outData = data;
+    if (size <= 0)
+        return 0;
+    if (m_demuxSkip > 0)
+    {
+        const int64_t skipped = (std::min)(m_demuxSkip, static_cast<int64_t>(size));
+        m_demuxSkip -= skipped;
+        return 0;
+    }
+    if (!(size >= 3 && data[0] == 0 && data[1] == 0 && (data[2] == 1 || (size >= 4 && data[2] == 0 && data[3] == 1))))
+        return 0;
+    uint8_t* frameEnd = NALUnit::findNALWithStartCode(data + 3, m_bufEnd, m_longCodesAllowed);
+    if (frameEnd < data + size)
+        frameEnd = data + size;
+    m_demuxSkip = (frameEnd - data) - size;
+    const std::vector<uint8_t> frame = unframe(data, static_cast<int>(frameEnd - data));
+
+    m_demuxBuffer.clear();
+    const auto le = [this](const uint64_t v, const int bytes)
+    {
+        for (int i = 0; i < bytes; ++i) m_demuxBuffer.push_back(static_cast<uint8_t>(v >> (8 * i)));
+    };
+    if (!m_ivfHeaderWritten)
+    {
+        m_ivfHeaderWritten = true;
+        m_demuxFrames = 0;
+        // the frame rate as a fraction: the NTSC rates exactly, the rest in thousandths
+        const double fps = m_fps > 0 ? m_fps : 25.0;
+        uint32_t rate = static_cast<uint32_t>(llround(fps * 1000)), scale = 1000;
+        for (const int base : {24, 30, 48, 60, 120})
+            if (std::fabs(fps - base * 1000.0 / 1001) < 0.001)
+            {
+                rate = base * 1000;
+                scale = 1001;
+            }
+        for (const char c : {'D', 'K', 'I', 'F'}) m_demuxBuffer.push_back(static_cast<uint8_t>(c));
+        le(0, 2);   // version
+        le(32, 2);  // header size
+        for (const char c : {'V', 'P', m_vp9 ? '9' : '8', '0'}) m_demuxBuffer.push_back(static_cast<uint8_t>(c));
+        le(m_width, 2);
+        le(m_height, 2);
+        le(rate, 4);
+        le(scale, 4);
+        le(0, 4);  // the frame count, not known yet
+        le(0, 4);
+    }
+    le(frame.size(), 4);
+    le(static_cast<uint64_t>(m_demuxFrames++), 8);
+    m_demuxBuffer.insert(m_demuxBuffer.end(), frame.begin(), frame.end());
+    *outData = m_demuxBuffer.data();
+    return static_cast<int>(m_demuxBuffer.size());
 }
 
 bool VpxStreamReader::parseFrameHeader(const uint8_t* frame, const int size)

@@ -12,8 +12,8 @@
 // frame may end in zero bytes and those would be taken for the start of the next start code. The Matroska muxer takes
 // all of it off again (unframe).
 //
-// Neither codec has a form in a transport stream or on a Blu-ray disc, so a Matroska output is the only one that can
-// carry them (MuxerManager::checkTrackList).
+// Neither codec has a form in a transport stream or on a Blu-ray disc: they go into a Matroska output, or are demuxed
+// into an IVF file (prepareDemuxPacket). MuxerManager::checkTrackList refuses the rest.
 class VpxStreamReader final : public MPEGStreamReader
 {
    public:
@@ -23,6 +23,7 @@ class VpxStreamReader final : public MPEGStreamReader
     CheckStreamRez checkStream(uint8_t* buffer, int len);
     int getTSDescriptor(uint8_t* dstBuff, bool blurayMode, bool hdmvDescriptors) override { return 0; }
     [[nodiscard]] bool needSPSForSplit() const override { return false; }
+    int prepareDemuxPacket(uint8_t* data, int size, const uint8_t** outData) override;
 
     // One framed frame as it arrives here, back to the frame itself: the start code, the escaping and the stop byte
     // taken off.
@@ -38,6 +39,7 @@ class VpxStreamReader final : public MPEGStreamReader
     bool getInterlaced() override { return false; }
     bool isIFrame() override { return m_lastIFrame; }
     void updateStreamFps(void* nalUnit, uint8_t* buff, uint8_t* nextNal, int oldSpsLen) override {}
+    void onSplitEvent() override { m_ivfHeaderWritten = false; }
 
    private:
     // Reads the header at the start of a frame. True for a keyframe, which also sets the size, the profile and the
@@ -52,6 +54,11 @@ class VpxStreamReader final : public MPEGStreamReader
     int m_bitDepth;
     bool m_lastIFrame;
     bool m_firstFrame;
+    // demux: an IVF file
+    std::vector<uint8_t> m_demuxBuffer;
+    bool m_ivfHeaderWritten = false;
+    int64_t m_demuxFrames = 0;  // the frames written to the file, its time stamps
+    int64_t m_demuxSkip = 0;    // the rest of a frame already written, which comes in later packets
 };
 
 #endif  // VPX_STREAM_READER_H_
