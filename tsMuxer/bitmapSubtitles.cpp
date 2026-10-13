@@ -17,6 +17,9 @@ using text_subtitles::PIXEL_COMPOSITION_RATE;
 using text_subtitles::PIXEL_DECODING_RATE;
 using text_subtitles::TextToPGSConverter;
 using text_subtitles::YUVQuad;
+#ifndef _WIN32
+using text_subtitles::RGBQUAD;  // windows.h has it on Windows
+#endif
 
 double nearestPgsFrameRate(const double fps)
 {
