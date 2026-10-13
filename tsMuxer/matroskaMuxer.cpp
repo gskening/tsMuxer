@@ -1326,7 +1326,10 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
     for (const auto& [flagId, value] : track.flags) pos += ebml_write_uint(inner.data() + pos, flagId, value);
     if (!track.name.empty())
         pos += ebml_write_string(inner.data() + pos, MATROSKA_ID_TRACKNAME, track.name);
-    pos += ebml_write_string(inner.data() + pos, MATROSKA_ID_CODECID, track.matroskaCodecID);
+    // Text subtitles in WebM are WebVTT, whose blocks hold the cue text as a Matroska text track's do.
+    pos += ebml_write_string(inner.data() + pos, MATROSKA_ID_CODECID,
+                             m_webm && track.matroskaCodecID == MATROSKA_CODEC_ID_SRT ? MATROSKA_CODEC_ID_WEBM_WEBVTT
+                                                                                      : track.matroskaCodecID);
 
     // Matroska treats a MISSING Language as "eng", so leaving it out does not mean "unknown", it
     // silently claims every untagged track is English. Write "und" instead when we have nothing.
@@ -1692,12 +1695,12 @@ void MatroskaMuxer::openDstFile()
     if (m_webm)
         for (const auto& [index, track] : m_tracks)
             if (track.codecID != CODEC_V_VP8 && track.codecID != CODEC_V_VP9 && track.codecID != CODEC_V_AV1 &&
-                track.codecID != CODEC_A_OPUS && track.codecID != CODEC_A_VORBIS)
+                track.codecID != CODEC_A_OPUS && track.codecID != CODEC_A_VORBIS && track.codecID != CODEC_S_SRT)
                 THROW(ERR_COMMON,
                       (track.codecReader ? track.codecReader->getCodecInfo().displayName : std::string("A track"))
-                          << " cannot go into a WebM file, which holds VP8, VP9 and AV1 video and Opus and "
-                             "Vorbis audio only. Give the output an .mkv name for it, or leave the track "
-                             "out.")
+                          << " cannot go into a WebM file, which holds VP8, VP9 and AV1 video, Opus and "
+                             "Vorbis audio and text subtitles only. Give the output an .mkv name for it, or "
+                             "leave the track out.")
 
     // ** THE DESTINATION IS NOT CREATED HERE, AND THAT IS THE WHOLE POINT. **
     //
@@ -2168,6 +2171,15 @@ void MatroskaMuxer::writeDeferredHeader()
     // Re-read track properties now that stream readers have parsed their headers. This is where
     // the exact Dolby Vision test lives and where it throws, so nothing below it may run before it.
     refreshTrackProperties();
+
+    // A text subtitle that is drawn into pictures is PGS by now, which a WebM file cannot hold; the check at
+    // openDstFile could not tell. Still before the file is created.
+    if (m_webm)
+        for (const auto& [index, track] : m_tracks)
+            if (track.trackType == MKV_TRACK_TYPE_SUBTITLE && track.matroskaCodecID != MATROSKA_CODEC_ID_SRT)
+                THROW(ERR_COMMON,
+                      "A WebM file holds subtitles as text only, and this one is drawn into pictures. "
+                      "Keep the subtitles as text, give the output an .mkv name, or leave the track out.")
 
     // WebM has no attachments.
     if (m_webm && !m_sourceAttachments.empty())
@@ -3007,9 +3019,19 @@ void MatroskaMuxer::flushHeldText(const int64_t upToPts)
 
 // One text subtitle: a BlockGroup holding its Block and its BlockDuration, the form the Matroska codec
 // mapping gives S_TEXT/UTF8. A subtitle without a duration, shown until the next one, is a SimpleBlock.
-void MatroskaMuxer::writeTextBlock(MkvTrackInfo& track, const uint8_t* data, const int size, const int64_t pts,
+void MatroskaMuxer::writeTextBlock(MkvTrackInfo& track, const uint8_t* data, int size, const int64_t pts,
                                    const int64_t duration)
 {
+    // WebVTT in WebM: a block is the cue's identifier, its settings and its text, a line each before the text. Both
+    // are empty here.
+    std::vector<uint8_t> webVtt;
+    if (m_webm && track.matroskaCodecID == MATROSKA_CODEC_ID_SRT)
+    {
+        webVtt.assign({'\n', '\n'});
+        webVtt.insert(webVtt.end(), data, data + size);
+        data = webVtt.data();
+        size = static_cast<int>(webVtt.size());
+    }
     if (duration <= 0)
     {
         writeBlock(track, data, size, pts, AVPacket::IS_IFRAME);
@@ -3076,9 +3098,9 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
             m_muxStartPts = m_firstTimecode;
             m_muxStartSet = true;
         }
-        // A part starts at the earliest picture it shows, which with reordered pictures may come before the keyframe.
-        // VP8, VP9 and AV1 never reorder, but their readers put the decoding time a frame before the keyframe's, so
-        // a part started a frame early and its first picture showed at 42 ms instead of 0.
+        // A part starts at the earliest picture it shows, which with reordered pictures may come before the
+        // keyframe. VP8, VP9 and AV1 never reorder, but their readers put the decoding time a frame before the
+        // keyframe's, so a part started a frame early and its first picture showed at 42 ms instead of 0.
         const bool reorders =
             track.codecID != CODEC_V_VP8 && track.codecID != CODEC_V_VP9 && track.codecID != CODEC_V_AV1;
         if (track.trackNumber == m_mainTrackNumber && (pendingFlags & AVPacket::IS_IFRAME) && m_clusterOpen &&
@@ -3120,9 +3142,9 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
     if (needNewCluster || (m_clusterOpen && relMs >= 0 && (offset < INT16_MIN || offset > INT16_MAX)))
         relMs -= startCluster(relMs);
 
-    // Cue points, as RFC 9559 (22.1) recommends: every video keyframe, every subtitle a player can show from, and in a
-    // file without video each audio track at most once every 500 ms. Only video keyframes had one, so a player could
-    // not seek to a subtitle, and a file of audio alone had no Cues at all.
+    // Cue points, as RFC 9559 (22.1) recommends: every video keyframe, every subtitle a player can show from, and
+    // in a file without video each audio track at most once every 500 ms. Only video keyframes had one, so a player
+    // could not seek to a subtitle, and a file of audio alone had no Cues at all.
     if ((pendingFlags & AVPacket::IS_IFRAME) && (track.trackType == 1 || track.trackType == MKV_TRACK_TYPE_SUBTITLE ||
                                                  (track.trackType == 2 && audioCueDue(track, relMs))))
         addCue(track, relMs, -1);
@@ -3133,8 +3155,8 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
 
     // The last frame of a track that ends in padding goes into a BlockGroup with its DiscardPadding, which a
     // SimpleBlock cannot carry (RFC 9559, 10.4), so that a player drops the padding as the source said.
-    // An ALAC track's last frame is a partial one, as a rule, shorter than the DefaultDuration says: it gets its own
-    // BlockDuration, so that a player does not take it for a whole frame.
+    // An ALAC track's last frame is a partial one, as a rule, shorter than the DefaultDuration says: it gets its
+    // own BlockDuration, so that a player does not take it for a whole frame.
     int64_t lastFrameMs = 0;
     if (track.finalFlush && track.codecID == CODEC_A_ALAC && track.audioFrameNs > 0)
         if (const auto simple = dynamic_cast<SimplePacketizerReader*>(track.codecReader))
@@ -3215,8 +3237,8 @@ void MatroskaMuxer::addCue(const MkvTrackInfo& track, const int64_t relMs, const
     m_cueEntries.push_back(cue);
 }
 
-// In a file with video, the video keyframes are the cue points. Without video, an audio track gets one, but not more
-// often than every 500 ms (RFC 9559, 22.1).
+// In a file with video, the video keyframes are the cue points. Without video, an audio track gets one, but not
+// more often than every 500 ms (RFC 9559, 22.1).
 bool MatroskaMuxer::audioCueDue(const MkvTrackInfo& track, const int64_t relMs)
 {
     for (const auto& [index, other] : m_tracks)
@@ -3300,8 +3322,8 @@ void MatroskaMuxer::drainHeldFrames(MkvTrackInfo& track, const bool atEndOfStrea
 }
 
 // The first frame of an MP3 written by LAME and its kind is a Xing or Info frame: no sound, but the stream's length
-// and, in the LAME tag after it, the encoder delay and padding in samples (12 bits each). True when frame is one, with
-// delay and padding set, -1 for the delay when it has no LAME tag.
+// and, in the LAME tag after it, the encoder delay and padding in samples (12 bits each). True when frame is one,
+// with delay and padding set, -1 for the delay when it has no LAME tag.
 static bool readMp3InfoFrame(const uint8_t* frame, const int size, int& delay, int& padding)
 {
     delay = -1;
@@ -3349,9 +3371,9 @@ bool MatroskaMuxer::muxPacket(AVPacket& avPacket)
     if (it == m_tracks.end())
         return true;
 
-    // The Xing or Info frame at the start of an MP3 holds no sound, and was written as a frame of silence. It is left
-    // out, and the LAME encoder delay and padding it gives become CodecDelay and DiscardPadding (writeDeferredHeader),
-    // as a player skips them in an MP3 file.
+    // The Xing or Info frame at the start of an MP3 holds no sound, and was written as a frame of silence. It is
+    // left out, and the LAME encoder delay and padding it gives become CodecDelay and DiscardPadding
+    // (writeDeferredHeader), as a player skips them in an MP3 file.
     if (it->second.codecID == CODEC_A_MPEG_AUDIO && !it->second.mp3InfoChecked)
     {
         it->second.mp3InfoChecked = true;
@@ -3682,8 +3704,9 @@ void MatroskaMuxer::writeCues()
 
     m_cuesPos = m_file.pos() - m_segmentStartPos;
 
-    // In time order (RFC 9559, 22.1); points of several tracks at the same time share one CuePoint, in the order they
-    // were made. With subtitles and audio in the cues, the order they were made in is not always the order of time.
+    // In time order (RFC 9559, 22.1); points of several tracks at the same time share one CuePoint, in the order
+    // they were made. With subtitles and audio in the cues, the order they were made in is not always the order of
+    // time.
     std::stable_sort(m_cueEntries.begin(), m_cueEntries.end(),
                      [](const CueEntry& a, const CueEntry& b) { return a.timecodeMs < b.timecodeMs; });
     std::vector<uint8_t> allPoints;
@@ -4198,9 +4221,9 @@ void MatroskaMuxer::writeTags()
     endCrc();
 }
 
-// Everything that closes one output file, once its last block is written: its chapters when the output is split, the
-// Cues, the attachments, the SeekHead, and the sizes and the Duration patched in. partEndPts is where the next part
-// starts, INT64_MAX for the last or only file.
+// Everything that closes one output file, once its last block is written: its chapters when the output is split,
+// the Cues, the attachments, the SeekHead, and the sizes and the Duration patched in. partEndPts is where the next
+// part starts, INT64_MAX for the last or only file.
 void MatroskaMuxer::finishPart(const int64_t partEndPts)
 {
     flushCluster();
@@ -4273,9 +4296,9 @@ void MatroskaMuxer::finishPart(const int64_t partEndPts)
         durationMs = std::max(durationMs, endMs);
     }
 
-    // A DD+ 7.1 track carries channels 7 and 8 in a dependent substream, which the reader may meet only after the track
-    // header has been written: the header said 6 while the audio decodes as 7.1. The count is corrected here, in
-    // place, with the same one byte size, once the whole track has been read.
+    // A DD+ 7.1 track carries channels 7 and 8 in a dependent substream, which the reader may meet only after the
+    // track header has been written: the header said 6 while the audio decodes as 7.1. The count is corrected here,
+    // in place, with the same one byte size, once the whole track has been read.
     for (const auto& [streamIdx, track] : m_tracks)
     {
         const auto at = m_channelsValueFilePos.find(streamIdx);
@@ -4323,8 +4346,8 @@ std::string MatroskaMuxer::partFileName(const int part) const
     return m_origFileName.substr(0, m_origFileName.size() - ext.size() - 1) + ".split." + int32ToStr(part) + "." + ext;
 }
 
-// Whether the block about to be written starts a new part: a key frame of the main track once the part is as large or
-// as long as asked, or has reached the next chapter.
+// Whether the block about to be written starts a new part: a key frame of the main track once the part is as large
+// or as long as asked, or has reached the next chapter.
 bool MatroskaMuxer::splitDue(const int64_t pts)
 {
     if (m_splitSize > 0)
