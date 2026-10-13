@@ -813,6 +813,10 @@ void MovDemuxer::openFile(const std::string& streamName)
     // Every file of a join has its own movie header, and its own edit lists to be timed with it.
     m_timescale = 0;
     m_emptyEditUnits.clear();
+    // And its own fragment defaults and media boxes: those of the file before it stayed in the lists, so a later file
+    // could take its fragment defaults, or the size of a chunk, from the file before.
+    trex_data.clear();
+    m_mdat_data.clear();
     found_moof = false;
     m_mdat_pos = 0;
     itunes_metadata = 0;
@@ -1260,7 +1264,13 @@ int MovDemuxer::mov_read_default(MOVAtom atom)
         err = ParseTableEntry(a);
         const int64_t left = a.size - m_processedBytes + start_pos;
 
-        if ((!found_moof && m_mdat_pos && found_moov) || (found_moof && m_processedBytes + left >= m_fileSize))
+        // A plain file is read up to its first mdat once its moov is known. A moov with an mvex box announces movie
+        // fragments, and those come AFTER the first mdat when the moov describes the first fragment itself (what an
+        // encoder writes for fragments without an empty moov): stopping there left every moof unread, and only the
+        // first fragment was muxed, 25 of 250 pictures. So with an mvex the walk goes on to the end of the file, as it
+        // does for a file whose moov describes no samples.
+        if ((!found_moof && m_mdat_pos && found_moov && trex_data.empty()) ||
+            (found_moof && m_processedBytes + left >= m_fileSize))
         {
             m_headerWalkEnd = start_pos + a.size;
             return 0;
