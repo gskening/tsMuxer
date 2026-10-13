@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QFile>
 #include <QFileInfo>
 #include <QSettings>
 #include <QUrl>
@@ -12,6 +13,9 @@
 // so an older version still finds its own.
 static void copySettingsFromOldName()
 {
+    // With a tsMuxerGUI.ini the registry is neither read for this nor written: the window keeps everything in the ini.
+    if (QFile::exists(tsMuxerGuiIniName()))
+        return;
     QSettings current;
     if (!current.allKeys().isEmpty())
         return;  // already in use under the new name

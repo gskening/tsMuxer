@@ -48,43 +48,43 @@ void stringToFontOptions(const QString& serialized, QFont& font)
 int colorLight(QColor color) { return (0.257 * color.red()) + (0.504 * color.green()) + (0.098 * color.blue()) + 16; }
 }  // namespace
 
-FontSettingsTableModel::FontSettingsTableModel(QObject* parent) : QAbstractTableModel(parent)
-{
-    QSettings settings;
-    settings.beginGroup("subtitles");
+FontSettingsTableModel::FontSettingsTableModel(QObject* parent) : QAbstractTableModel(parent) {}
 
-    // keep backward compatibility with versions < 2.6.15 which contain "famaly" key
-    if (settings.contains("famaly"))
-    {
-        settings.setValue("family", settings.value("famaly"));
-        settings.remove("famaly");
-    }
+// The font, its size, colour and style are read and written through the window's own settings object. This model used
+// a QSettings of its own, which is always the registry on Windows, so with a tsMuxerGUI.ini beside the program every
+// other choice went to the ini but these four went to the registry: a copy of the program carried along with its ini
+// lost them, and wrote the registry of the machine it ran on. A key that is not there leaves the value as it is.
+void FontSettingsTableModel::load(QSettings& settings)
+{
+    beginResetModel();
+    settings.beginGroup("subtitles");
     QString fontName = settings.value("family").toString();
+    if (fontName.isEmpty())
+        fontName = settings.value("famaly").toString();  // the key versions before 2.6.15 wrote
     if (!fontName.isEmpty())
         m_font.setFamily(fontName);
 
-    int fontSize = settings.value("size").toInt();
+    const int fontSize = settings.value("size").toInt();
     if (fontSize > 0)
         m_font.setPointSize(fontSize);
 
     if (!settings.value("color").isNull())
-    {
         m_color = settings.value("color").toUInt();
-    }
 
-    stringToFontOptions(settings.value("options").toString(), m_font);
-
+    if (settings.contains("options"))
+        stringToFontOptions(settings.value("options").toString(), m_font);
     settings.endGroup();
+    endResetModel();
 }
 
-FontSettingsTableModel::~FontSettingsTableModel()
+void FontSettingsTableModel::save(QSettings& settings) const
 {
-    QSettings settings;
     settings.beginGroup("subtitles");
     settings.setValue("family", m_font.family());
     settings.setValue("size", m_font.pointSize());
     settings.setValue("color", m_color);
     settings.setValue("options", fontOptions(m_font));
+    settings.remove("famaly");
     settings.endGroup();
 }
 

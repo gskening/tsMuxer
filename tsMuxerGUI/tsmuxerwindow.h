@@ -33,8 +33,13 @@ class TsMuxerWindow;
 class QnCheckBoxedHeaderView;
 class FontSettingsTableModel;
 class LangCodesModel;
+class QSettings;
 
 typedef QList<double> ChapterList;
+
+// The tsMuxerGUI.ini that makes the window portable: in the program's own folder. While it exists every setting is kept
+// in it and the registry is not written at all.
+QString tsMuxerGuiIniName();
 
 enum MplsType
 {
@@ -118,6 +123,7 @@ class TsMuxerWindow : public QWidget
 
    protected:
     void closeEvent(QCloseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
     void changeEvent(QEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;
     void updateMaxOffsets();
@@ -126,6 +132,7 @@ class TsMuxerWindow : public QWidget
 
     void writeSettings();
     bool readSettings();
+    bool readSettingsBody();
     [[nodiscard]] QString currentOutputMode() const;
     [[nodiscard]] QString currentSaveDialogFilter() const;
     void setOutputMode(const QString& mode);
@@ -155,6 +162,7 @@ class TsMuxerWindow : public QWidget
     QString getFileList();
     QString getSrtParams();
     int findLangByCode(const QString& code);
+    bool isLangCodeForMeta(const QString& code);
     QString langForTrack(const QComboBox* box, const QString& current);
     void setComboBoxText(QComboBox* comboBox, const QString& text);
     QtvCodecInfo* getCodecInfo(int idx);
@@ -271,8 +279,20 @@ class TsMuxerWindow : public QWidget
 #endif
     bool isVideoCropped();
 
-    FontSettingsTableModel* fontSettingsModel;
+    FontSettingsTableModel* fontSettingsModel = nullptr;
     LangCodesModel* langCodesModel;
+
+    // The program choices of the window that are not job content (see CHOICE_WIDGETS in the .cpp). They are saved only
+    // after they have been read back, or the first save, which runs while the window is still being built, would
+    // overwrite the stored choices with the defaults.
+    void saveChoices();
+    void restoreChoices(QSettings& from);
+    bool m_choicesRestored = false;
+    // Set while an ini that is still empty takes over the registry's settings: the registry is then read, never
+    // written.
+    QSettings* m_seedSettings = nullptr;
+    // The size and position are only worth saving once the window has been shown: before that, pos() is (0,0).
+    bool m_wasShown = false;
 };
 
 Q_DECLARE_METATYPE(ChapterList);

@@ -4,13 +4,16 @@
 #include <QAbstractTableModel>
 #include <QFont>
 
+class QSettings;
+
 class FontSettingsTableModel : public QAbstractTableModel
 {
     Q_OBJECT
 
    public:
     FontSettingsTableModel(QObject* parent = nullptr);
-    ~FontSettingsTableModel() override;
+    void load(QSettings& settings);
+    void save(QSettings& settings) const;
     int rowCount(const QModelIndex& parent) const override;
     int columnCount(const QModelIndex& parent) const override;
     QVariant data(const QModelIndex& index, int role) const override;

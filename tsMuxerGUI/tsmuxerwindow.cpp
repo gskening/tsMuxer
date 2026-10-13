@@ -37,10 +37,12 @@
 #include <QScreen>
 #include <QSettings>
 #include <QSharedPointer>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStorageInfo>
+#include <QTabWidget>
 #include <QTemporaryFile>
 #include <QTime>
 #include <QVBoxLayout>
@@ -654,9 +656,6 @@ TsMuxerWindow::TsMuxerWindow()
     void (QComboBox::*comboBoxIndexChanged)(int) = &QComboBox::currentIndexChanged;
     connect(ui->languageSelectComboBox, comboBoxIndexChanged, this, &TsMuxerWindow::onLanguageComboBoxIndexChanged);
 
-    QString path = QFileInfo(QApplication::arguments()[0]).absolutePath();
-    QString iniName = QDir::toNativeSeparators(path) + QDir::separator() + QString("tsMuxerGUI.ini");
-
     // BEFORE readSettings, not after. The stored choice is restored by looking the value up in
     // this box, so an empty box means the lookup fails and the default wins. That is exactly the
     // shape of the fault the interface language appears to have, and it was found here only
@@ -678,15 +677,28 @@ TsMuxerWindow::TsMuxerWindow()
     fillLangCodes();
     m_retranslateHooks.push_back(fillLangCodes);
 
-    settings = new QSettings();
-    readSettings();
+    // Before the settings are read: readSettings() fills it, and the font is a setting like any other.
+    fontSettingsModel = new FontSettingsTableModel(this);
 
-    if (QFile::exists(iniName))
+    // With a tsMuxerGUI.ini beside the program, the ini is the ONLY place settings are kept. The registry was read
+    // first and the ini laid over it, so whatever the ini lacked came from the registry of the machine it ran on, and
+    // several things were written to the registry on every start. An ini that is still empty takes over the registry's
+    // settings once, read only, so making a copy portable keeps the choices made before.
+    if (QFile::exists(tsMuxerGuiIniName()))
     {
-        delete settings;
-        settings = new QSettings(iniName, QSettings::IniFormat);
+        settings = new QSettings(tsMuxerGuiIniName(), QSettings::IniFormat);
         if (!readSettings())
-            writeSettings();  // copy current registry settings to the ini file
+        {
+            QSettings* ini = settings;
+            settings = m_seedSettings = new QSettings();
+            readSettings();
+            settings = ini;
+        }
+    }
+    else
+    {
+        settings = new QSettings();
+        readSettings();
     }
 
     ui->outFileName->setText(getDefaultOutputFileName());
@@ -707,7 +719,6 @@ TsMuxerWindow::TsMuxerWindow()
         ui->trackLV->horizontalHeader()->resizeSection(i, colWidths[i]);
     ui->trackLV->setWordWrap(false);
 
-    fontSettingsModel = new FontSettingsTableModel(this);
     ui->fontSettingsTableView->setModel(fontSettingsModel);
     ui->fontSettingsTableView->horizontalHeader()->resizeSection(0, 65);
     ui->fontSettingsTableView->horizontalHeader()->resizeSection(1, 185);
@@ -1002,6 +1013,7 @@ TsMuxerWindow::TsMuxerWindow()
         auto* folderStatusLabel = new QLabel(bdmvTab);
         folderStatusLabel->setWordWrap(true);
         auto* guardSpin = new QSpinBox(bdmvTab);
+        guardSpin->setObjectName("isoGuard");  // a remembered choice
         guardSpin->setRange(0, 9999);
         // 288 MB default: reported real-world defect zones cluster around 35/64/258 MB, and on
         // defect-managed discs with asymmetric spare areas the real transition sits up to 128 MB
@@ -1017,10 +1029,12 @@ TsMuxerWindow::TsMuxerWindow()
         // Two-zone guard (advanced): also pad BEFORE the break, for media defective on both sides of the
         // transition rather than only the start of the next layer.
         auto* beforeCheck = new QCheckBox(tr("Also fill before the break (advanced)"), bdmvTab);
+        beforeCheck->setObjectName("isoGuardBeforeCheck");  // a remembered choice
         beforeCheck->setToolTip(wrapTip(
             tr("Most discs only fail at the start of the next layer, so the default puts the fill there. Some "
                "media are also weak just before the break, so you can set the before and after zones independently.")));
         auto* guardBeforeSpin = new QSpinBox(bdmvTab);
+        guardBeforeSpin->setObjectName("isoGuardBefore");  // a remembered choice
         guardBeforeSpin->setRange(0, 9999);
         // Starts at, and follows, the engine's proportional default (after/16, floor 4 MB) until the
         // user edits it themselves; from then on their explicit value wins. One-way: the after field
@@ -1044,6 +1058,7 @@ TsMuxerWindow::TsMuxerWindow()
         fitLabel->setWordWrap(true);
         // --- Layer-break calculator: disc type + ImgBurn "Free Sectors" -> break(s), auto-filled ---
         auto* discTypeCombo = new QComboBox(bdmvTab);
+        discTypeCombo->setObjectName("isoDiscType");  // a remembered choice
         // Item data: UserRole = how many layers to lay the data across (drives the break calculation);
         // UserRole+1 = the Free Sectors pre-filled into the (locked) field below; UserRole+2 = 1 for BD-R XL
         // media, which decides the player-compatibility warning and cannot be read off the layer count once
@@ -1080,6 +1095,7 @@ TsMuxerWindow::TsMuxerWindow()
                        "\"Enter Free Sectors manually\" and type what ImgBurn shows: the layer break is worked out "
                        "from that number, so a wrong one puts the guard in the wrong place.")));
         auto* freeSectorsEdit = new QLineEdit(bdmvTab);
+        freeSectorsEdit->setObjectName("isoFreeSectors");  // a remembered choice
         freeSectorsEdit->setPlaceholderText(tr("ImgBurn -> Free Sectors (e.g. 47,305,728)"));
         // Accept the number exactly as ImgBurn prints it: grouped with commas, dots or spaces (locale-agnostic).
         freeSectorsEdit->setValidator(
@@ -1089,17 +1105,20 @@ TsMuxerWindow::TsMuxerWindow()
         // no-defect-management BDXL burn); un-ticking re-locks and restores the safe default.
         freeSectorsEdit->setReadOnly(true);
         auto* manualCheck = new QCheckBox(tr("Enter Free Sectors manually (advanced)"), bdmvTab);
+        manualCheck->setObjectName("isoFreeSectorsManual");  // a remembered choice
         manualCheck->setToolTip(
             wrapTip(tr("The Free Sectors above are pre-filled for the selected disc and locked to "
                        "prevent accidental changes. Tick this only if ImgBurn shows a different Free "
                        "Sectors for your exact disc, then type that number. Un-tick to restore the "
                        "standard value.")));
         auto* orderCheck = new QCheckBox(tr("Keep original file order (seamless branching)"), bdmvTab);
+        orderCheck->setObjectName("isoKeepOrder");  // a remembered choice
         orderCheck->setToolTip(
             wrapTip(tr("Files are normally written largest first, so the main movie sits on the layer break and gets "
                        "the guard. Discs that use seamless branching play many separate segments in sequence; keeping "
                        "the original order stores them close to their playback order, which reads more smoothly.")));
         auto* keepExtrasCheck = new QCheckBox(tr("Include all files from the folder (not just BDMV)"), bdmvTab);
+        keepExtrasCheck->setObjectName("isoKeepExtras");  // a remembered choice
         keepExtrasCheck->setToolTip(
             wrapTip(tr("By default the BDMV, CERTIFICATE and AACS disc folders are written, and the full standard "
                        "Blu-ray folder structure is completed automatically (the empty AUXDATA, BDJO, JAR and META "
@@ -1107,6 +1126,7 @@ TsMuxerWindow::TsMuxerWindow()
                        "anything else next to BDMV (readme files, cover art, extra folders) is skipped. Tick this to "
                        "add those extras to the image too.")));
         auto* innerOnlyCheck = new QCheckBox(tr("Keep data on the inner disc area (pad the outer edge)"), bdmvTab);
+        innerOnlyCheck->setObjectName("isoInnerOnly");  // a remembered choice
         innerOnlyCheck->setToolTip(wrapTip(
             tr("The outer edge of a disc is the most error-prone part to burn. With this ticked, the movie is "
                "packed toward the inner tracks of every layer and the outer/rim region is filled with zeros, so "
@@ -1701,6 +1721,7 @@ TsMuxerWindow::TsMuxerWindow()
                 recomputeFolderSize();
                 updateFit();
                 lastInputDir = d;
+                writeSettings();
                 if (isoEdit->text().isEmpty())
                 {
                     // A drive root (a mounted ISO) has no file name; fall back to the volume label, then "disc".
@@ -2211,7 +2232,165 @@ TsMuxerWindow::TsMuxerWindow()
     // remembered Demux opened with them, and a language change while Demux was chosen did the same.
     m_retranslateHooks.push_back([this] { updateOutputModeTexts(); });
 
+    restoreChoices(m_seedSettings ? *m_seedSettings : *settings);
+    delete m_seedSettings;  // only read: nothing goes back to the registry
+    m_seedSettings = nullptr;
     writeSettings();
+}
+
+// The program choices the window remembers besides the ones writeSettings() names: every control that sets HOW a job
+// is done, not WHAT it is. Left out on purpose: the cut on/off and its times, the custom chapter list, the disc label,
+// the output name, the BDMV folder, the ISO name and the meta box, which belong to one job; and the start mux time,
+// the right-eye view and the 3D single copy, which are taken from the source each time.
+//
+// Restored in this order, which matters: a disc type fills its Free Sectors and sets the layer-break guard, so the
+// manual Free Sectors and the guard come after the disc type they belong to.
+static const char* const CHOICE_WIDGETS[] = {
+    "tabWidget",
+    // General tab
+    "checkBoxVBR", "checkBoxRVBR", "checkBoxCBR", "editMaxBitrate", "editMinBitrate", "editCBRBitrate", "editVBVLen",
+    "radioButtonNoChapters", "radioButtonAutoChapter", "radioButtonCustomChapters", "spinEditChapterLen",
+    // Blu-ray tab
+    "checkBoxV3", "checkBoxRateLimit", "comboRateLimit", "spinBoxMplsNum", "spinBoxM2tsNum", "pipTransparencySpinBox",
+    // Split and cut tab
+    "noSplit", "splitByDuration", "splitBySize", "splitByChapters", "spinEditSplitDuration", "editSplitSize",
+    "comboBoxMeasure",
+    // Output
+    "comboBoxDvProfile",
+    // the dual-layer group beside the Meta file box
+    "dlDiscSize", "dlGuardCheck", "dlGuardSpin", "dlGuardBeforeCheck", "dlGuardBeforeSpin", "dlFreeSectorsManual",
+    "dlFreeSectors", "dlAllowOversize",
+    // the BDMV folder -> ISO tab
+    "isoDiscType", "isoFreeSectorsManual", "isoFreeSectors", "isoGuard", "isoGuardBeforeCheck", "isoGuardBefore",
+    "isoInnerOnly", "isoKeepOrder", "isoKeepExtras"};
+
+void TsMuxerWindow::saveChoices()
+{
+    if (!m_choicesRestored)
+        return;
+    settings->beginGroup("choices");
+    for (const char* name : CHOICE_WIDGETS)
+    {
+        const QString key = QLatin1String(name);
+        QWidget* w = findChild<QWidget*>(key);
+        if (auto* tab = qobject_cast<QTabWidget*>(w))
+            settings->setValue(key, tab->currentIndex());
+        else if (auto* button = qobject_cast<QAbstractButton*>(w))
+            settings->setValue(key, button->isChecked());
+        else if (auto* spin = qobject_cast<QSpinBox*>(w))
+            settings->setValue(key, spin->value());
+        else if (auto* dspin = qobject_cast<QDoubleSpinBox*>(w))
+            settings->setValue(key, dspin->value());
+        else if (auto* combo = qobject_cast<QComboBox*>(w))
+            // With the number of entries, so that a list that changes in a later version is not restored by position
+            settings->setValue(
+                key, QString::number(combo->currentIndex()) + QLatin1Char('/') + QString::number(combo->count()));
+        else if (auto* edit = qobject_cast<QLineEdit*>(w))
+            settings->setValue(key, edit->text());
+    }
+    settings->endGroup();
+}
+
+void TsMuxerWindow::restoreChoices(QSettings& from)
+{
+    from.beginGroup("choices");
+    for (const char* name : CHOICE_WIDGETS)
+    {
+        const QString key = QLatin1String(name);
+        QWidget* w = findChild<QWidget*>(key);
+        if (!w || !from.contains(key))
+            continue;
+        const QVariant v = from.value(key);
+        // Set the way a user would, so the controls that follow this one (an enabled field, a filled-in Free Sectors,
+        // the meta) follow it now as well.
+        if (auto* tab = qobject_cast<QTabWidget*>(w))
+        {
+            const int idx = v.toInt();
+            if (idx >= 0 && idx < tab->count())
+                tab->setCurrentIndex(idx);
+        }
+        else if (auto* button = qobject_cast<QAbstractButton*>(w))
+            button->setChecked(v.toBool());
+        else if (auto* spin = qobject_cast<QSpinBox*>(w))
+        {
+            // The guard before the break follows the guard after it (1/16, at least 4 MB) until it is set by hand.
+            // A stored value equal to that is the followed one, and setting it would count as set by hand.
+            if (key == QLatin1String("isoGuardBefore"))
+            {
+                const auto* after = findChild<QSpinBox*>(QStringLiteral("isoGuard"));
+                if (after && v.toInt() == qMin(after->value(), qMax(4, after->value() / 16)))
+                    continue;
+            }
+            spin->setValue(v.toInt());
+        }
+        else if (auto* dspin = qobject_cast<QDoubleSpinBox*>(w))
+            dspin->setValue(v.toDouble());
+        else if (auto* combo = qobject_cast<QComboBox*>(w))
+        {
+            const QStringList parts = v.toString().split(QLatin1Char('/'));
+            if (parts.size() == 2 && parts[1].toInt() == combo->count() && parts[0].toInt() >= 0 &&
+                parts[0].toInt() < combo->count())
+                combo->setCurrentIndex(parts[0].toInt());
+        }
+        else if (auto* edit = qobject_cast<QLineEdit*>(w))
+        {
+            // A Free Sectors figure is the disc type's own unless it was entered by hand
+            QString manual;
+            if (key == QLatin1String("isoFreeSectors"))
+                manual = QStringLiteral("isoFreeSectorsManual");
+            else if (key == QLatin1String("dlFreeSectors"))
+                manual = QStringLiteral("dlFreeSectorsManual");
+            const auto* manualCheck = manual.isEmpty() ? nullptr : findChild<QAbstractButton*>(manual);
+            if (manualCheck && !manualCheck->isChecked())
+                continue;
+            edit->setText(v.toString());
+        }
+    }
+    from.endGroup();
+    // These follow clicks rather than changes, so a restored choice does not reach them by itself
+    onGeneralCheckboxClicked();
+    onChapterParamsChanged();
+    onSplitCutParamsChanged();
+    m_choicesRestored = true;
+
+    // From now on every change of a choice is saved when it happens, not only when the window closes, so a choice made
+    // just before the program ends some other way is kept as well.
+    const auto save = [this] { writeSettings(); };
+    for (const char* name : CHOICE_WIDGETS)
+    {
+        QWidget* w = findChild<QWidget*>(QLatin1String(name));
+        if (auto* tab = qobject_cast<QTabWidget*>(w))
+            connect(tab, &QTabWidget::currentChanged, this, save);
+        else if (auto* button = qobject_cast<QAbstractButton*>(w))
+            connect(button, &QAbstractButton::toggled, this, save);
+        else if (auto* spin = qobject_cast<QSpinBox*>(w))
+            connect(spin, &QSpinBox::valueChanged, this, save);
+        else if (auto* dspin = qobject_cast<QDoubleSpinBox*>(w))
+            connect(dspin, &QDoubleSpinBox::valueChanged, this, save);
+        else if (auto* combo = qobject_cast<QComboBox*>(w))
+            connect(combo, &QComboBox::currentIndexChanged, this, save);
+        else if (auto* edit = qobject_cast<QLineEdit*>(w))
+            connect(edit, &QLineEdit::textChanged, this, save);
+    }
+    // The output and the SEI choices used to be saved only with the next save of something else, or at closing
+    const QAbstractButton* const savedButtons[] = {
+        ui->radioButtonTS,     ui->radioButtonM2TS,  ui->radioButtonMKV,   ui->radioButtonBluRayISO,
+        ui->radioButtonBluRay, ui->radioButtonAVCHD, ui->radioButtonDemux, ui->checkBoxSPS};
+    for (const QAbstractButton* b : savedButtons) connect(b, &QAbstractButton::toggled, this, save);
+    connect(ui->comboBoxSEI, &QComboBox::currentIndexChanged, this, save);
+}
+
+QString tsMuxerGuiIniName()
+{
+    // The program's own folder. argv[0] is the name the program was started by, which for a start through PATH or by a
+    // relative name points at the current folder, where the ini is not.
+    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("tsMuxerGUI.ini"));
+}
+
+void TsMuxerWindow::showEvent(QShowEvent* event)
+{
+    m_wasShown = true;
+    QWidget::showEvent(event);
 }
 
 TsMuxerWindow::~TsMuxerWindow()
@@ -2546,6 +2725,20 @@ int TsMuxerWindow::findLangByCode(const QString& code)
         }
     }
     return 0;
+}
+
+bool TsMuxerWindow::isLangCodeForMeta(const QString& code)
+{
+    // tsMuxeR stops a job whose lang= is not three letters. A track's code comes from what tsMuxeR read in its
+    // source, and a source can carry anything there: three bytes of a transport stream or any three characters of a
+    // Matroska file. Such a code is left out of the meta line, so tsMuxeR goes on taking the source's own language, as
+    // before.
+    if (code.size() != 3)
+        return false;
+    for (const QChar c : code)
+        if (!((c >= QLatin1Char('a') && c <= QLatin1Char('z')) || (c >= QLatin1Char('A') && c <= QLatin1Char('Z'))))
+            return false;
+    return true;
 }
 
 QString TsMuxerWindow::langForTrack(const QComboBox* box, const QString& current)
@@ -4487,7 +4680,7 @@ void TsMuxerWindow::updateMetaLines()
         {
             postfix += QString(", merge-ac3-file=") + quoteStr(codecInfo->mergeAc3File);
         }
-        if (!codecInfo->lang.isEmpty())
+        if (!codecInfo->lang.isEmpty() && isLangCodeForMeta(codecInfo->lang))
             postfix += QString(", lang=") + codecInfo->lang;
         if (codecInfo->subTrack != 0)
             postfix += QString(", subTrack=") + QString::number(codecInfo->subTrack);
@@ -4525,8 +4718,11 @@ void TsMuxerWindow::onFontBtnClicked()
 
 void TsMuxerWindow::onColorBtnClicked()
 {
-    QColor color = fontSettingsModel->color();
-    color = QColorDialog::getColor(color, this);
+    // getColor returns an invalid colour when the dialog is cancelled, and its rgba() is opaque black: Cancel turned
+    // every text subtitle drawn into pictures black, and the black was saved for the next start.
+    const QColor color = QColorDialog::getColor(QColor(fontSettingsModel->color()), this);
+    if (!color.isValid())
+        return;
     fontSettingsModel->setColor(color.rgba());
 
     writeSettings();
@@ -5473,6 +5669,7 @@ void TsMuxerWindow::openMetaFileBtnClick()
                     return;
                 }
                 lastInputDir = QFileInfo(metaName).absolutePath();
+                writeSettings();
                 // Deliberately NOT blocking signals: the text change is what tells the window to
                 // hand this over verbatim instead of rebuilding it from the track list.
                 ui->memoMeta->setPlainText(text);
@@ -5853,8 +6050,11 @@ void TsMuxerWindow::writeSettings()
     settings->setValue("outputMode", currentOutputMode());
     settings->setValue("language", ui->languageSelectComboBox->currentText());
     settings->setValue("langCodes", ui->langCodesComboBox->currentData().toString());
-    settings->setValue("windowSize", size());
-    settings->setValue("windowPos", pos());
+    if (m_wasShown)
+    {
+        settings->setValue("windowSize", size());
+        settings->setValue("windowPos", pos());
+    }
 
     settings->setValue("addSEIMethod", ui->comboBoxSEI->currentIndex());
     settings->setValue("addSPS", ui->checkBoxSPS->isChecked());
@@ -5868,6 +6068,8 @@ void TsMuxerWindow::writeSettings()
     settings->setValue("fadeTime", getRendererAnimationTime());
     settings->setValue("keepText", ui->keepTextCheckBox->isChecked());
     settings->endGroup();
+    if (fontSettingsModel)  // writeSettings also runs before the model exists, when an empty ini is first filled
+        fontSettingsModel->save(*settings);
 
     settings->beginGroup("pip");
     settings->setValue("corner", ui->comboBoxPipCorner->currentIndex());
@@ -5875,6 +6077,8 @@ void TsMuxerWindow::writeSettings()
     settings->setValue("v_offset", ui->spinBoxPipOffsetV->value());
     settings->setValue("size", ui->comboBoxPipSize->currentIndex());
     settings->endGroup();
+
+    saveChoices();
 
     disableUpdatesCnt--;
 }
@@ -5886,27 +6090,40 @@ bool TsMuxerWindow::readSettings()
     // newer GUI versions will save the settings under the "main" group to avoid
     // that. the "general" group is still read in order to import the old settings
     // on non-Linux systems where the bug doesn't occur.
+    // Nothing is written while settings are read. Restoring the interface language runs its change handler, which
+    // saves the settings, and it did so inside the group being read: every start wrote a copy of the settings under
+    // main/main, main/subtitles and main/pip, and into the registry even when an ini was used.
+    disableUpdatesCnt++;
+    const bool found = readSettingsBody();
+    disableUpdatesCnt--;
+    return found;
+}
+
+bool TsMuxerWindow::readSettingsBody()
+{
     if (!readGeneralSettings("main") && !readGeneralSettings("general"))
     {
         return false;  // no settings still written
     }
+    if (fontSettingsModel)
+        fontSettingsModel->load(*settings);
     // checkBoxVBR checkBoxRVBR    editMaxBitrate  editMinBitrate  checkBoxCBR
     // editCBRBitrate  editVBVLen
 
     settings->beginGroup("subtitles");
-    ui->spinEditBorder->setValue(settings->value("fontBorder").toInt());
-    ui->lineSpacing->setValue(settings->value("fontLineSpacing").toDouble());
-    setRendererAnimationTime(settings->value("fadeTime").toDouble());
-    ui->spinEditOffset->setValue(settings->value("offset").toInt());
+    ui->spinEditBorder->setValue(settings->value("fontBorder", ui->spinEditBorder->value()).toInt());
+    ui->lineSpacing->setValue(settings->value("fontLineSpacing", ui->lineSpacing->value()).toDouble());
+    setRendererAnimationTime(settings->value("fadeTime", getRendererAnimationTime()).toDouble());
+    ui->spinEditOffset->setValue(settings->value("offset", ui->spinEditOffset->value()).toInt());
     // On unless it was turned off: Matroska carries text subtitles itself, and text stays sharp, small and editable.
     ui->keepTextCheckBox->setChecked(settings->value("keepText", true).toBool());
     settings->endGroup();
 
     settings->beginGroup("pip");
-    ui->comboBoxPipCorner->setCurrentIndex(settings->value("corner").toInt());
-    ui->spinBoxPipOffsetH->setValue(settings->value("h_offset").toInt());
-    ui->spinBoxPipOffsetV->setValue(settings->value("v_offset").toInt());
-    ui->comboBoxPipSize->setCurrentIndex(settings->value("size").toInt());
+    ui->comboBoxPipCorner->setCurrentIndex(settings->value("corner", ui->comboBoxPipCorner->currentIndex()).toInt());
+    ui->spinBoxPipOffsetH->setValue(settings->value("h_offset", ui->spinBoxPipOffsetH->value()).toInt());
+    ui->spinBoxPipOffsetV->setValue(settings->value("v_offset", ui->spinBoxPipOffsetV->value()).toInt());
+    ui->comboBoxPipSize->setCurrentIndex(settings->value("size", ui->comboBoxPipSize->currentIndex()).toInt());
     settings->endGroup();
 
     return true;
@@ -5995,12 +6212,14 @@ bool TsMuxerWindow::readGeneralSettings(const QString& prefix)
             move(p);
     }
 
+    // A store without a language, such as an ini that is still empty, leaves the language that is already chosen: it
+    // set English, so a copy made portable lost its language when the ini took over the registry's settings.
     auto lang = settings->value("language");
     if (lang.isValid())
     {
         ui->languageSelectComboBox->setCurrentText(lang.toString());
     }
-    else
+    else if (ui->languageSelectComboBox->currentIndex() < 0)
     {
         ui->languageSelectComboBox->setCurrentIndex(0);
     }
@@ -6024,24 +6243,27 @@ bool TsMuxerWindow::readGeneralSettings(const QString& prefix)
     lastInputDir = settings->value("inputDir").toString();
     lastOutputDir = settings->value("outputDir").toString();
 
+    // A key that is missing keeps what the control already shows, its default: read as 0 or off, a hand-made or older
+    // ini turned off the sound and the HDMV compatible TS and set the subtitle border, line spacing and offset to 0.
     // ui->checkBoxuseAsynIO->setChecked(settings->value("asyncIO").toBool());
-    ui->checkBoxSound->setChecked(settings->value("soundEnabled").toBool());
-    ui->checkBoxNewAudioPes->setChecked(settings->value("hdmvPES").toBool());
+    ui->checkBoxSound->setChecked(settings->value("soundEnabled", ui->checkBoxSound->isChecked()).toBool());
+    ui->checkBoxNewAudioPes->setChecked(settings->value("hdmvPES", ui->checkBoxNewAudioPes->isChecked()).toBool());
     ui->checkBoxCrop->setChecked(settings->value("restoreCropEnabled").toBool());
-    ui->checkBoxBlankPL->setChecked(settings->value("useBlankPL").toBool());
+    ui->checkBoxBlankPL->setChecked(settings->value("useBlankPL", ui->checkBoxBlankPL->isChecked()).toBool());
     int plNum = settings->value("blankPLNum").toInt();
     if (plNum)
         ui->BlackplaylistCombo->setValue(plNum);
 
-    ui->radioButtonOutoutInInput->setChecked(settings->value("outputToInputFolder").toBool());
+    ui->radioButtonOutoutInInput->setChecked(
+        settings->value("outputToInputFolder", ui->radioButtonOutoutInInput->isChecked()).toBool());
     ui->radioButtonStoreOutput->setChecked(!ui->radioButtonOutoutInInput->isChecked());
 
     // Someone who always demuxes had to set that back on every start. Restored last, so it wins
     // over anything above that also touches the output section.
     setOutputMode(settings->value("outputMode").toString());
 
-    ui->comboBoxSEI->setCurrentIndex(settings->value("addSEIMethod").toInt());
-    ui->checkBoxSPS->setChecked(settings->value("addSPS").toBool());
+    ui->comboBoxSEI->setCurrentIndex(settings->value("addSEIMethod", ui->comboBoxSEI->currentIndex()).toInt());
+    ui->checkBoxSPS->setChecked(settings->value("addSPS", ui->checkBoxSPS->isChecked()).toBool());
 
     settings->endGroup();
     return true;
@@ -6092,6 +6314,7 @@ void TsMuxerWindow::showAddFilesDialog(QString&& windowTitle, F&& windowOkFn)
                 if (files.isEmpty())
                     return;
                 lastInputDir = QFileInfo(files.back()).absolutePath();
+                writeSettings();
                 addFileList.clear();
                 for (const auto& f : files) addFileList << QUrl::fromLocalFile(QDir::toNativeSeparators(f));
                 okFn();
