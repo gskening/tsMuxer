@@ -16,6 +16,7 @@
 #include "srtStreamReader.h"
 #include "trueHDAC3MergeReader.h"
 #include "vodCoreException.h"
+#include "vorbisStreamReader.h"
 
 #ifndef win32
 #include <cstdio>
@@ -99,6 +100,10 @@ void SingleFileMuxer::intAddStream(const std::string& streamName, const std::str
     else if (codecName == "A_VORBIS")
     {
         fileExt = ".ogg";
+        // the samples the source trims from the end of the last packet, for the granule position of the last page
+        if (const auto src = params.find("srcendpadding"); src != params.end())
+            if (const auto vorbis = dynamic_cast<VorbisStreamReader*>(codecReader))
+                vorbis->setEndTrim(strtoll(src->second.c_str(), nullptr, 10));
     }
     else if (codecName == "A_AC3")
     {

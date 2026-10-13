@@ -46,6 +46,13 @@ class VorbisStreamReader final : public SimplePacketizerReader
     int writeAdditionData(uint8_t* dstBuffer, uint8_t* dstEnd, AVPacket& avPacket,
                           PriorityDataInfo* priorityData) override;
 
+   public:
+    // Demux: the last page is marked as the end of the stream, its granule position less the samples the source trims
+    // from the end of its last packet (its DiscardPadding, setEndTrim).
+    bool beforeFileCloseEvent(File& file) override;
+    void setEndTrim(const int64_t nanoseconds) { m_endTrimNs = nanoseconds; }
+
+   protected:
    private:
     // An Ogg page header (RFC 3533) for packets of the given sizes, its CRC over the header and the payload.
     int oggPageHeader(uint8_t* dst, const uint8_t* dstEnd, const std::vector<int>& packets, uint8_t headerType,
@@ -69,6 +76,9 @@ class VorbisStreamReader final : public SimplePacketizerReader
     int64_t m_granulePos = 0;
     int m_oggPrevBlock = 0;
     uint32_t m_oggPageSeqNo = 0;
+    std::vector<uint8_t> m_lastPage;  // the last packet's page, header and packet, rewritten at the end
+    int m_lastPageHeader = 0;
+    int64_t m_endTrimNs = 0;
 };
 
 #endif  // VORBIS_STREAM_READER_H_

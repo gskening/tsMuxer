@@ -427,9 +427,41 @@ int VorbisStreamReader::writeAdditionData(uint8_t* dstBuffer, uint8_t* dstEnd, A
             }
         }
         const int h = oggPageHeader(dst, dstEnd, {avPacket.size}, 0, m_granulePos, avPacket.data, avPacket.size);
+        m_lastPage.assign(dst, dst + h);
+        m_lastPage.insert(m_lastPage.end(), avPacket.data, avPacket.data + avPacket.size);
+        m_lastPageHeader = h;
         dst += h;
     }
     return static_cast<int>(dst - dstBuffer);
+}
+
+bool VorbisStreamReader::beforeFileCloseEvent(File& file)
+{
+    if (!m_demuxMode || m_lastPage.size() < 27 || m_lastPageHeader < 27)
+        return true;
+    // The end of the stream (RFC 3533, 6), and a granule position short of the packet's end by the samples the source
+    // trims there, which a player then leaves out (Vorbis I, A.2).
+    const int64_t trim =
+        m_sampleRate > 0 && m_endTrimNs > 0 ? (m_endTrimNs * m_sampleRate + 500000000) / 1000000000 : 0;
+    const int64_t granule = (std::max)(int64_t{0}, m_granulePos - trim);
+    uint8_t* p = m_lastPage.data();
+    p[5] |= 0x04;
+    for (int i = 0; i < 8; i++) p[6 + i] = static_cast<uint8_t>(granule >> (8 * i));
+    memset(p + 22, 0, 4);
+    uint32_t crc = 0;
+    for (const uint8_t b : m_lastPage)
+    {
+        crc ^= static_cast<uint32_t>(b) << 24;
+        for (int k = 0; k < 8; k++) crc = crc & 0x80000000u ? crc << 1 ^ 0x04C11DB7u : crc << 1;
+    }
+    for (int i = 0; i < 4; i++) p[22 + i] = static_cast<uint8_t>(crc >> (8 * i));
+    file.sync();
+    int64_t fileSize = 0;
+    file.size(&fileSize);
+    if (fileSize < static_cast<int64_t>(m_lastPage.size()) ||
+        file.seek(fileSize - static_cast<int64_t>(m_lastPage.size()), File::SeekMethod::smBegin) == -1)
+        return false;
+    return file.write(p, m_lastPageHeader) == m_lastPageHeader;
 }
 
 double VorbisStreamReader::getFrameDuration()
