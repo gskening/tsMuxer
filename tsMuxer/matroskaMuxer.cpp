@@ -1940,6 +1940,7 @@ void MatroskaMuxer::writeChapters()
     chapters.insert(chapters.end(), edition.begin(), edition.end());
 
     h = ebml_write_master_open(hdr, MATROSKA_ID_CHAPTERS, chapters.size());
+    m_chaptersPos = m_file.pos() - m_segmentStartPos;
     writeToFile(hdr, h);
     writeToFile(chapters.data(), static_cast<int>(chapters.size()));
 }
@@ -3539,6 +3540,9 @@ std::vector<uint8_t> MatroskaMuxer::buildSeekHead() const
     std::vector<SeekItem> items;
     items.push_back({MATROSKA_ID_INFO, m_segmentInfoPos});
     items.push_back({MATROSKA_ID_TRACKS, m_tracksPos});
+    // Every top-level element (RFC 9559, 6.3). The chapters, written before the clusters, were left out.
+    if (m_chaptersPos > 0)
+        items.push_back({MATROSKA_ID_CHAPTERS, m_chaptersPos});
     if (m_cuesPos > 0)
         items.push_back({MATROSKA_ID_CUES, m_cuesPos});
     if (m_attachmentsPos > 0)
@@ -3582,13 +3586,13 @@ void MatroskaMuxer::writeSeekHead()
     writeToFile(seekHead);
 }
 
-// Put the same SeekHead in the space reserved at the front of the segment. Without it, everything
+// Put the SeekHead in the space reserved at the front of the segment. Without it, everything
 // written after the clusters is invisible to a reader that does not scan the whole file, and a
-// tool that copies the file leaves those elements behind.
-void MatroskaMuxer::writeFrontSeekHead()
+// tool that copies the file leaves those elements behind. False when it does not fit.
+bool MatroskaMuxer::writeFrontSeekHead()
 {
     if (m_seekHeadReservePos <= 0)
-        return;
+        return false;
 
     const std::vector<uint8_t> seekHead = buildSeekHead();
     if (static_cast<int>(seekHead.size()) + VOID_MIN_BYTES > SEEKHEAD_RESERVE)
@@ -3600,7 +3604,7 @@ void MatroskaMuxer::writeFrontSeekHead()
                                                  << " were reserved at the front of the file, so it is written "
                                                     "only at the end. Elements after the clusters may not be "
                                                     "found by other software.");
-        return;
+        return false;
     }
 
     const int64_t resume = m_file.pos();
@@ -3608,6 +3612,7 @@ void MatroskaMuxer::writeFrontSeekHead()
     writeToFile(seekHead);
     writeVoid(SEEKHEAD_RESERVE - static_cast<int>(seekHead.size()));
     m_file.seek(resume);
+    return true;
 }
 
 // ──────────────── close ──────────────────────────────────────────────────────
@@ -3642,10 +3647,11 @@ bool MatroskaMuxer::close()
     // Write the preserved original RPUs and the manifest, in profile 8.1 mode
     writeAttachments();
 
-    // Write SeekHead at the end, and again into the space reserved at the front so that everything
-    // after the clusters can actually be found
-    writeSeekHead();
-    writeFrontSeekHead();
+    // The SeekHead goes into the space reserved at the front, where RFC 9559 (6.3) puts the first one. A copy of it
+    // was also written at the end, a second SeekHead the first did not point to and that listed more than clusters,
+    // both of which 6.3 rules out. The end now gets it only when it does not fit at the front.
+    if (!writeFrontSeekHead())
+        writeSeekHead();
 
     // Patch the Segment size now that we know the total length
     const int64_t segmentEnd = m_file.pos();

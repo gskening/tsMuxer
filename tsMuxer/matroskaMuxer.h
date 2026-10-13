@@ -305,10 +305,10 @@ class MatroskaMuxer final : public AbstractMuxer
     void writeStartCodeOnlyManifest(const std::string& scRule);
     // Build the SeekHead element, header included, so it can be written in both places.
     [[nodiscard]] std::vector<uint8_t> buildSeekHead() const;
-    // Write SeekHead element at end of file
+    // Write the SeekHead at the end of the file, where it goes only when it does not fit at the front.
     void writeSeekHead();
-    // Write the same SeekHead into the space reserved at the front of the segment.
-    void writeFrontSeekHead();
+    // Write the SeekHead into the space reserved at the front of the segment. False when it does not fit.
+    bool writeFrontSeekHead();
     // Write a Void element occupying exactly this many bytes, header included.
     void writeVoid(int totalBytes);
 
@@ -379,6 +379,7 @@ class MatroskaMuxer final : public AbstractMuxer
     int64_t m_tracksPos;
     int64_t m_cuesPos;
     int64_t m_attachmentsPos = 0;
+    int64_t m_chaptersPos = 0;
 
     // Space held at the front of the segment for the seek index, filled in at close. Cues and the
     // attachments are written after the clusters because they are not known until then, and
