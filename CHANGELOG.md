@@ -1,3 +1,33 @@
+## tsMuxeR 2.19.2
+
+Fixes for a crash in the Matroska output, for the continuity counter of transport streams made from the command line, and for the window, whose settings a tsMuxerGUI.ini beside the program now holds in full.
+
+**The Intel macOS build has been back since 2.19.0, and Mac users are still asked to test.** It has been built and checked, but it has not been run on an Intel Mac, because no Mac is available here. If you have an Intel Mac, please try it and report whether it works. On any Mac, please also try changing the subtitle font and colour in the window, and report what happens.
+
+**If something goes wrong, please report it** with the bug report form on GitHub, and include as much as you can: the version line and the full log, the meta file (the text in the Meta file box of the window), what you expected and what happened instead, and the player you used. A short sample of the source helps most.
+
+### Worth acting on
+
+* **A transport stream made without --no-pcr-on-video-pid had continuity errors.** Without that option the PCR goes in packets of its own on the video PID, and each of those packets carried the counter of the packet after it instead of the one before. So nearly every PCR gave two continuity errors on the video PID, the sign of lost packets. A TS, M2TS, Blu-ray or AVCHD output without video had the same fault on PID 0. The window puts that option into every meta it makes, so discs and files muxed in the window were not affected, unless the meta was opened from a file or changed in the Meta file box and did not have the option. Mux files made without it again.
+
+### Matroska output
+
+* **A long track name or language no longer crashes the mux.** A track-name= or lang= of 2000 characters ran past the end of a buffer, and the mux stopped and left a file of a few hundred bytes. A long name is written whole now.
+
+### Meta file and command line
+
+* **lang= has to be three letters, as the help says.** Any other value now stops the job, and the message names it. A transport stream kept the first three characters of a longer value without a word, and a demux put the whole value into the file name and failed. lang= with nothing after it still leaves the track without a language.
+
+### Window
+
+* **Cancel in the subtitle colour dialog keeps the colour.** It set the colour to black, so text subtitles drawn into pictures came out black, and the black was kept for the next start.
+
+* **A tsMuxerGUI.ini beside the program holds every setting of the window, and none of them goes to the registry.** The subtitle font, size, style and colour went to the registry, and every start wrote copies of the settings there. An empty tsMuxerGUI.ini now takes over the settings from the registry once, on its first start, the language of the window included. The ini is found in the folder of tsMuxerGUI.exe also when the program is started from another folder. A setting missing from the ini keeps its default instead of being read as 0 or off. To keep the settings beside the program, create an empty file named tsMuxerGUI.ini in the folder of tsMuxerGUI.exe.
+
+* **The window remembers its other choices too:** the bitrate mode and values, the chapter and split choices, the BD-ROM V3 tick, the rate limit, the first MPLS and M2TS numbers, the PIP transparency, the Dolby Vision profile, the dual-layer group, the BDMV folder to ISO tab and the open tab. A choice is saved as soon as it is made. What belongs to one job, such as the cut, the custom chapters, the disc label and the output name, is not kept.
+
+* **Open meta file starts in the folder files are added from**, the same as Browse. It started in the home folder, so on Windows it showed the home folder's view, such as Medium Icons, instead of the view of the folder in use.
+
 ## tsMuxeR 2.19.1
 
 Thirty-nine changes, nearly all of them fixes, grouped below by area. Several are for damaged sources, such as a recording that lost part of a packet. A damaged H.264, HEVC or VVC header, or a damaged segment in a .sup file, could stop the job, shift the timing or lose subtitles. Now the mux goes on with a warning. Most of the others are for Matroska, MP4, subtitles, discs and the window.
