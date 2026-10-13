@@ -114,6 +114,8 @@ class MovDemuxer final : public IOContextDemuxer
     std::string m_fileName;
     MemoryBlock m_filterBuffer;
     int64_t m_firstHeaderSize;
+    // Where the box that ended the header walk ends, or 0 when the walk ended without one.
+    int64_t m_headerWalkEnd = 0;
 
     void readHeaders();
     void buildIndex();

@@ -855,6 +855,12 @@ void MovDemuxer::openFile(const std::string& streamName)
     }
     buildIndex();
     m_firstHeaderSize = m_processedBytes;
+    // A moov after the mdat was read by the walk above and then stepped back over, so the demux never reaches it.
+    // Left out of the count, it made a complete mux read as stopped early once the moov was over 1 % of the file
+    // (#39). Only what the walk read is counted: a file whose walk ended at its first mdat may hold more media after
+    // it that is never read, and the count has to keep saying so.
+    if (!found_moof && m_headerWalkEnd > m_mdat_pos + m_mdat_size)
+        m_firstHeaderSize += m_headerWalkEnd - (m_mdat_pos + m_mdat_size);
 }
 
 // The byte size of each chunk of a track by its own tables: stsc gives the samples of each chunk, stsz the size of
@@ -930,6 +936,7 @@ void MovDemuxer::readHeaders()
     MOVAtom atom;
     atom.size = LLONG_MAX;
     m_mdat_pos = 0;
+    m_headerWalkEnd = 0;
     if (mov_read_default(atom) < 0)
         THROW(ERR_MOV_PARSE, "error reading header")
     if (!found_moov)
@@ -964,29 +971,14 @@ int MovDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepte
     const int64_t startPos = m_processedBytes;
     while (m_processedBytes - startPos < m_fileBlockSize && m_curChunk < chunks.size())
     {
-        const int64_t mdatPos = m_mdat_pos;  // the last chunk of a fragmented file clears it below
         const int64_t offset = chunks[m_curChunk].first;
-        int64_t next;
-        if (m_curChunk < chunks.size() - 1)
-            next = chunks[m_curChunk + 1].first;
-        else
-        {
-            next = m_mdat_size;
-            // A fragmented file carries a moof header before every mdat, so once this one is
-            // finished the next header has to be read and the first-demux path is armed again.
-            //
-            // A plain file has nothing after its last mdat. Arming it there sent the following
-            // call back into readHeaders at the end of the file, where it returned end of stream
-            // from above the code that asks the file list for the next name. Joining mp4 files
-            // therefore stopped after the first one and still reported success.
-            if (found_moof)
-            {
-                m_firstDemux = true;
-                m_mdat_pos = 0;
-            }
-        }
+        // The last chunk ends the file, fragmented or not: openFile's walk has already read every moof of a fragmented
+        // file. Going back into readHeaders after it, as was done for fragmented files, read the boxes after the last
+        // mdat (an mfra) a second time, rebuilt the index and took the whole file off the count, and at the end of the
+        // file it returned end of stream from above the code that asks the file list for the next name.
+        const int64_t next = m_curChunk < chunks.size() - 1 ? chunks[m_curChunk + 1].first : m_mdat_size;
         auto chunkSize = static_cast<int>(
-            found_moof ? fragmentChunkSize(mdatPos, offset, next, m_curChunk + 1 == chunks.size()) : next - offset);
+            found_moof ? fragmentChunkSize(m_mdat_pos, offset, next, m_curChunk + 1 == chunks.size()) : next - offset);
         // A chunk ends where its own samples end when its track's tables say so and that comes first. The distance to
         // the next chunk of any track alone took in the data of a track whose tables were lost (a damaged box before
         // them), and the AAC reader then stopped the job with "Out of index". The bytes up to the next chunk are
@@ -1073,13 +1065,18 @@ int MovDemuxer::simpleDemuxBlock(DemuxedData& demuxedData, const PIDSet& accepte
                 }
             }
         }
+        // In a fragmented file the bytes up to the next chunk are the moof and mdat headers of the next fragment. They
+        // were stepped over without being counted, which is what kept a file of many small fragments below 99 % (#39).
         if (m_curChunk < chunks.size() - 1 && next - offset > chunkSize)
         {
-            if (!found_moof)
-                discardSize += next - offset - chunkSize;
+            discardSize += next - offset - chunkSize;
             skip_bytes(next - offset - chunkSize);
         }
         m_curChunk++;
+        // What follows the last chunk of a fragmented file (an mfra) holds no media when the walk read every box up to
+        // the end of the file, so it counts as read. A walk that stopped short leaves it out.
+        if (m_curChunk == chunks.size() && found_moof && m_headerWalkEnd >= m_fileSize && m_processedBytes < m_fileSize)
+            discardSize += m_fileSize - m_processedBytes;
     }
 
     if (m_processedBytes > startPos)
@@ -1255,7 +1252,10 @@ int MovDemuxer::mov_read_default(MOVAtom atom)
         const int64_t left = a.size - m_processedBytes + start_pos;
 
         if ((!found_moof && m_mdat_pos && found_moov) || (found_moof && m_processedBytes + left >= m_fileSize))
+        {
+            m_headerWalkEnd = start_pos + a.size;
             return 0;
+        }
 
         // A movie whose index (moov) follows its media data (mdat) had every byte of the media read just to step
         // over it, and the mux then read it all again: minutes for a large file on a network drive (#718, #733,
