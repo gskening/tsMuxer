@@ -38,6 +38,11 @@ class AbstractMuxer
     // language the source gave them. Empty, or shorter than the list of times, means the muxer
     // names the rest itself. Only Matroska has anywhere to put either.
     virtual void setChapterInfo(const std::vector<AVChapter>& info) {}
+    // What a Matroska source carries for a Matroska output (see AbstractDemuxer::getTitle and the two after it).
+    virtual void setSourceExtras(const std::string& title, const std::vector<std::vector<uint8_t>>& attachments,
+                                 const std::vector<std::vector<uint8_t>>& tags)
+    {
+    }
 
     virtual void joinToMasterFile() {}
     virtual void setSubMode(AbstractMuxer* mainMuxer, bool flushInterleavedBlock) {}

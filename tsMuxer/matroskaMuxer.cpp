@@ -924,6 +924,14 @@ void MatroskaMuxer::parseMuxOpt(const std::string& opts)
                    "Warning: splitting is not implemented for Matroska output. "
                        << splitOpt << " was ignored and the whole mux went into one file.");
 
+    // --title="..." names the file (the segment's Title), over any title a Matroska source has.
+    for (const std::string& token : splitQuotedStr(opts.c_str(), ' '))
+        if (token.compare(0, 8, "--title=") == 0)
+        {
+            m_title = unquoteStr(token.substr(8));
+            m_titleFromMuxOpt = true;
+        }
+
     // --dv-profile=<7|8.1>. 7 is the default and means "carry the disc as it is", the faithful dual
     // layer track. 8.1 converts the RPU so the file plays as single layer Dolby Vision on the many
     // devices that do not understand profile 7.
@@ -1028,7 +1036,8 @@ void MatroskaMuxer::writeSegmentInfo()
 {
     m_segmentInfoPos = m_file.pos() - m_segmentStartPos;
 
-    uint8_t buf[512];
+    std::vector<uint8_t> bufStore(512 + m_title.size());
+    uint8_t* buf = bufStore.data();
     int pos = 0;
     pos += ebml_write_uint(buf + pos, MATROSKA_ID_TIMECODESCALE, 1000000);  // 1 ms
 
@@ -1036,6 +1045,9 @@ void MatroskaMuxer::writeSegmentInfo()
     const int durationElementStart = pos;
     pos += ebml_write_float(buf + pos, MATROSKA_ID_DURATION, 0.0);
 
+    // The title of the file: --title=, or a Matroska source's own, which a remux used to drop.
+    if (!m_title.empty())
+        pos += ebml_write_string(buf + pos, MATROSKA_ID_TITLE, m_title);
     pos += ebml_write_string(buf + pos, MATROSKA_ID_MUXINGAPP, "tsMuxeR");
     // The version that wrote the file. Without it nobody could tell from a file which tsMuxeR
     // made it, which is the first thing a fault report needs
@@ -1970,6 +1982,7 @@ void MatroskaMuxer::writeDeferredHeader()
     // Chapters must precede the first Cluster, because a player reads the header once and does
     // not go looking for them later.
     writeChapters();
+    writeTags();
 
     m_headerWritten = true;
 }
@@ -3437,12 +3450,14 @@ void MatroskaMuxer::writeStartCodeOnlyManifest(const std::string& scRule)
 
     m_attachmentsPos = m_file.pos() - m_segmentStartPos;
     uint8_t header[16];
-    const int hdrLen = ebml_write_master_open(header, MATROSKA_ID_ATTACHMENTS, fileHdrLen + fileSize);
+    const int hdrLen =
+        ebml_write_master_open(header, MATROSKA_ID_ATTACHMENTS, fileHdrLen + fileSize + sourceAttachmentBytes());
     writeToFile(header, hdrLen);
     writeToFile(fileHdr, fileHdrLen);
     writeToFile(head);
     writeToFile(dataHdr, dataHdrLen);
     writeToFile(reinterpret_cast<const uint8_t*>(manifest.data()), static_cast<int>(manifest.size()));
+    writeSourceAttachments();
 
     LTRACE(LT_INFO, 2,
            "Recorded how the source framed the video (" << scRule
@@ -3478,6 +3493,14 @@ void MatroskaMuxer::writeAttachments()
         // would otherwise come out differing from the source in every start code.
         if (!scRule.empty())
             writeStartCodeOnlyManifest(scRule);
+        else if (!m_sourceAttachments.empty())
+        {
+            m_attachmentsPos = m_file.pos() - m_segmentStartPos;
+            uint8_t header[16];
+            const int hdrLen = ebml_write_master_open(header, MATROSKA_ID_ATTACHMENTS, sourceAttachmentBytes());
+            writeToFile(header, hdrLen);
+            writeSourceAttachments();
+        }
         return;
     }
 
@@ -3611,7 +3634,7 @@ void MatroskaMuxer::writeAttachments()
     uint8_t rpuFileHdr[16];
     const int rpuFileHdrLen = ebml_write_master_open(rpuFileHdr, MATROSKA_ID_ATTACHEDFILE, rpuFileSize);
 
-    uint64_t total = rpuFileHdrLen + rpuFileSize;
+    uint64_t total = rpuFileHdrLen + rpuFileSize + sourceAttachmentBytes();
     for (const auto& s : small) total += s.fileHdrLen + s.fileSize;
 
     m_attachmentsPos = m_file.pos() - m_segmentStartPos;
@@ -3648,12 +3671,52 @@ void MatroskaMuxer::writeAttachments()
         writeToFile(s.dataHdr, s.dataHdrLen);
         writeToFile(s.data);
     }
+    writeSourceAttachments();
 
     LTRACE(LT_INFO, 2,
            "Dolby Vision: attached " << m_dvRpuIndex.size() << " original profile 7 RPUs (" << rpuBytes
                                      << " bytes, crc32 " << std::hex << rpuCrc << std::dec
                                      << ") in presentation order, with their timestamps and the manifest that "
                                         "explains them. The original disc can be rebuilt from this file.");
+}
+
+// What a Matroska source carries for this output. A --title= in the MUXOPT line wins over the source's title.
+void MatroskaMuxer::setSourceExtras(const std::string& title, const std::vector<std::vector<uint8_t>>& attachments,
+                                    const std::vector<std::vector<uint8_t>>& tags)
+{
+    if (!m_titleFromMuxOpt)
+        m_title = title;
+    m_sourceAttachments = attachments;
+    m_sourceTags = tags;
+}
+
+uint64_t MatroskaMuxer::sourceAttachmentBytes() const
+{
+    uint64_t total = 0;
+    for (const auto& raw : m_sourceAttachments) total += raw.size();
+    return total;
+}
+
+// The source's attachments, inside the one Attachments element (RFC 9559 allows one), after this file's own.
+void MatroskaMuxer::writeSourceAttachments()
+{
+    for (const auto& raw : m_sourceAttachments) writeToFile(raw);
+    if (!m_sourceAttachments.empty())
+        LTRACE(LT_INFO, 2, "Matroska: " << m_sourceAttachments.size() << " attachment(s) of the source carried over.");
+}
+
+// The source's file-wide tags, before the clusters as RFC 9559 (25.3.1) lays a file out.
+void MatroskaMuxer::writeTags()
+{
+    if (m_sourceTags.empty())
+        return;
+    uint64_t total = 0;
+    for (const auto& raw : m_sourceTags) total += raw.size();
+    m_tagsPos = m_file.pos() - m_segmentStartPos;
+    uint8_t header[16];
+    const int hdrLen = ebml_write_master_open(header, MATROSKA_ID_TAGS, total);
+    writeToFile(header, hdrLen);
+    for (const auto& raw : m_sourceTags) writeToFile(raw);
 }
 
 // ──────────────── SeekHead ───────────────────────────────────────────────────
@@ -3674,6 +3737,8 @@ std::vector<uint8_t> MatroskaMuxer::buildSeekHead() const
     // Every top-level element (RFC 9559, 6.3). The chapters, written before the clusters, were left out.
     if (m_chaptersPos > 0)
         items.push_back({MATROSKA_ID_CHAPTERS, m_chaptersPos});
+    if (m_tagsPos > 0)
+        items.push_back({MATROSKA_ID_TAGS, m_tagsPos});
     if (m_cuesPos > 0)
         items.push_back({MATROSKA_ID_CUES, m_cuesPos});
     if (m_attachmentsPos > 0)

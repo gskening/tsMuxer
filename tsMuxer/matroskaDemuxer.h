@@ -48,6 +48,9 @@ class MatroskaDemuxer final : public IOContextDemuxer
     // whole feature, tens of megabytes, and the file is opened and thrown away twice during track
     // detection before anything wants it.
     bool getAttachment(const std::string& name, std::vector<uint8_t>& out) override;
+    std::string getTitle() override { return m_title; }
+    std::vector<std::vector<uint8_t>> getPassThroughAttachments() override;
+    std::vector<std::vector<uint8_t>> getGlobalTags() override;
 
     // A joined input, "a"+"b": the files in the order they are read, so that each part is framed as its own record
     // says when the stream reaches it.

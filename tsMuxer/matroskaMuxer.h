@@ -59,6 +59,8 @@ class MatroskaMuxer final : public AbstractMuxer
     void parseMuxOpt(const std::string& opts) override;
     void setChapters(const std::vector<double>& chapters) override { m_chapters = chapters; }
     void setChapterInfo(const std::vector<AVChapter>& info) override { m_chapterInfo = info; }
+    void setSourceExtras(const std::string& title, const std::vector<std::vector<uint8_t>>& attachments,
+                         const std::vector<std::vector<uint8_t>>& tags) override;
 
    private:
     std::vector<double> m_chapters;        // start times in seconds
@@ -387,6 +389,14 @@ class MatroskaMuxer final : public AbstractMuxer
     int64_t m_cuesPos;
     int64_t m_attachmentsPos = 0;
     int64_t m_chaptersPos = 0;
+    int64_t m_tagsPos = 0;
+    std::string m_title;  // --title=, or the first source's title
+    bool m_titleFromMuxOpt = false;
+    std::vector<std::vector<uint8_t>> m_sourceAttachments;  // whole AttachedFile elements
+    std::vector<std::vector<uint8_t>> m_sourceTags;         // whole Tag elements
+    [[nodiscard]] uint64_t sourceAttachmentBytes() const;
+    void writeSourceAttachments();
+    void writeTags();
 
     // Space held at the front of the segment for the seek index, filled in at close. Cues and the
     // attachments are written after the clusters because they are not known until then, and

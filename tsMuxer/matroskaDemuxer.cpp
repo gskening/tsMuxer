@@ -2424,6 +2424,127 @@ void MatroskaDemuxer::loadTrackExtras(const std::string& fileName)
     }
 }
 
+// The source's attachments, each a whole AttachedFile element as it stands in the file, for a Matroska output to
+// carry: cover art, the fonts of styled subtitles and the like, which a remux used to drop. tsMuxeR's own Dolby Vision
+// files are left out: a profile 8.1 output writes them again from the stream, and anything else has no use for them.
+std::vector<std::vector<uint8_t>> MatroskaDemuxer::getPassThroughAttachments()
+{
+    std::vector<std::vector<uint8_t>> out;
+    if (m_sourceName.empty())
+        return out;
+    File f;
+    if (!f.open(m_sourceName.c_str(), File::ofRead))
+        return out;
+    const int64_t fileSize = f.size();
+    EbmlScan scan(f);
+    int64_t body = 0, size = 0;
+    if (!findTopLevelElement(scan, fileSize, MATROSKA_ID_ATTACHMENTS, body, size))
+        return out;
+    scan.pos = body;
+    while (scan.pos < body + size)
+    {
+        const int64_t start = scan.pos;
+        uint32_t id = 0;
+        int64_t len = 0, b = 0;
+        if (!scan.readElement(id, len, b) || b + len > body + size)
+            break;
+        scan.pos = b + len;
+        if (id != MATROSKA_ID_ATTACHEDFILE)
+            continue;
+        std::string name;
+        int64_t dataPos = 0, dataSize = 0;
+        const int64_t resume = scan.pos;
+        scan.pos = b;
+        scanAttachedFile(scan, b + len, name, dataPos, dataSize);
+        scan.pos = resume;
+        if (name == MANIFEST_ATTACHMENT_NAME || name == "dv-original-rpu.bin" || name == "dv-original-rpu-pts.bin")
+            continue;
+        std::vector<uint8_t> raw(static_cast<size_t>(b + len - start));
+        f.seek(start);
+        if (f.read(raw.data(), static_cast<uint32_t>(raw.size())) == static_cast<int>(raw.size()))
+            out.push_back(std::move(raw));
+        scan.pos = resume;
+    }
+    return out;
+}
+
+// The source's tags that are about the whole file (a Targets with no track, edition, chapter or attachment named):
+// the title, the release date and the like, each a whole Tag element. A tag about a track is left behind, because the
+// output's tracks have other UIDs, and statistics such as a track's bit rate would be wrong for the output anyway.
+std::vector<std::vector<uint8_t>> MatroskaDemuxer::getGlobalTags()
+{
+    std::vector<std::vector<uint8_t>> out;
+    if (m_sourceName.empty())
+        return out;
+    File f;
+    if (!f.open(m_sourceName.c_str(), File::ofRead))
+        return out;
+    const int64_t fileSize = f.size();
+    EbmlScan scan(f);
+    int64_t body = 0, size = 0;
+    if (!findTopLevelElement(scan, fileSize, MATROSKA_ID_TAGS, body, size))
+        return out;
+    const auto nonZero = [&](const int64_t at, const int64_t width)
+    {
+        uint8_t buf[8] = {0};
+        if (width <= 0 || width > 8)
+            return false;
+        f.seek(at);
+        if (f.read(buf, static_cast<uint32_t>(width)) != static_cast<int>(width))
+            return false;
+        for (int i = 0; i < static_cast<int>(width); ++i)
+            if (buf[i])
+                return true;
+        return false;
+    };
+    scan.pos = body;
+    while (scan.pos < body + size)
+    {
+        const int64_t start = scan.pos;
+        uint32_t id = 0;
+        int64_t len = 0, b = 0;
+        if (!scan.readElement(id, len, b) || b + len > body + size)
+            break;
+        const int64_t resume = b + len;
+        if (id == MATROSKA_ID_TAG)
+        {
+            bool aboutPart = false;
+            scan.pos = b;
+            while (scan.pos < b + len)
+            {
+                uint32_t tid = 0;
+                int64_t tlen = 0, tb = 0;
+                if (!scan.readElement(tid, tlen, tb))
+                    break;
+                if (tid == MATROSKA_ID_TAGTARGETS)
+                {
+                    scan.pos = tb;
+                    while (scan.pos < tb + tlen)
+                    {
+                        uint32_t uid = 0;
+                        int64_t ulen = 0, ub = 0;
+                        if (!scan.readElement(uid, ulen, ub))
+                            break;
+                        if ((uid == 0x63C5 || uid == 0x63C9 || uid == 0x63C4 || uid == 0x63C6) && nonZero(ub, ulen))
+                            aboutPart = true;  // TagTrackUID, TagEditionUID, TagChapterUID, TagAttachmentUID
+                        scan.pos = ub + ulen;
+                    }
+                }
+                scan.pos = tb + tlen;
+            }
+            if (!aboutPart)
+            {
+                std::vector<uint8_t> raw(static_cast<size_t>(resume - start));
+                f.seek(start);
+                if (f.read(raw.data(), static_cast<uint32_t>(raw.size())) == static_cast<int>(raw.size()))
+                    out.push_back(std::move(raw));
+            }
+        }
+        scan.pos = resume;
+    }
+    return out;
+}
+
 void MatroskaDemuxer::loadAttachments(const std::string& fileName)
 {
     File f;

@@ -1189,6 +1189,38 @@ static bool isKnownTrackParam(const std::string& name)
     return known.find(name) != known.end();
 }
 
+// The first source's title, and the attachments and file-wide tags of every source, each once.
+std::string METADemuxer::getTitle()
+{
+    for (auto& [name, demuxerData] : m_containerReader.m_demuxers)
+        if (demuxerData.m_demuxer)
+            if (std::string title = demuxerData.m_demuxer->getTitle(); !title.empty())
+                return title;
+    return {};
+}
+
+std::vector<std::vector<uint8_t>> METADemuxer::getPassThroughAttachments()
+{
+    std::vector<std::vector<uint8_t>> out;
+    for (auto& [name, demuxerData] : m_containerReader.m_demuxers)
+        if (demuxerData.m_demuxer)
+            for (auto& raw : demuxerData.m_demuxer->getPassThroughAttachments())
+                if (std::find(out.begin(), out.end(), raw) == out.end())
+                    out.push_back(std::move(raw));
+    return out;
+}
+
+std::vector<std::vector<uint8_t>> METADemuxer::getGlobalTags()
+{
+    std::vector<std::vector<uint8_t>> out;
+    for (auto& [name, demuxerData] : m_containerReader.m_demuxers)
+        if (demuxerData.m_demuxer)
+            for (auto& raw : demuxerData.m_demuxer->getGlobalTags())
+                if (std::find(out.begin(), out.end(), raw) == out.end())
+                    out.push_back(std::move(raw));
+    return out;
+}
+
 std::vector<AVChapter> METADemuxer::getChapters()
 {
     // A Blu-ray playlist keeps its chapters as playlist marks rather than in any demuxer, so it

@@ -154,6 +154,8 @@ void MuxerManager::preinitMux(const std::string& outFileName, FileFactory* fileF
                 if (tsMuxer)
                     tsMuxer->setPtsOffset(m_ptsOffset);
                 m_mainMuxer->parseMuxOpt(m_muxOpts);
+                m_mainMuxer->setSourceExtras(m_metaDemuxer.getTitle(), m_metaDemuxer.getPassThroughAttachments(),
+                                             m_metaDemuxer.getGlobalTags());
                 // Now that the muxer exists it can be given the chapter list main() supplied.
                 // With no --custom-chapters, fall back to whatever the source container carries,
                 // the same way a source language fills in for a missing lang=. An MKV with its
@@ -747,6 +749,7 @@ void MuxerManager::warnUnknownMuxOpts(const string& opts)
                                                       "--split-duration",
                                                       "--split-size",
                                                       "--start-time",
+                                                      "--title",
                                                       "--vbr",
                                                       "--vbv-len"};
     static const std::set<std::string> commandLineOptions = {

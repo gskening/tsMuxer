@@ -213,6 +213,9 @@ class METADemuxer final : public AbstractDemuxer
     // Chapters of the first source container that has any. DetectStreamRez::chapters holds the
     // same information but only on the listing path, so the mux path had no way to reach it.
     [[nodiscard]] std::vector<AVChapter> getChapters() override;
+    [[nodiscard]] std::string getTitle() override;
+    [[nodiscard]] std::vector<std::vector<uint8_t>> getPassThroughAttachments() override;
+    [[nodiscard]] std::vector<std::vector<uint8_t>> getGlobalTags() override;
     // How long the sources say they run, without reading them: a playlist by its play items, a container by the
     // length it states. A join counts its first file only and an elementary stream states nothing, so this can fall
     // short or be 0. It is only used to reckon how many parts a --split-duration makes.

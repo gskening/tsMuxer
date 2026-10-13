@@ -158,6 +158,13 @@ class AbstractDemuxer
     /// carry attachments implement this; the default is that there are none.
     virtual bool getAttachment(const std::string& name, std::vector<uint8_t>& out) { return false; }
 
+    /// What a Matroska output can carry over from a Matroska source: its title, its attachments as whole
+    /// AttachedFile elements, and its tags that are about the whole file, as whole Tag elements. Empty for every
+    /// other container.
+    [[nodiscard]] virtual std::string getTitle() { return {}; }
+    [[nodiscard]] virtual std::vector<std::vector<uint8_t>> getPassThroughAttachments() { return {}; }
+    [[nodiscard]] virtual std::vector<std::vector<uint8_t>> getGlobalTags() { return {}; }
+
     [[nodiscard]] SubTrackFilter* getPidFilter(const int pid)
     {
         const PIDFilters::const_iterator itr = m_pidFilters.find(pid);
