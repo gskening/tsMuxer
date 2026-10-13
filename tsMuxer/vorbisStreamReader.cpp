@@ -1,0 +1,330 @@
+#include "vorbisStreamReader.h"
+
+#include <algorithm>
+#include <cstring>
+#include <sstream>
+
+#include "avCodecs.h"
+#include "vod_common.h"
+
+namespace
+{
+constexpr int FRAME_PREFIX_LEN = 4;
+constexpr int MAX_VORBIS_PACKET = 1 << 20;
+constexpr uint8_t PRIVATE_MARK[8] = {'V', 'O', 'R', 'B', 'I', 'S', 'C', 'P'};
+
+// Vorbis packs its fields from the lowest bit of each byte up, unlike the readers elsewhere in tsMuxeR.
+class LsbBitReader
+{
+   public:
+    LsbBitReader(const uint8_t* data, const int size) : m_data(data), m_bits(static_cast<int64_t>(size) * 8), m_pos(0)
+    {
+    }
+    uint32_t get(const int n)
+    {
+        uint32_t v = 0;
+        for (int i = 0; i < n; ++i, ++m_pos)
+        {
+            if (m_pos >= m_bits)
+                throw std::exception();
+            v |= static_cast<uint32_t>(m_data[m_pos >> 3] >> (m_pos & 7) & 1) << i;
+        }
+        return v;
+    }
+    void skip(const int64_t n)
+    {
+        m_pos += n;
+        if (m_pos > m_bits)
+            throw std::exception();
+    }
+
+   private:
+    const uint8_t* m_data;
+    int64_t m_bits;
+    int64_t m_pos;
+};
+
+int ilog(uint32_t v)
+{
+    int n = 0;
+    while (v)
+    {
+        ++n;
+        v >>= 1;
+    }
+    return n;
+}
+
+// The largest r whose dimensions-th power is at most entries (Vorbis I, 9.2.3).
+int64_t lookup1Values(const int64_t entries, const int dimensions)
+{
+    int64_t r = 0;
+    while (true)
+    {
+        int64_t p = 1;
+        for (int i = 0; i < dimensions && p <= entries; ++i) p *= r + 1;
+        if (p > entries)
+            return r;
+        ++r;
+    }
+}
+}  // namespace
+
+VorbisStreamReader::VorbisStreamReader()
+    : m_sampleRate(0),
+      m_channels(0),
+      m_nominalBitrate(0),
+      m_blockSize{0, 0},
+      m_modeBits(0),
+      m_prevBlock(0),
+      m_curFrameSamples(0),
+      m_leadSamples(0)
+{
+}
+
+const CodecInfo& VorbisStreamReader::getCodecInfo() { return vorbisCodecInfo; }
+
+const std::string VorbisStreamReader::getStreamInfo()
+{
+    std::ostringstream str;
+    if (m_nominalBitrate > 0)
+        str << "Bitrate: " << m_nominalBitrate / 1000 << "Kbps (nominal)  ";
+    str << "Sample Rate: " << m_sampleRate << "  Channels: " << static_cast<int>(m_channels);
+    return str.str();
+}
+
+bool VorbisStreamReader::parseIdentification(const uint8_t* data, const int size)
+{
+    // Vorbis I, 4.2.2: packet type 1, "vorbis", version, channels, rate, three bit rates, the two block sizes as powers
+    // of two in one byte, and the framing bit.
+    if (size < 30 || data[0] != 1 || memcmp(data + 1, "vorbis", 6) != 0)
+        return false;
+    m_channels = data[11];
+    m_sampleRate = static_cast<int>(data[12] | data[13] << 8 | data[14] << 16 | static_cast<uint32_t>(data[15]) << 24);
+    m_nominalBitrate =
+        static_cast<int>(data[20] | data[21] << 8 | data[22] << 16 | static_cast<uint32_t>(data[23]) << 24);
+    m_blockSize[0] = 1 << (data[28] & 15);
+    m_blockSize[1] = 1 << (data[28] >> 4);
+    return m_channels > 0 && m_sampleRate > 0;
+}
+
+bool VorbisStreamReader::parseSetup(const uint8_t* data, const int size)
+{
+    // Vorbis I, 4.2.4. Only the modes at its end are needed, but everything before them has to be read to find them:
+    // the codebooks, the time domain transforms, the floors, the residues and the mappings.
+    if (size < 7 || data[0] != 5 || memcmp(data + 1, "vorbis", 6) != 0)
+        return false;
+    try
+    {
+        LsbBitReader bits(data + 7, size - 7);
+        const int codebooks = static_cast<int>(bits.get(8)) + 1;
+        for (int b = 0; b < codebooks; ++b)
+        {
+            if (bits.get(24) != 0x564342)
+                return false;
+            const int dimensions = static_cast<int>(bits.get(16));
+            const int64_t entries = bits.get(24);
+            if (bits.get(1))  // ordered
+            {
+                int64_t entry = 0;
+                bits.skip(5);
+                while (entry < entries)
+                {
+                    entry += bits.get(ilog(static_cast<uint32_t>(entries - entry)));
+                    if (entry > entries)
+                        return false;
+                }
+            }
+            else
+            {
+                const bool sparse = bits.get(1);
+                for (int64_t e = 0; e < entries; ++e)
+                    if (!sparse || bits.get(1))
+                        bits.skip(5);
+            }
+            const uint32_t lookup = bits.get(4);
+            if (lookup == 1 || lookup == 2)
+            {
+                bits.skip(64);  // minimum and delta
+                const int valueBits = static_cast<int>(bits.get(4)) + 1;
+                bits.skip(1);  // sequence_p
+                const int64_t values = lookup == 1 ? lookup1Values(entries, dimensions) : entries * dimensions;
+                bits.skip(values * valueBits);
+            }
+            else if (lookup != 0)
+                return false;
+        }
+        const int times = static_cast<int>(bits.get(6)) + 1;
+        for (int i = 0; i < times; ++i)
+            if (bits.get(16) != 0)
+                return false;
+        const int floors = static_cast<int>(bits.get(6)) + 1;
+        for (int i = 0; i < floors; ++i)
+        {
+            const uint32_t type = bits.get(16);
+            if (type == 0)
+            {
+                bits.skip(8 + 16 + 16 + 6 + 8);
+                bits.skip(8 * (static_cast<int64_t>(bits.get(4)) + 1));
+            }
+            else if (type == 1)
+            {
+                const int partitions = static_cast<int>(bits.get(5));
+                std::vector<int> partitionClass(partitions);
+                int maxClass = -1;
+                for (int& c : partitionClass)
+                {
+                    c = static_cast<int>(bits.get(4));
+                    maxClass = (std::max)(maxClass, c);
+                }
+                std::vector<int> classDimensions(maxClass + 1);
+                for (int c = 0; c <= maxClass; ++c)
+                {
+                    classDimensions[c] = static_cast<int>(bits.get(3)) + 1;
+                    const int subclasses = static_cast<int>(bits.get(2));
+                    if (subclasses)
+                        bits.skip(8);
+                    bits.skip(8 * (static_cast<int64_t>(1) << subclasses));
+                }
+                bits.skip(2);
+                const int rangeBits = static_cast<int>(bits.get(4));
+                for (const int c : partitionClass) bits.skip(static_cast<int64_t>(classDimensions[c]) * rangeBits);
+            }
+            else
+                return false;
+        }
+        const int residues = static_cast<int>(bits.get(6)) + 1;
+        for (int i = 0; i < residues; ++i)
+        {
+            if (bits.get(16) > 2)
+                return false;
+            bits.skip(24 + 24 + 24);
+            const int classifications = static_cast<int>(bits.get(6)) + 1;
+            bits.skip(8);
+            std::vector<uint32_t> cascade(classifications);
+            for (uint32_t& c : cascade)
+            {
+                const uint32_t low = bits.get(3);
+                const uint32_t high = bits.get(1) ? bits.get(5) : 0;
+                c = high << 3 | low;
+            }
+            for (const uint32_t c : cascade)
+                for (int j = 0; j < 8; ++j)
+                    if (c >> j & 1)
+                        bits.skip(8);
+        }
+        const int mappings = static_cast<int>(bits.get(6)) + 1;
+        const int channelBits = ilog(m_channels - 1u);
+        for (int i = 0; i < mappings; ++i)
+        {
+            if (bits.get(16) != 0)
+                return false;
+            const int submaps = bits.get(1) ? static_cast<int>(bits.get(4)) + 1 : 1;
+            if (bits.get(1))
+                bits.skip((static_cast<int64_t>(bits.get(8)) + 1) * 2 * channelBits);
+            if (bits.get(2) != 0)
+                return false;
+            if (submaps > 1)
+                bits.skip(4 * static_cast<int64_t>(m_channels));
+            bits.skip(24 * static_cast<int64_t>(submaps));
+        }
+        const int modes = static_cast<int>(bits.get(6)) + 1;
+        m_modeLong.assign(modes, false);
+        for (int i = 0; i < modes; ++i)
+        {
+            m_modeLong[i] = bits.get(1) != 0;
+            bits.skip(16 + 16 + 8);
+        }
+        m_modeBits = ilog(static_cast<uint32_t>(modes - 1));
+        return true;
+    }
+    catch (std::exception&)
+    {
+        return false;
+    }
+}
+
+bool VorbisStreamReader::setCodecPrivate(const uint8_t* data, const int size)
+{
+    // Xiph lacing: the number of packets less one, the sizes of all but the last (each a run of 255s and one smaller
+    // byte), then the packets.
+    if (size < 3 || data[0] != 2)
+        return false;
+    int pos = 1;
+    int sizes[2] = {0, 0};
+    for (int& s : sizes)
+    {
+        while (pos < size && data[pos] == 255) s += data[pos++];
+        if (pos >= size)
+            return false;
+        s += data[pos++];
+    }
+    if (pos + sizes[0] + sizes[1] > size)
+        return false;
+    const uint8_t* ident = data + pos;
+    const uint8_t* setup = ident + sizes[0] + sizes[1];
+    if (!parseIdentification(ident, sizes[0]) || !parseSetup(setup, static_cast<int>(size - (setup - data))))
+        return false;
+    // The same headers again are the next file of a join, and the stream goes on: the packet after them overlaps the
+    // block before it as any other does. Other headers start a new stream.
+    if (m_codecPrivate.size() != static_cast<size_t>(size) || memcmp(m_codecPrivate.data(), data, size) != 0)
+        m_prevBlock = 0;
+    m_codecPrivate.assign(data, data + size);
+    return true;
+}
+
+uint8_t* VorbisStreamReader::findFrame(uint8_t* buff, uint8_t* end)
+{
+    // The header packets, in front of the first packet of a file.
+    if (end - buff >= 12 && memcmp(buff, PRIVATE_MARK, 8) == 0)
+    {
+        const int len =
+            static_cast<int>(static_cast<uint32_t>(buff[8]) << 24 | buff[9] << 16 | buff[10] << 8 | buff[11]);
+        if (end - buff < 12 + len)
+            return nullptr;
+        setCodecPrivate(buff + 12, len);
+        buff += 12 + len;
+    }
+    if (buff + FRAME_PREFIX_LEN > end || m_modeLong.empty())
+        return nullptr;
+    const uint32_t len = static_cast<uint32_t>(buff[0]) << 24 | buff[1] << 16 | buff[2] << 8 | buff[3];
+    if (len < 1 || len > MAX_VORBIS_PACKET)
+        return nullptr;
+    return buff + FRAME_PREFIX_LEN + static_cast<int>(len) <= end ? buff : nullptr;
+}
+
+int VorbisStreamReader::decodeFrame(uint8_t* buff, uint8_t* end, int& skipBytes, int& skipBeforeBytes)
+{
+    skipBytes = 0;
+    skipBeforeBytes = FRAME_PREFIX_LEN;
+    if (end - buff < FRAME_PREFIX_LEN)
+        return NOT_ENOUGH_BUFFER;
+    const uint32_t len = static_cast<uint32_t>(buff[0]) << 24 | buff[1] << 16 | buff[2] << 8 | buff[3];
+    if (len == 0 || len > MAX_VORBIS_PACKET || m_modeLong.empty())
+        return 0;
+    if (end - buff < FRAME_PREFIX_LEN + static_cast<int64_t>(len))
+        return NOT_ENOUGH_BUFFER;
+
+    // An audio packet: type bit 0, then the mode.
+    const uint8_t* packet = buff + FRAME_PREFIX_LEN;
+    m_curFrameSamples = 0;
+    if ((packet[0] & 1) == 0)
+    {
+        const uint32_t mode = m_modeBits ? (packet[0] >> 1) & ((1u << m_modeBits) - 1) : 0;
+        if (m_modeBits > 7 || mode >= m_modeLong.size())
+            return 0;
+        const int block = m_blockSize[m_modeLong[mode] ? 1 : 0];
+        m_curFrameSamples = (m_prevBlock ? m_prevBlock : block) / 4 + block / 4;
+        if (m_prevBlock == 0 && m_leadSamples == 0)
+            m_leadSamples = m_curFrameSamples;
+        m_prevBlock = block;
+    }
+    return static_cast<int>(len);
+}
+
+double VorbisStreamReader::getFrameDuration()
+{
+    if (m_curFrameSamples == 0 || m_sampleRate == 0)
+        return 0;
+    return static_cast<double>(m_curFrameSamples) / m_sampleRate * INTERNAL_PTS_FREQ;
+}

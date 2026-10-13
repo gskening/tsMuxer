@@ -748,6 +748,36 @@ void ParsedVpxTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int siz
     pkt->size = encoded + 4;
 }
 
+// ------------ Vorbis ---------------
+ParsedVorbisTrackData::ParsedVorbisTrackData(const uint8_t* buff, const int size)
+{
+    if (buff && size > 0)
+        m_codecPrivate.assign(buff, buff + size);
+}
+
+void ParsedVorbisTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int size)
+{
+    const int head = m_firstPacket && !m_codecPrivate.empty() ? 12 + static_cast<int>(m_codecPrivate.size()) : 0;
+    pkt->size = head + 4 + size;
+    pkt->data = new uint8_t[pkt->size];
+    uint8_t* dst = pkt->data;
+    const auto be32 = [&dst](const uint32_t v)
+    {
+        for (int i = 3; i >= 0; --i) *dst++ = static_cast<uint8_t>(v >> (8 * i));
+    };
+    if (head)
+    {
+        memcpy(dst, "VORBISCP", 8);
+        dst += 8;
+        be32(static_cast<uint32_t>(m_codecPrivate.size()));
+        memcpy(dst, m_codecPrivate.data(), m_codecPrivate.size());
+        dst += m_codecPrivate.size();
+    }
+    m_firstPacket = false;
+    be32(static_cast<uint32_t>(size));
+    memcpy(dst, buff, size);
+}
+
 // ------------ Opus ---------------
 ParsedOpusTrackData::ParsedOpusTrackData(uint8_t* buff, const int size)
     : ParsedTrackPrivData(buff, size), m_firstPacket(true)

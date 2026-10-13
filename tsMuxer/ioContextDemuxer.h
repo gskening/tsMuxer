@@ -15,6 +15,7 @@ static constexpr int TRACKTYPE_WAV = 0x180;
 // VP8 and VP9, which only a Matroska source names: their data has nothing another probe could recognise them by.
 static constexpr int TRACKTYPE_VP8 = 0x1A8;
 static constexpr int TRACKTYPE_VP9 = 0x1A9;
+static constexpr int TRACKTYPE_VORBIS = 0x1AA;  // Vorbis, framed by length only (ParsedVorbisTrackData)
 
 class ParsedTrackPrivData
 {

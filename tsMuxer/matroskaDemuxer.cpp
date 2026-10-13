@@ -1664,6 +1664,10 @@ int MatroskaDemuxer::matroska_read_header()
             {
                 track->parsed_priv_data = new ParsedOpusTrackData(track->codec_priv, track->codec_priv_size);
             }
+            else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_AUDIO_VORBIS))
+            {
+                track->parsed_priv_data = new ParsedVorbisTrackData(track->codec_priv, track->codec_priv_size);
+            }
             else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_VP8) || !strcmp(track->codec_id, MATROSKA_CODEC_ID_VP9))
             {
                 track->parsed_priv_data = new ParsedVpxTrackData();
@@ -4508,6 +4512,8 @@ int MatroskaDemuxer::getTrackType(const MatroskaTrack* track)
         return TRACKTYPE_VP8;
     if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_VP9))
         return TRACKTYPE_VP9;
+    if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_AUDIO_VORBIS))
+        return TRACKTYPE_VORBIS;
 
     return 0;
 }

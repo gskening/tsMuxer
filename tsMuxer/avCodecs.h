@@ -27,6 +27,7 @@ static constexpr int CODEC_A_FLAC = 19;
 static constexpr int CODEC_A_OPUS = 20;
 static constexpr int CODEC_V_VP8 = 21;
 static constexpr int CODEC_V_VP9 = 22;
+static constexpr int CODEC_A_VORBIS = 23;
 
 struct CodecInfo
 {
@@ -112,5 +113,6 @@ const static CodecInfo flacCodecInfo(CODEC_A_FLAC, "FLAC", "A_FLAC");
 const static CodecInfo opusCodecInfo(CODEC_A_OPUS, "Opus", "A_OPUS");
 const static CodecInfo vp8CodecInfo(CODEC_V_VP8, "VP8", "V_VP8");
 const static CodecInfo vp9CodecInfo(CODEC_V_VP9, "VP9", "V_VP9");
+const static CodecInfo vorbisCodecInfo(CODEC_A_VORBIS, "Vorbis", "A_VORBIS");
 
 #endif

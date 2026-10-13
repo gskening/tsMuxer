@@ -44,6 +44,7 @@ static bool isKnownTrackParam(const std::string& name);
 #include "vc1StreamReader.h"
 #include "vodCoreException.h"
 #include "vod_common.h"
+#include "vorbisStreamReader.h"
 #include "vpxStreamReader.h"
 #include "vvcStreamReader.h"
 
@@ -2274,6 +2275,9 @@ CheckStreamRez METADemuxer::detectTrackReader(uint8_t* tmpBuffer, int len,
     // and listed both as AV1, with a made up picture size, and a mux wrote them out as such.
     if (containerDataType == TRACKTYPE_VP8 || containerDataType == TRACKTYPE_VP9)
         return VpxStreamReader(containerDataType == TRACKTYPE_VP9).checkStream(tmpBuffer, len);
+    // Vorbis the same way: its packets have no sync code to find.
+    if (containerDataType == TRACKTYPE_VORBIS)
+        return VorbisStreamReader().checkStream(tmpBuffer, len, containerType, containerDataType, containerStreamIndex);
 
     // The container says what the track is, and that was being thrown away. Every video probe
     // below runs before the MPEG audio one, which is alone among the audio readers in sitting
@@ -2617,6 +2621,8 @@ AbstractStreamReader* METADemuxer::createCodec(const string& codecName, const ma
         rez = new FLACStreamReader();
     else if (codecName == "A_OPUS")
         rez = new OpusStreamReader();
+    else if (codecName == "A_VORBIS")
+        rez = new VorbisStreamReader();
     else if (codecName == "A_DTS")
     {
         rez = new DTSStreamReader();

@@ -92,7 +92,7 @@ class MatroskaMuxer final : public AbstractMuxer
         std::vector<uint8_t> srcProjection;  // the body of the source's Projection element
         std::vector<uint8_t> srcVpxPrivate;  // a VP9 source's CodecPrivate (srcvpxprivate)
         unsigned srcDisplayHeight = 0;
-        int64_t endPaddingNs = 0;      // DiscardPadding for the track's last block (Opus), from the source
+        int64_t endPaddingNs = 0;      // DiscardPadding for the track's last block (Opus, Vorbis), from the source
         uint64_t srcCodecDelayNs = 0;  // CodecDelay from the source's edit list (srccodecdelay), AAC from MP4
         bool mp3InfoChecked = false;   // the first MPEG audio frame was looked at for a Xing/Info frame
         int mp3Delay = -1;             // its LAME encoder delay and padding in samples, -1 without one

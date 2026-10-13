@@ -39,6 +39,7 @@ extern "C"
 #include "tsMuxer.h"  // HDR10_metadata, filled from the HEVC SEI while parsing
 #include "vc1StreamReader.h"
 #include "vodCoreException.h"
+#include "vorbisStreamReader.h"
 #include "vpxStreamReader.h"
 #include "vvc.h"
 #include "vvcStreamReader.h"
@@ -383,7 +384,8 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
             if (const size_t eq = item.find('='); eq != std::string::npos)
                 track.srcColour[item.substr(0, eq)] = strtod(item.c_str() + eq + 1, nullptr);
     // The samples at the end of an Opus track that only fill its last frame (srcendpadding, in nanoseconds).
-    if (const auto src = params.find("srcendpadding"); src != params.end() && track.codecID == CODEC_A_OPUS)
+    if (const auto src = params.find("srcendpadding");
+        src != params.end() && (track.codecID == CODEC_A_OPUS || track.codecID == CODEC_A_VORBIS))
         track.endPaddingNs = strtoll(src->second.c_str(), nullptr, 10);
     // The crop, the field order and the projection of a Matroska source (srccrop: top,bottom,left,right;
     // srcfieldorder; srcprojection: the element's body in hex).
@@ -937,6 +939,14 @@ void MatroskaMuxer::buildCodecPrivate(MkvTrackInfo& track)
         const auto opus = dynamic_cast<OpusStreamReader*>(track.codecReader);
         if (opus && !opus->getCodecPrivate().empty())
             track.codecPrivate = opus->getCodecPrivate();
+        break;
+    }
+    case CODEC_A_VORBIS:
+    {
+        // The three header packets, Xiph laced, as the source had them.
+        const auto vorbis = dynamic_cast<VorbisStreamReader*>(track.codecReader);
+        if (vorbis)
+            track.codecPrivate = vorbis->getCodecPrivate();
         break;
     }
     case CODEC_V_VP9:
@@ -1818,6 +1828,12 @@ void MatroskaMuxer::refreshTrackProperties()
                 if (track.mp3Padding > 529)
                     track.endPaddingNs = static_cast<int64_t>(track.mp3Padding - 529) * 1000000000LL / track.sampleRate;
             }
+            // Vorbis: the first packet gives no sound, its length is the CodecDelay a player skips, so that the sound
+            // starts at the time of the second packet, as a Matroska source has it.
+            if (const auto vorbis = dynamic_cast<VorbisStreamReader*>(track.codecReader);
+                vorbis && vorbis->leadSamples() > 0 && track.sampleRate > 0)
+                track.srcCodecDelayNs = static_cast<uint64_t>(vorbis->leadSamples()) * 1000000000ULL /
+                                        static_cast<uint64_t>(track.sampleRate);
             if (const auto flac = dynamic_cast<FLACStreamReader*>(track.codecReader);
                 flac && flac->getBitsPerSample() > 0)
                 track.bitDepth = flac->getBitsPerSample();
