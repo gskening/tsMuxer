@@ -470,6 +470,10 @@ void detectStreamReader(const char* fileName, MPLSParser* mplsParser, bool isSub
                 LTRACE(LT_INFO, 2,
                        "Can't detect stream type (the container declares stream type 0x"
                            << std::hex << streams[i].containerStreamType << std::dec << ")");
+            // A Matroska track says what it is by its CodecID, which is worth passing on: "V_FFV1" says why at once,
+            // and for a codec tsMuxeR reads it points at the data instead.
+            else if (!streams[i].codecId.empty())
+                LTRACE(LT_INFO, 2, "Can't detect stream type (Matroska codec " << streams[i].codecId << ")");
             else
                 LTRACE(LT_INFO, 2, "Can't detect stream type");
         }

@@ -4464,6 +4464,8 @@ void MatroskaDemuxer::getTrackList(std::map<int32_t, TrackInfo>& trackList)
             trackList[i + 1].m_srcParams = extras->second;
         if (tracks[i]->name && tracks[i]->name[0])
             trackList[i + 1].m_srcParams["srcname"] = tracks[i]->name;
+        if (tracks[i]->codec_id && tracks[i]->codec_id[0])
+            trackList[i + 1].m_srcParams["srccodecid"] = tracks[i]->codec_id;
         // A VP9 track's CodecPrivate (profile, level, bit depth, chroma subsampling), which the stream says only in
         // part, for a Matroska output to keep (srcvpxprivate, in hex).
         if (tracks[i]->codec_id && !strcmp(tracks[i]->codec_id, MATROSKA_CODEC_ID_VP9) && tracks[i]->codec_priv &&

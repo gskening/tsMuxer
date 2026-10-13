@@ -1312,7 +1312,7 @@ static bool isKnownTrackParam(const std::string& name)
         // not warn. srcdefault is the source container's own default track flag.
         "forced", "hearing-impaired", "visual-impaired", "text-descriptions", "original", "commentary", "srclang",
         "srclangbcp47", "srcdefault", "srcname", "srcflags", "srccolour", "srcdisplay", "srcendpadding", "srcpgsrate",
-        "srccrop", "srcfieldorder", "srcprojection", "srccodecdelay", "langbcp47", "srcvpxprivate"};
+        "srccrop", "srcfieldorder", "srcprojection", "srccodecdelay", "langbcp47", "srcvpxprivate", "srccodecid"};
     return known.find(name) != known.end();
 }
 
@@ -2067,6 +2067,8 @@ DetectStreamRez METADemuxer::DetectStreamReader(const BufferedReaderManager& rea
                     trackRez.name = name->second;
                 if (const auto flags = srcParams.find("srcflags"); flags != srcParams.end())
                     trackRez.flags = flags->second;
+                if (const auto id = srcParams.find("srccodecid"); id != srcParams.end())
+                    trackRez.codecId = id->second;
             }
             if (clpiParsed)
             {

@@ -88,6 +88,7 @@ struct CheckStreamRez
     // A Matroska source's own track name and flags (srcname, srcflags), for the listing. Empty for other containers.
     std::string name;
     std::string flags;
+    std::string codecId;  // a Matroska track's CodecID (srccodecid), for a track no reader accepts
 };
 
 const static CodecInfo vvcCodecInfo(CODEC_V_MPEG4_H266, "VVC", "V_MPEGI/ISO/VVC");
