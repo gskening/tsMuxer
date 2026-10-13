@@ -280,6 +280,19 @@ void TSMuxer::intAddStream(const std::string& streamName, const std::string& cod
         // (tsPacket.cpp), so leaving it blank is the deviation, not filling it: a player then
         // shows an unnamed audio track. Video has no such field and is unaffected.
         lang = src->second;
+
+        // A disc and a transport stream carry three letters, so the region or script of a BCP 47 tag is lost here, and
+        // two source tracks tagged pt-PT and pt-BR both become "por". Say so once, so the tracks can be named by hand.
+        if (const auto tag = params.find("srclangbcp47"); tag != params.end())
+        {
+            std::set<std::string>& tags = m_bcp47ByLang[lang];
+            if (tags.insert(tag->second).second && tags.size() == 2)
+                LTRACE(LT_WARN, 2,
+                       "Warning: tracks tagged " << *tags.begin() << " and " << *std::next(tags.begin())
+                                                 << " in the source both carry the language " << lang
+                                                 << " here. A disc or a transport stream holds three letters only, so "
+                                                    "they can no longer be told apart by their language.");
+        }
     }
 
     int tsStreamIndex = streamIndex + 16;

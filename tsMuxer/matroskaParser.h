@@ -99,6 +99,7 @@ static constexpr uint32_t MATROSKA_ID_CODECINFOURL = 0x3B4040;
 static constexpr uint32_t MATROSKA_ID_CODECDOWNLOADURL = 0x26B240;
 static constexpr uint16_t MATROSKA_ID_TRACKNAME = 0x536E;
 static constexpr uint32_t MATROSKA_ID_TRACKLANGUAGE = 0x22B59C;
+static constexpr uint32_t MATROSKA_ID_TRACKLANGUAGEBCP47 = 0x22B59D;
 static constexpr uint8_t MATROSKA_ID_TRACKFLAGENABLED = 0xB9;
 static constexpr uint8_t MATROSKA_ID_TRACKFLAGDEFAULT = 0x88;
 static constexpr uint8_t MATROSKA_ID_TRACKFLAGLACING = 0x9C;

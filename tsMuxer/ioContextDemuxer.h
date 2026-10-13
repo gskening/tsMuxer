@@ -51,6 +51,8 @@ struct Track
         parsed_priv_data = nullptr;
         codec_priv = nullptr;
         memset(language, 0, sizeof(language));
+        memset(languageBCP47, 0, sizeof(languageBCP47));
+        hasLanguageElement = false;
         default_duration = 0;
         encodingAlgo = 0;
         type = IOContextTrackType::UNDEFINED;
@@ -76,6 +78,10 @@ struct Track
 
     char* name;
     char language[4];
+    // The Matroska LanguageBCP47 element as it stands (pt-BR, es-419, zh-Hant), empty without one. Plain arrays and no
+    // std::string, because a Matroska track is zeroed memory that no constructor ever runs on.
+    char languageBCP47[40];
+    bool hasLanguageElement;  // the Language element was there, rather than its default
 
     char* codec_id;
     char* codec_name;

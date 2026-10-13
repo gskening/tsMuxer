@@ -67,6 +67,7 @@ struct StreamInfo
     bool m_flushed;
     int64_t m_timeShift;
     std::string m_lang;
+    std::string m_langBCP47;  // the source container's BCP 47 tag, when it had one
     std::string m_codec;
     std::map<std::string, std::string> m_addParams;
     bool m_isEOF;
@@ -198,6 +199,8 @@ LangCodeStyle getLangCodeStyle();
 std::string toIso639_2T(const std::string& lang);
 std::string toIso639_2B(const std::string& lang);
 std::string applyLangCodeStyle(const std::string& lang);
+// The ISO 639-2 code (terminological form) of a BCP 47 language tag, from its primary subtag; empty when it has none.
+std::string iso639FromBcp47(const std::string& tag);
 
 class METADemuxer final : public AbstractDemuxer
 {

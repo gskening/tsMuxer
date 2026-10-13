@@ -75,6 +75,7 @@ class MatroskaMuxer final : public AbstractMuxer
         int codecID;                  // internal CODEC_* constant
         uint8_t trackType;            // 1=video, 2=audio, 17=subtitle
         std::string language;         // ISO 639-2 code, empty means write "und"
+        std::string languageBCP47;    // the source's BCP 47 tag, written as LanguageBCP47 when there is one
         std::string name;             // track-name=, optional
         bool defaultExplicit;         // the meta carried "default" on this track at all
         bool markedDefault;           // and it did not say none, no, 0, false or off

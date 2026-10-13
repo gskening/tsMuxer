@@ -10,6 +10,7 @@
 #include "abstractDemuxer.h"
 #include "avPacket.h"
 #include "bufferedFileReader.h"
+#include "metaDemuxer.h"
 #include "nalUnits.h"
 #include "subTrackFilter.h"
 #include "vodCoreException.h"
@@ -3186,7 +3187,22 @@ int MatroskaDemuxer::matroska_add_stream()
             if ((end = strchr(text, '-')))
                 *end = '\0';
             if (strlen(text) == 3)
+            {
                 strcpy(track->language, text);
+                track->hasLanguageElement = true;
+            }
+            delete[] text;
+            break;
+        }
+
+        case MATROSKA_ID_TRACKLANGUAGEBCP47:
+        {
+            char* text;
+            if ((res = ebml_read_utf8(&id, &text)) < 0)
+                break;
+            const size_t len = strlen(text);
+            if (len > 0 && len < sizeof(track->languageBCP47))
+                memcpy(track->languageBCP47, text, len + 1);
             delete[] text;
             break;
         }
@@ -3265,6 +3281,19 @@ int MatroskaDemuxer::matroska_add_stream()
         }
     }
 
+    // RFC 9559 (5.1.4.1.19-20): where a track has LanguageBCP47, its Language MUST be ignored. It was the other way
+    // round, LanguageBCP47 was never read, so pt-BR came through as plain Portuguese only by luck of the Language
+    // element beside it, and a track with LanguageBCP47 alone came through as English, the Language default. The
+    // three-letter code every output needs is now taken from LanguageBCP47. Asked for the codes as the source has them
+    // (--lang-codes=source), a Language element that names the same language keeps its own spelling.
+    if (track->languageBCP47[0])
+    {
+        const std::string fromTag = iso639FromBcp47(track->languageBCP47);
+        if (!fromTag.empty() && !(getLangCodeStyle() == LangCodeStyle::Source && track->hasLanguageElement &&
+                                  toIso639_2T(track->language) == fromTag))
+            memcpy(track->language, fromTag.c_str(), 4);
+    }
+
     return res;
 }
 
@@ -3335,8 +3364,11 @@ bool MatroskaDemuxer::getAttachment(const std::string& name, std::vector<uint8_t
 void MatroskaDemuxer::getTrackList(std::map<int32_t, TrackInfo>& trackList)
 {
     for (int i = 0; i < num_tracks; i++)
+    {
         trackList[i + 1] = TrackInfo(getTrackType(tracks[i]), tracks[i]->language, 0, 0,
                                      (tracks[i]->flags & MATROSKA_TRACK_DEFAULT) ? 1 : 0);
+        trackList[i + 1].m_langBCP47 = tracks[i]->languageBCP47;
+    }
 }
 
 double MatroskaDemuxer::getTrackFps(const uint32_t trackId)

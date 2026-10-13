@@ -237,8 +237,17 @@ void MuxerManager::preinitMux(const std::string& outFileName, FileFactory* fileF
         // is already in m_addParams and must win, so only fill the gap. Keeping it out of "lang"
         // is what stops SingleFileMuxer from renaming demuxed files: that muxer reads only "lang"
         // and never sees this one.
+        //
+        // In the form asked for with --lang-codes, terminological unless said otherwise, as the track list shows it and
+        // as the window writes it. The code went on as the source spelled it, so a Matroska track tagged "ger" became
+        // "ger" on a disc from the command line and "deu" from the window. The discs measured all carry the
+        // terminological form. A BCP 47 tag the source had travels beside it, for Matroska output.
         if (!si.m_lang.empty() && si.m_addParams.find("lang") == si.m_addParams.end())
-            si.m_addParams["srclang"] = si.m_lang;
+        {
+            si.m_addParams["srclang"] = applyLangCodeStyle(si.m_lang);
+            if (!si.m_langBCP47.empty())
+                si.m_addParams["srclangbcp47"] = si.m_langBCP47;
+        }
 
         if (si.m_isSubStream && m_allowStereoMux)
         {

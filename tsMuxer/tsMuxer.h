@@ -4,6 +4,7 @@
 #include <types/types.h>
 
 #include <map>
+#include <set>
 #include <vector>
 
 #include "abstractMuxer.h"
@@ -301,6 +302,7 @@ class TSMuxer final : public AbstractMuxer
     int64_t m_curFileStartPts;
     int64_t m_vbvLen;
     int m_mainStreamIndex;
+    std::map<std::string, std::set<std::string>> m_bcp47ByLang;  // the BCP 47 tags seen for each language code
     // rank of the stream currently holding the main role: 3 primary video, 2 other video,
     // 1 audio, 0 nothing chosen yet. A lower rank never displaces a higher one.
     int m_mainStreamRank;

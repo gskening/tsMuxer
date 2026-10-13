@@ -82,9 +82,10 @@ class FileNameIterator
 
 struct TrackInfo
 {
-    int m_trackType;     // 0 - not speciffed. Autodetect is required
-    std::string m_lang;  // tracl language code
-    int64_t m_delay;     // auto delay for audio
+    int m_trackType;          // 0 - not speciffed. Autodetect is required
+    std::string m_lang;       // tracl language code
+    std::string m_langBCP47;  // the BCP 47 tag the container gave, empty when it gave none (Matroska only)
+    int64_t m_delay;          // auto delay for audio
     // For stream type 0x06, which says nothing on its own: 0x59 is DVB bitmap subtitles and
     // 0x56 is EBU teletext. Zero when the container named neither.
     int m_dvbDescriptor;

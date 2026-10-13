@@ -324,6 +324,11 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
     else if (const auto src = params.find("srclang"); src != params.end())
         track.language = src->second;
 
+    // Only beside a language taken from the source: a lang= in the meta replaces the source's language, tag and all.
+    if (params.find("lang") == params.end())
+        if (const auto tag = params.find("srclangbcp47"); tag != params.end())
+            track.languageBCP47 = tag->second;
+
     if (const auto nm = params.find("track-name"); nm != params.end())
         track.name = nm->second;
     // "default" already exists and is documented for Blu-ray; it just never reached Matroska.
@@ -1061,7 +1066,8 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
     // The name, the language and the codec ID are counted too: they come from the meta file, which sets no length, and
     // a track-name= of 2000 characters ran past the end of this buffer and corrupted the heap.
     const size_t bufSize = 1024 + track.codecPrivate.size() + track.dvElConfig.size() + 2 * track.mvcConfig.size() +
-                           track.name.size() + track.language.size() + track.matroskaCodecID.size();
+                           track.name.size() + track.language.size() + track.languageBCP47.size() +
+                           track.matroskaCodecID.size();
     std::vector<uint8_t> inner(bufSize);
     int pos = 0;
 
@@ -1078,6 +1084,10 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
     // silently claims every untagged track is English. Write "und" instead when we have nothing.
     pos += ebml_write_string(inner.data() + pos, MATROSKA_ID_TRACKLANGUAGE,
                              track.language.empty() ? std::string("und") : track.language);
+    // The source's BCP 47 tag, so that pt-BR stays pt-BR and is not reduced to the three letters of Language. A reader
+    // that knows the element takes it and ignores Language (RFC 9559, 12); one that does not still finds Language.
+    if (!track.languageBCP47.empty())
+        pos += ebml_write_string(inner.data() + pos, MATROSKA_ID_TRACKLANGUAGEBCP47, track.languageBCP47);
 
     if (!track.codecPrivate.empty())
     {
