@@ -1229,7 +1229,8 @@ static bool isKnownTrackParam(const std::string& name)
         // set internally, never written by a user, but accepted so a round tripped meta does
         // not warn. srcdefault is the source container's own default track flag.
         "forced", "hearing-impaired", "visual-impaired", "text-descriptions", "original", "commentary", "srclang",
-        "srclangbcp47", "srcdefault", "srcname", "srcflags", "srccolour", "srcdisplay", "srcendpadding", "srcpgsrate"};
+        "srclangbcp47", "srcdefault", "srcname", "srcflags", "srccolour", "srcdisplay", "srcendpadding", "srcpgsrate",
+        "srccrop", "srcfieldorder", "srcprojection"};
     return known.find(name) != known.end();
 }
 

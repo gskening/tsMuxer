@@ -381,6 +381,18 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
     // The samples at the end of an Opus track that only fill its last frame (srcendpadding, in nanoseconds).
     if (const auto src = params.find("srcendpadding"); src != params.end() && track.codecID == CODEC_A_OPUS)
         track.endPaddingNs = strtoll(src->second.c_str(), nullptr, 10);
+    // The crop, the field order and the projection of a Matroska source (srccrop: top,bottom,left,right;
+    // srcfieldorder; srcprojection: the element's body in hex).
+    if (const auto src = params.find("srccrop"); src != params.end())
+    {
+        const std::vector<std::string> parts = splitStr(src->second.c_str(), ',');
+        for (size_t i = 0; i < 4 && i < parts.size(); ++i) track.srcCrop[i] = strtoull(parts[i].c_str(), nullptr, 10);
+    }
+    if (const auto src = params.find("srcfieldorder"); src != params.end())
+        track.srcFieldOrder = static_cast<int>(strtol(src->second.c_str(), nullptr, 10));
+    if (const auto src = params.find("srcprojection"); src != params.end())
+        for (size_t i = 0; i + 1 < src->second.size(); i += 2)
+            track.srcProjection.push_back(static_cast<uint8_t>(strtoul(src->second.substr(i, 2).c_str(), nullptr, 16)));
     // The size the container said to show the picture at (srcdisplay: 640x480). It says more than the stream's own
     // aspect ratio, which for square pixels is just the picture's shape; an ar= in the meta says more than both.
     if (const auto src = params.find("srcdisplay"); src != params.end() && params.find("ar") == params.end())
@@ -1327,7 +1339,13 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
         // undetermined (RFC 9559, 5.1.4.1.28.1, where 0 SHOULD be avoided). Only the MPEG-2, H.264 and VC-1 readers
         // find out which it is; for the others nothing is written, as before.
         if (track.interlaced)
+        {
             vPos += ebml_write_uint(videoBuf + vPos, MATROSKA_ID_VIDEOFLAGINTERLACED, 1);
+            // The source's field order, which only an interlaced track has.
+            if (track.srcFieldOrder >= 0)
+                vPos += ebml_write_uint(videoBuf + vPos, MATROSKA_ID_VIDEOFIELDORDER,
+                                        static_cast<uint64_t>(track.srcFieldOrder));
+        }
         else if (track.codecID == CODEC_V_MPEG2 || track.codecID == CODEC_V_MPEG4_H264 || track.codecID == CODEC_V_VC1)
             vPos += ebml_write_uint(videoBuf + vPos, MATROSKA_ID_VIDEOFLAGINTERLACED, 2);
 
@@ -1377,6 +1395,17 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
         // [1] is blue, [2] is red, [3] is the white point, each packed as (x << 16) | y in units
         // of 0.00002. Matroska wants floats in the 0..1 range, hence the 50000 divisor.
         vPos += writeColourInfo(videoBuf + vPos, track);
+
+        // The source's crop and projection (rotation among it), as the source gave them.
+        static constexpr uint32_t CROP_IDS[4] = {MATROSKA_ID_VIDEOPIXELCROPTOP, MATROSKA_ID_VIDEOPIXELCROPBOTTOM,
+                                                 MATROSKA_ID_VIDEOPIXELCROPLEFT, MATROSKA_ID_VIDEOPIXELCROPRIGHT};
+        for (int i = 0; i < 4; ++i)
+            if (track.srcCrop[i] > 0)
+                vPos += ebml_write_uint(videoBuf + vPos, CROP_IDS[i], track.srcCrop[i]);
+        if (!track.srcProjection.empty() && track.srcProjection.size() <= 256 &&
+            vPos + static_cast<int>(track.srcProjection.size()) + 8 <= static_cast<int>(sizeof(videoBuf)))
+            vPos += ebml_write_binary(videoBuf + vPos, MATROSKA_ID_VIDEOPROJECTION, track.srcProjection.data(),
+                                      static_cast<int>(track.srcProjection.size()));
 
         // 3D: both views travel in one block, so the track has to say so or a player has no
         // reason to look for a second one. 13 is "both eyes laced in one block, left eye first",

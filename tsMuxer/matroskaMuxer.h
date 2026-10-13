@@ -87,6 +87,9 @@ class MatroskaMuxer final : public AbstractMuxer
         // From the source container, for what the stream itself does not say (srccolour, srcdisplay).
         std::map<std::string, double> srcColour;  // m, r, t, p, cll, fall, rx ... lmin, as present
         unsigned srcDisplayWidth = 0;
+        uint64_t srcCrop[4] = {0, 0, 0, 0};  // top, bottom, left, right (srccrop)
+        int srcFieldOrder = -1;              // srcfieldorder, -1 when the source gave none
+        std::vector<uint8_t> srcProjection;  // the body of the source's Projection element
         unsigned srcDisplayHeight = 0;
         int64_t endPaddingNs = 0;  // DiscardPadding for the track's last block (Opus), from the source
         bool finalFlush = false;   // the frame being written is the track's last

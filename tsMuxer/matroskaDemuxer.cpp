@@ -3002,6 +3002,7 @@ void MatroskaDemuxer::loadTrackExtras(const std::string& fileName)
         std::string flags;
         std::string colour;
         std::string display;
+        std::string crop, fieldOrder, projection;
         bool encrypted = false;
         for (const auto& [id, b, len] : elementsOf(entryBody, entrySize))
         {
@@ -3023,8 +3024,36 @@ void MatroskaDemuxer::loadTrackExtras(const std::string& fileName)
             if (id != MATROSKA_ID_TRACKVIDEO)
                 continue;
             uint64_t pixelWidth = 0, pixelHeight = 0, displayWidth = 0, displayHeight = 0, displayUnit = 0;
+            uint64_t cropTop = 0, cropBottom = 0, cropLeft = 0, cropRight = 0;
             for (const auto& [vid, vb, vlen] : elementsOf(b, len))
             {
+                // The crop, the field order and the projection (which holds the rotation), carried over to a
+                // Matroska output; they were read past (RFC 9559, 5.1.4.1.28).
+                if (vid == MATROSKA_ID_VIDEOPIXELCROPTOP)
+                    cropTop = readUInt(vb, vlen);
+                else if (vid == MATROSKA_ID_VIDEOPIXELCROPBOTTOM)
+                    cropBottom = readUInt(vb, vlen);
+                else if (vid == MATROSKA_ID_VIDEOPIXELCROPLEFT)
+                    cropLeft = readUInt(vb, vlen);
+                else if (vid == MATROSKA_ID_VIDEOPIXELCROPRIGHT)
+                    cropRight = readUInt(vb, vlen);
+                else if (vid == MATROSKA_ID_VIDEOFIELDORDER)
+                    fieldOrder = std::to_string(readUInt(vb, vlen));
+                else if (vid == MATROSKA_ID_VIDEOPROJECTION && vlen > 0 && vlen <= 256)
+                {
+                    // the whole element body as it stands, as hex
+                    std::vector<uint8_t> raw(static_cast<size_t>(vlen));
+                    scan.f.seek(vb);
+                    if (scan.f.read(raw.data(), static_cast<uint32_t>(vlen)) == static_cast<int>(vlen))
+                    {
+                        static const char* HEX = "0123456789abcdef";
+                        for (const uint8_t c : raw)
+                        {
+                            projection += HEX[c >> 4];
+                            projection += HEX[c & 15];
+                        }
+                    }
+                }
                 if (vid == MATROSKA_ID_VIDEOPIXELWIDTH)
                     pixelWidth = readUInt(vb, vlen);
                 else if (vid == MATROSKA_ID_VIDEOPIXELHEIGHT)
@@ -3066,6 +3095,9 @@ void MatroskaDemuxer::loadTrackExtras(const std::string& fileName)
             if (displayUnit == 0 && displayWidth && displayHeight &&
                 (displayWidth != pixelWidth || displayHeight != pixelHeight))
                 display = std::to_string(displayWidth) + "x" + std::to_string(displayHeight);
+            if (cropTop || cropBottom || cropLeft || cropRight)
+                crop = std::to_string(cropTop) + "," + std::to_string(cropBottom) + "," + std::to_string(cropLeft) +
+                       "," + std::to_string(cropRight);
         }
         if (number < 0)
             continue;
@@ -3080,6 +3112,12 @@ void MatroskaDemuxer::loadTrackExtras(const std::string& fileName)
             extras["srccolour"] = colour;
         if (!display.empty())
             extras["srcdisplay"] = display;
+        if (!crop.empty())
+            extras["srccrop"] = crop;
+        if (!fieldOrder.empty())
+            extras["srcfieldorder"] = fieldOrder;
+        if (!projection.empty())
+            extras["srcprojection"] = projection;
     }
 }
 
