@@ -213,6 +213,9 @@ class SPSUnit final : public NALUnit
     std::vector<uint8_t> level_idc_ext;
     unsigned seq_parameter_set_id;
     unsigned chroma_format_idc;
+    // Kept for the AVCDecoderConfigurationRecord of a high profile (Matroska and MP4 output).
+    unsigned bit_depth_luma_minus8 = 0;
+    unsigned bit_depth_chroma_minus8 = 0;
     unsigned log2_max_frame_num;
     unsigned pic_order_cnt_type;
     unsigned log2_max_pic_order_cnt_lsb;

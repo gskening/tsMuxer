@@ -456,6 +456,18 @@ std::vector<uint8_t> MatroskaMuxer::buildAVCDecoderConfigRecord(AbstractStreamRe
         record.insert(record.end(), data.begin(), data.end());
     }
 
+    // ISO/IEC 14496-15 gives the record of a profile 100, 110, 122 or 144 stream four more bytes: the chroma format,
+    // the two bit depths and the number of SPS extensions. They were left out, so the record of every High profile
+    // stream ended early, and a reader following the standard met the end of the data where it expects them.
+    if (profileIdc == 100 || profileIdc == 110 || profileIdc == 122 || profileIdc == 144)
+    {
+        const SPSUnit* sps = h264->m_spsMap.begin()->second;
+        record.push_back(static_cast<uint8_t>(0xFC | (sps->chroma_format_idc & 3)));
+        record.push_back(static_cast<uint8_t>(0xF8 | (sps->bit_depth_luma_minus8 & 7)));
+        record.push_back(static_cast<uint8_t>(0xF8 | (sps->bit_depth_chroma_minus8 & 7)));
+        record.push_back(0);  // numOfSequenceParameterSetExt
+    }
+
     return record;
 }
 
@@ -1813,12 +1825,8 @@ void MatroskaMuxer::writeDeferredHeader()
         // sets, and written as the "mvcC" block addition mapping.
         //
         // A reference 3D file ALSO appends it to CodecPrivate, inside an mvcC box after the avcC
-        // record, and this deliberately does not. Our avcC stops after the parameter sets, without
-        // the four byte extension that profile 100 is supposed to carry, because the SPS parser
-        // range checks the bit depths and then throws them away. On a bare record nothing notices,
-        // since a reader stops at the end of the buffer. Put a box after it and a reader following
-        // the format reads four bytes of that box as the missing extension and misparses the rest.
-        // The record is already carried, unambiguously, in the block addition mapping.
+        // record, and this does not: the codec mapping keeps that form for legacy reasons and
+        // prefers the block addition mapping, which carries the record unambiguously.
         if (track.foldKind == MkvTrackInfo::FoldKind::MvcDependent)
         {
             if (el != m_tracks.end())

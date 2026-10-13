@@ -509,9 +509,11 @@ int SPSUnit::deserialize()
                 return 1;
             if (chroma_format_idc == 3)
                 separate_colour_plane_flag = bitReader.getBit();
-            if (extractUEGolombCode() > 6)  // bit_depth_luma - 8
+            bit_depth_luma_minus8 = extractUEGolombCode();
+            if (bit_depth_luma_minus8 > 6)
                 return 1;
-            if (extractUEGolombCode() > 6)  // bit_depth_chroma - 8
+            bit_depth_chroma_minus8 = extractUEGolombCode();
+            if (bit_depth_chroma_minus8 > 6)
                 return 1;
             bitReader.skipBit();     // qpprime_y_zero_transform_bypass_flag
             if (bitReader.getBit())  // seq_scaling_matrix_present_flag
