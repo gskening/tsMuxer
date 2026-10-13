@@ -1074,7 +1074,8 @@ void MatroskaMuxer::writeSegmentInfo()
     // The title of the file: --title=, or a Matroska source's own, which a remux used to drop.
     if (!m_title.empty())
         pos += ebml_write_string(buf + pos, MATROSKA_ID_TITLE, m_title);
-    pos += ebml_write_string(buf + pos, MATROSKA_ID_MUXINGAPP, "tsMuxeR");
+    // MuxingApp names the library with its version (RFC 9559, 5.1.2.13); the version was missing.
+    pos += ebml_write_string(buf + pos, MATROSKA_ID_MUXINGAPP, "tsMuxeR " TSMUXER_VERSION);
     // The version that wrote the file. Without it nobody could tell from a file which tsMuxeR
     // made it, which is the first thing a fault report needs
     pos += ebml_write_string(buf + pos, MATROSKA_ID_WRITINGAPP, "tsMuxeR " TSMUXER_VERSION);
