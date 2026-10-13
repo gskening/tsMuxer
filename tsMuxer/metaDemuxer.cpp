@@ -237,6 +237,18 @@ static NamedAs familyOfExt(const std::string& ext)
 // blast radius for a small gain, so the mismatch is named here instead.
 static bool namedAsM2ts(const std::string& ext) { return ext == "m2ts" || ext == "mts" || ext == "ssif"; }
 
+// What the help has always asked of lang=: exactly three letters, in either case. Which three is not checked, so a
+// code that worked before still works.
+static bool isLangCodeForMeta(const std::string& value)
+{
+    if (value.size() != 3)
+        return false;
+    for (const char c : value)
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')))
+            return false;
+    return true;
+}
+
 static NamedAs familyOfContent(const uint8_t* buf, const int len, const char** name, bool* isM2ts)
 {
     if (len >= 192 * 17)
@@ -1036,7 +1048,25 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
 
     itr = addParams.find("lang");
     if (itr != addParams.end())
+    {
+        // The value goes into the 3 byte language field of a transport stream, the Language element of a Matroska
+        // file and the name of a demuxed file, and was taken as written: a TS kept its first three characters without
+        // a word, a demux tried to make a file name of it, and a long one overran a buffer in the Matroska output. So
+        // it has to be three letters, as the help has always said. lang= with nothing after it stays allowed: it
+        // leaves the track without a language.
+        if (!itr->second.empty() && !isLangCodeForMeta(itr->second))
+        {
+            const std::string& value = itr->second;
+            const std::string shown =
+                value.size() <= 40 ? value
+                                   : value.substr(0, 40) + "... (" + std::to_string(value.size()) + " characters)";
+            THROW(ERR_COMMON, "lang=" << shown << " on the line of " << codec
+                                      << " is not a language code. lang= takes three letters, an ISO 639-2 code "
+                                         "such as eng, ger or deu; lang=und marks an undetermined language, and "
+                                         "lang= with nothing after it leaves the track without one.")
+        }
         streamInfo.m_lang = itr->second;
+    }
     else if (dataReader != &m_containerReader && !fileList.empty() && !langFromFileName(fileList[0]).empty())
     {
         // A raw elementary stream has nowhere to carry its language, so the file name is the only

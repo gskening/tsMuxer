@@ -1028,7 +1028,10 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
     // Size the buffer dynamically: fixed fields + colour and mastering metadata (~130 bytes on
     // its own, eight 64 bit floats among them) + codec private data + the enhancement layer's
     // configuration record, which is another one of comparable size on a dual layer track.
-    const size_t bufSize = 1024 + track.codecPrivate.size() + track.dvElConfig.size() + 2 * track.mvcConfig.size();
+    // The name, the language and the codec ID are counted too: they come from the meta file, which sets no length, and
+    // a track-name= of 2000 characters ran past the end of this buffer and corrupted the heap.
+    const size_t bufSize = 1024 + track.codecPrivate.size() + track.dvElConfig.size() + 2 * track.mvcConfig.size() +
+                           track.name.size() + track.language.size() + track.matroskaCodecID.size();
     std::vector<uint8_t> inner(bufSize);
     int pos = 0;
 
