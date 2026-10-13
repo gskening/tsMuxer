@@ -127,6 +127,9 @@ static uint16_t flac_crc16(const uint8_t* data, const size_t len)
     return crc;
 }
 
+// The largest frame FLAC allows: 65535 samples of 8 channels at 32 bits, and its headers.
+static constexpr ptrdiff_t MAX_FRAME_BYTES = 65535 * 8 * 4 + 1024;
+
 // ---------------------------------------------------------------------------
 // FLACStreamReader
 // ---------------------------------------------------------------------------
@@ -494,8 +497,6 @@ int FLACStreamReader::testFrameLength(uint8_t* buff, uint8_t* end, const FrameFi
         }
     }
 
-    // The largest frame FLAC allows: 65535 samples of 8 channels at 32 bits, and its headers.
-    constexpr ptrdiff_t MAX_FRAME_BYTES = 65535 * 8 * 4 + 1024;
     uint8_t* limit = end - buff > MAX_FRAME_BYTES ? buff + MAX_FRAME_BYTES : end;
     for (uint8_t* p = buff + 4; p + 2 <= limit; p++)
     {
@@ -559,23 +560,29 @@ int FLACStreamReader::decodeFrame(uint8_t* buff, uint8_t* end, int& skipBytes, i
     if (m_testMode)
         return testLen;
 
-    // Find the next sync code to determine frame length.
-    // FLAC frames end with a 16-bit CRC but the only reliable way to find
-    // the frame boundary (without fully decoding subframes) is to locate
-    // the next sync code with a valid header.
-    for (uint8_t* p = buff + 4; p + 2 <= end; p++)
+    // A frame ends where the next one begins. A header pattern that passes the CRC-8 also turns up inside the audio
+    // data now and then, and taking it for the next frame split one frame in two: in a 7.1, 24 bit, 96 kHz file a
+    // pattern 77,801 bytes into a frame of 192,515 cut it at 5.46 s, the decoder dropped the pieces, 8,192 samples a
+    // channel, and the times after it moved. So a header counts as the next frame only where the frame's own CRC-16,
+    // its last two bytes, matches in front of it, as testFrameLength already asks while a track is identified. A
+    // damaged frame whose CRC-16 never matches is still ended at the first header after it, as before, once a whole
+    // frame's worth of bytes has been searched.
+    uint8_t* firstHeader = nullptr;
+    for (uint8_t* p = buff + 4; p + 2 <= end && p - buff <= MAX_FRAME_BYTES; p++)
     {
         const uint16_t sync = (p[0] << 8) | p[1];
-        if (sync == FLAC_SYNC_FIXED || sync == FLAC_SYNC_VARIABLE)
-        {
-            if (parseFrameHeader(p, end) > 0)
-            {
-                return static_cast<int>(p - buff);
-            }
-        }
+        if ((sync != FLAC_SYNC_FIXED && sync != FLAC_SYNC_VARIABLE) || parseFrameHeader(p, end) == 0)
+            continue;
+        if (!firstHeader)
+            firstHeader = p;
+        const auto stored = static_cast<uint16_t>((p[-2] << 8) | p[-1]);
+        if (flac_crc16(buff, static_cast<size_t>(p - 2 - buff)) == stored)
+            return static_cast<int>(p - buff);
     }
+    if (firstHeader && end - buff > MAX_FRAME_BYTES)
+        return static_cast<int>(firstHeader - buff);
 
-    // No next sync found — need more data
+    // No next frame found: need more data
     return NOT_ENOUGH_BUFFER;
 }
 
