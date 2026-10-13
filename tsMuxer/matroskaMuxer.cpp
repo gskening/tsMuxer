@@ -1613,30 +1613,43 @@ void MatroskaMuxer::writeTracks()
 // The pairing is by CODEC, not by order or size: a dependent view is the only thing that decodes to
 // CODEC_V_MPEG4_H264_DEP, so there is nothing to guess. The base view is the video track in front
 // of it, which is the order a disc lists them and the order the demuxer hands them over.
+//
+// A Matroska 3D source lists its two views the other way round, the dependent view first (subTrack=1) and the base
+// view after it, and a meta written from the listing has them in that order. Its views were not paired at all, and
+// such a remux came out as two video tracks that play as flat 2D. A dependent view with no base view in front of it
+// is paired with the H.264 track that follows it.
 void MatroskaMuxer::pairMvcViews()
 {
-    MkvTrackInfo* baseTrack = nullptr;
+    std::vector<MkvTrackInfo*> video;
     for (auto& [streamIdx, track] : m_tracks)
+        if (track.trackType == 1)
+            video.push_back(&track);
+    const auto freeBase = [](const MkvTrackInfo* t)
+    { return t->codecID == CODEC_V_MPEG4_H264 && t->foldElStreamIndex < 0 && t->foldedIntoStream < 0; };
+    for (size_t i = 0; i < video.size(); ++i)
     {
-        if (track.trackType != 1)
+        MkvTrackInfo& track = *video[i];
+        if (track.codecID != CODEC_V_MPEG4_H264_DEP || track.foldedIntoStream >= 0)
             continue;
-        if (track.codecID != CODEC_V_MPEG4_H264_DEP)
-        {
-            // Remember the most recent ordinary video track. A dependent view belongs to the one
-            // in front of it, not simply to the first track in the file, so a mux carrying two 3D
-            // pairs pairs each of them with its own base view.
-            if (track.foldElStreamIndex < 0 && track.foldedIntoStream < 0)
-                baseTrack = &track;
+        // The nearest ordinary video track in front of it, as a disc lists them. A dependent view belongs to the one in
+        // front of it, not simply to the first track in the file, so a mux carrying two 3D pairs pairs each of them
+        // with its own base view.
+        MkvTrackInfo* baseTrack = nullptr;
+        for (size_t j = i; j-- > 0;)
+            if (video[j]->codecID != CODEC_V_MPEG4_H264_DEP)
+            {
+                baseTrack = freeBase(video[j]) ? video[j] : nullptr;
+                break;
+            }
+        // Otherwise the one right after it, as a Matroska source lists them.
+        if (baseTrack == nullptr && i + 1 < video.size() && freeBase(video[i + 1]))
+            baseTrack = video[i + 1];
+        if (baseTrack == nullptr)
             continue;
-        }
-        if (baseTrack == nullptr || baseTrack->codecID != CODEC_V_MPEG4_H264 || baseTrack->foldElStreamIndex >= 0)
-            continue;
-
         baseTrack->foldKind = MkvTrackInfo::FoldKind::MvcDependent;
         baseTrack->foldElStreamIndex = track.streamIndex;
         track.foldedIntoStream = baseTrack->streamIndex;
         track.foldKind = MkvTrackInfo::FoldKind::MvcDependent;
-        baseTrack = nullptr;
     }
 }
 
