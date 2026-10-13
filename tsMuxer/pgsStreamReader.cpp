@@ -332,7 +332,9 @@ void PGSStreamReader::renderTextShow(int64_t inTime)
     const int64_t PRESENTATION_DTS_DELTA = PLANEINITIALIZATIONTIME + windowsTransferTime;
 
     m_objectWindowHeight = FFMAX(0, m_render->renderedHeight());
-    m_objectWindowTop = m_render->maxLine();
+    // The window and the object start at the picture's first line. They were placed at its last line, so a rescaled
+    // picture lay below its place and partly or wholly outside the frame.
+    m_objectWindowTop = m_render->minLine();
 
     // show text
     uint8_t* curPos = m_renderedData;
