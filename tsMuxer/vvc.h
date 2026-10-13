@@ -90,6 +90,12 @@ struct VvcUnitWithProfile : VvcUnit
     bool ptl_frame_only_constraint_flag;
     uint8_t ptl_num_sub_profiles;
     std::vector<unsigned> general_sub_profile_idc;
+    // The profile_tier_level() of the unit as it stands in the RBSP, from general_profile_idc to its end, and how
+    // many of its bytes the frame-only flag, the multilayer flag and general_constraints_info() take. Both start and
+    // end on a byte boundary, so a VvcPTLRecord is these bytes behind one byte that holds the count. Empty when the
+    // unit has no profile.
+    std::vector<uint8_t> ptl_bytes;
+    uint8_t ptl_constraint_info_bytes;
 
    protected:
     int profile_tier_level(bool profileTierPresentFlag, int MaxNumSubLayersMinus1);

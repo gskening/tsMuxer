@@ -649,48 +649,55 @@ std::vector<uint8_t> MatroskaMuxer::buildHEVCDecoderConfigRecord(AbstractStreamR
     return record;
 }
 
+// V_MPEGI/ISO/VVC carries a VvcDecoderConfigurationRecord (ISO/IEC 14496-15, 11.2.4.2) in CodecPrivate. What went there
+// before was the parameter sets with a four byte length each and nothing else, which no reader takes for a record: the
+// first byte was read as the length size and the profile, a decoder found no picture in any block, and a file of 60
+// pictures decoded to none. The record says the NAL units in the blocks have four byte lengths, carries the profile,
+// tier and level of the SPS byte for byte, and holds the parameter sets in arrays. array_completeness is 0 because the
+// blocks repeat the parameter sets.
 std::vector<uint8_t> MatroskaMuxer::buildVVCDecoderConfigRecord(AbstractStreamReader* reader)
 {
     const auto vvc = dynamic_cast<VVCStreamReader*>(reader);
-    if (!vvc)
+    if (!vvc || !vvc->m_sps || vvc->m_spsBuffer.size() == 0)
         return {};
+    const VvcSpsUnit& sps = *vvc->m_sps;
 
-    // Use raw buffers from VVC stream reader
-    // For VVC, the CodecPrivate is typically the raw VPS+SPS+PPS with 4-byte length prefixes
-    // But the standard VVCDecoderConfigurationRecord is complex; for now use the raw parameter sets
-    // as CodecPrivate data in Annex B format (start codes)
     std::vector<uint8_t> record;
-
-    // Simply concatenate the parameter set NALUs with 4-byte lengths
-    // This is what most MKV muxers do for VVC
+    const bool ptlPresent = !sps.ptl_bytes.empty();
+    record.push_back(static_cast<uint8_t>(0xF8 | 3 << 1 | (ptlPresent ? 1 : 0)));  // reserved, LengthSizeMinusOne
+    if (ptlPresent)
+    {
+        const unsigned numSublayers = sps.max_sublayers_minus1 + 1u;
+        // ols_idx (9 bits) 0, num_sublayers (3), constant_frame_rate (2) 0 = not known, chroma_format_idc (2)
+        const unsigned word = numSublayers << 4 | (sps.chroma_format_idc & 3u);
+        record.push_back(static_cast<uint8_t>(word >> 8));
+        record.push_back(static_cast<uint8_t>(word));
+        record.push_back(static_cast<uint8_t>((sps.bitdepth_minus8 & 7u) << 5 | 0x1F));
+        record.push_back(sps.ptl_constraint_info_bytes & 0x3F);  // VvcPTLRecord: reserved, num_bytes_constraint_info
+        record.insert(record.end(), sps.ptl_bytes.begin(), sps.ptl_bytes.end());
+        for (const unsigned v : {sps.pic_width_max_in_luma_samples, sps.pic_height_max_in_luma_samples, 0u})
+        {
+            record.push_back(static_cast<uint8_t>(v >> 8));  // max_picture_width, max_picture_height, avg_frame_rate
+            record.push_back(static_cast<uint8_t>(v));
+        }
+    }
+    std::vector<std::pair<uint8_t, const MemoryBlock*>> arrays;
     if (vvc->m_vpsBuffer.size() > 0)
-    {
-        const uint32_t sz = static_cast<uint32_t>(vvc->m_vpsBuffer.size());
-        record.push_back(static_cast<uint8_t>(sz >> 24));
-        record.push_back(static_cast<uint8_t>(sz >> 16));
-        record.push_back(static_cast<uint8_t>(sz >> 8));
-        record.push_back(static_cast<uint8_t>(sz));
-        record.insert(record.end(), vvc->m_vpsBuffer.data(), vvc->m_vpsBuffer.data() + sz);
-    }
-    if (vvc->m_spsBuffer.size() > 0)
-    {
-        const uint32_t sz = static_cast<uint32_t>(vvc->m_spsBuffer.size());
-        record.push_back(static_cast<uint8_t>(sz >> 24));
-        record.push_back(static_cast<uint8_t>(sz >> 16));
-        record.push_back(static_cast<uint8_t>(sz >> 8));
-        record.push_back(static_cast<uint8_t>(sz));
-        record.insert(record.end(), vvc->m_spsBuffer.data(), vvc->m_spsBuffer.data() + sz);
-    }
+        arrays.emplace_back(static_cast<uint8_t>(VvcUnit::NalType::VPS), &vvc->m_vpsBuffer);
+    arrays.emplace_back(static_cast<uint8_t>(VvcUnit::NalType::SPS), &vvc->m_spsBuffer);
     if (vvc->m_ppsBuffer.size() > 0)
+        arrays.emplace_back(static_cast<uint8_t>(VvcUnit::NalType::PPS), &vvc->m_ppsBuffer);
+    record.push_back(static_cast<uint8_t>(arrays.size()));
+    for (const auto& [type, nal] : arrays)
     {
-        const uint32_t sz = static_cast<uint32_t>(vvc->m_ppsBuffer.size());
-        record.push_back(static_cast<uint8_t>(sz >> 24));
-        record.push_back(static_cast<uint8_t>(sz >> 16));
-        record.push_back(static_cast<uint8_t>(sz >> 8));
-        record.push_back(static_cast<uint8_t>(sz));
-        record.insert(record.end(), vvc->m_ppsBuffer.data(), vvc->m_ppsBuffer.data() + sz);
+        const auto size = static_cast<uint16_t>(nal->size());
+        record.push_back(type & 0x1F);  // array_completeness 0, reserved, NAL_unit_type
+        record.push_back(0);            // num_nalus
+        record.push_back(1);
+        record.push_back(static_cast<uint8_t>(size >> 8));
+        record.push_back(static_cast<uint8_t>(size));
+        record.insert(record.end(), nal->data(), nal->data() + size);
     }
-
     return record;
 }
 

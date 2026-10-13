@@ -164,12 +164,19 @@ VvcUnitWithProfile::VvcUnitWithProfile()
       level_idc(0),
       ptl_frame_only_constraint_flag(true),
       ptl_num_sub_profiles(0),
-      general_sub_profile_idc(0)
+      general_sub_profile_idc(0),
+      ptl_constraint_info_bytes(0)
 {
 }
 
 int VvcUnitWithProfile::profile_tier_level(const bool profileTierPresentFlag, const int MaxNumSubLayersMinus1)
 {
+    ptl_bytes.clear();
+    ptl_constraint_info_bytes = 0;
+    const auto bitPos = [this] { return m_nalBufferLen * 8 - static_cast<int>(m_reader.getBitsLeft()); };
+    const int startBit = bitPos();
+    int constraintStartBit = 0;
+    int constraintEndBit = 0;
     try
     {
         if (profileTierPresentFlag)
@@ -178,6 +185,7 @@ int VvcUnitWithProfile::profile_tier_level(const bool profileTierPresentFlag, co
             tier_flag = m_reader.getBit();
         }
         level_idc = m_reader.getBits<uint8_t>(8);
+        constraintStartBit = bitPos();
         ptl_frame_only_constraint_flag = m_reader.getBit();
         m_reader.skipBit();  // ptl_multilayer_enabled_flag
 
@@ -193,6 +201,7 @@ int VvcUnitWithProfile::profile_tier_level(const bool profileTierPresentFlag, co
             }
             m_reader.skipBits(m_reader.getBitsLeft() % 8);  // gci_alignment_zero_bit
         }
+        constraintEndBit = bitPos();
         vector<int> ptl_sublayer_level_present_flag;
         ptl_sublayer_level_present_flag.resize(MaxNumSubLayersMinus1);
 
@@ -208,6 +217,12 @@ int VvcUnitWithProfile::profile_tier_level(const bool profileTierPresentFlag, co
             ptl_num_sub_profiles = m_reader.getBits<uint8_t>(8);
             general_sub_profile_idc.resize(ptl_num_sub_profiles);
             for (auto& i : general_sub_profile_idc) i = m_reader.getBits(32);
+            const int endBit = bitPos();
+            if (startBit % 8 == 0 && constraintStartBit % 8 == 0 && constraintEndBit % 8 == 0 && endBit % 8 == 0)
+            {
+                ptl_bytes.assign(m_nalBuffer + startBit / 8, m_nalBuffer + endBit / 8);
+                ptl_constraint_info_bytes = static_cast<uint8_t>((constraintEndBit - constraintStartBit) / 8);
+            }
         }
         return 0;
     }
@@ -1158,42 +1173,96 @@ bool VvcSliceHeader::isIDR() const
     return nal_unit_type == NalType::IDR_W_RADL || nal_unit_type == NalType::IDR_N_LP;
 }
 
+// The parameter sets of a VvcDecoderConfigurationRecord (ISO/IEC 14496-15, 11.2.4.2), as Matroska and MP4 carry it.
+// This used to read the record as though it were laid out like the HEVC one, with the length size at byte 21 and the
+// number of arrays at byte 22. The VVC record has no such fixed header: it starts with the length size and a flag, and
+// the profile part that follows has a length of its own. So a right record from any other program gave no parameter
+// sets, or none that made sense, and the track stopped with a bitstream error.
+//
+// tsMuxeR's own Matroska files of earlier versions hold no record at all: the parameter sets with a four byte length
+// each, the first byte of a length always 0. A record starts with five reserved bits set to 1, so the two cannot be
+// mistaken for each other, and those files are still read.
 vector<vector<uint8_t>> vvc_extract_priv_data(const uint8_t* buff, int size, uint8_t* nal_size)
 {
     *nal_size = 4;
-
     vector<vector<uint8_t>> spsPps;
-    if (size < 23)
+    if (size < 1)
         return spsPps;
-
-    *nal_size = (buff[21] & 3) + 1;
-    int num_arrays = buff[22];
-
-    const uint8_t* src = buff + 23;
+    const uint8_t* src = buff;
     const uint8_t* end = buff + size;
-    for (int i = 0; i < num_arrays; ++i)
+    const auto need = [&](const ptrdiff_t n)
     {
-        if (src + 3 > end)
+        if (end - src < n)
             THROW(ERR_MOV_PARSE, "Invalid VVC extra data format")
-        src++;  // type
-        int cnt = AV_RB16(src);
-        src += 2;
+    };
 
-        for (int j = 0; j < cnt; ++j)
+    if ((buff[0] & 0xF8) != 0xF8)
+    {
+        // tsMuxeR's old form: a four byte length and a NAL unit, again and again
+        while (end - src >= 4)
         {
-            if (src + 2 > end)
-                THROW(ERR_MOV_PARSE, "Invalid VVC extra data format")
-            int nalSize = (src[0] << 8) + src[1];
-            src += 2;
-            if (src + nalSize > end)
-                THROW(ERR_MOV_PARSE, "Invalid VVC extra data format")
+            const uint32_t nalSize = static_cast<uint32_t>(src[0]) << 24 | src[1] << 16 | src[2] << 8 | src[3];
+            src += 4;
+            need(static_cast<ptrdiff_t>(nalSize));
             if (nalSize > 0)
-            {
-                spsPps.emplace_back();
-                for (int k = 0; k < nalSize; ++k, ++src) spsPps.rbegin()->push_back(*src);
-            }
+                spsPps.emplace_back(src, src + nalSize);
+            src += nalSize;
         }
+        return spsPps;
     }
 
+    *nal_size = static_cast<uint8_t>(((buff[0] >> 1) & 3) + 1);
+    const bool ptlPresent = buff[0] & 1;
+    src++;
+    if (ptlPresent)
+    {
+        need(3);
+        const int numSublayers = (src[1] >> 4) & 7;  // after the 9 bits of ols_idx
+        src += 3;                                    // ols_idx .. chroma_format_idc, bit_depth_minus8 and reserved
+        need(3);
+        const int constraintBytes = src[0] & 0x3F;
+        src += 3;  // num_bytes_constraint_info, profile and tier, level
+        need(constraintBytes);
+        src += constraintBytes;
+        if (numSublayers > 1)
+        {
+            need(1);
+            const uint8_t flags = *src++;
+            for (int i = numSublayers - 2; i >= 0; i--)
+                if (flags & (0x80 >> (numSublayers - 2 - i)))
+                {
+                    need(1);
+                    src++;  // sublayer_level_idc[i]
+                }
+        }
+        need(1);
+        const int subProfiles = *src++;
+        need(subProfiles * 4 + 6);
+        src += subProfiles * 4 + 6;  // general_sub_profile_idc, max_picture_width, max_picture_height, avg_frame_rate
+    }
+    need(1);
+    const int numArrays = *src++;
+    for (int i = 0; i < numArrays; ++i)
+    {
+        need(1);
+        const int type = *src++ & 0x1F;
+        int count = 1;
+        if (type != 12 && type != 13)  // an OPI or a DCI array holds one unit and has no count
+        {
+            need(2);
+            count = AV_RB16(src);
+            src += 2;
+        }
+        for (int j = 0; j < count; ++j)
+        {
+            need(2);
+            const int nalSize = AV_RB16(src);
+            src += 2;
+            need(nalSize);
+            if (nalSize > 0)
+                spsPps.emplace_back(src, src + nalSize);
+            src += nalSize;
+        }
+    }
     return spsPps;
 }
