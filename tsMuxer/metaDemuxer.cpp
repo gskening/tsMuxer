@@ -2290,6 +2290,11 @@ CheckStreamRez METADemuxer::detectTrackReader(uint8_t* tmpBuffer, int len,
     // and listed both as AV1, with a made up picture size, and a mux wrote them out as such.
     if (containerDataType == TRACKTYPE_VP8 || containerDataType == TRACKTYPE_VP9)
         return VpxStreamReader(containerDataType == TRACKTYPE_VP9).checkStream(tmpBuffer, len);
+    // An IVF file, the elementary file of VP8 and VP9, says what it holds in its header.
+    if (len >= 32 && memcmp(tmpBuffer, "DKIF", 4) == 0)
+        for (const bool vp9 : {false, true})
+            if (rez = VpxStreamReader(vp9).checkStream(tmpBuffer, len); rez.codecInfo.codecID)
+                return rez;
     // Vorbis the same way: its packets have no sync code to find.
     if (containerDataType == TRACKTYPE_VORBIS)
         return VorbisStreamReader().checkStream(tmpBuffer, len, containerType, containerDataType, containerStreamIndex);

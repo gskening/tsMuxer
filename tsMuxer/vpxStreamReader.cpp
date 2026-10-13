@@ -1,12 +1,17 @@
 #include "vpxStreamReader.h"
 
+#include <fs/systemlog.h>
+
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <sstream>
 
 #include "avCodecs.h"
+#include "avPacket.h"
 #include "bitStream.h"
 #include "nalUnits.h"
+#include "vod_common.h"
 
 VpxStreamReader::VpxStreamReader(const bool vp9)
     : m_vp9(vp9), m_width(0), m_height(0), m_profile(0), m_bitDepth(8), m_lastIFrame(false), m_firstFrame(true)
@@ -29,6 +34,113 @@ std::vector<uint8_t> VpxStreamReader::unframe(const uint8_t* data, const int siz
     if (!frame.empty())
         frame.resize(NALUnit::decodeNAL(p, end, frame.data(), frame.size()));
     return frame;
+}
+
+bool VpxStreamReader::readIvfHeader(const uint8_t* data, const int size, bool& vp9, double& fps)
+{
+    // "DKIF", version (2), header size (2), fourcc, width (2), height (2), time base denominator (4) and numerator (4),
+    // frames (4), unused (4). Then each frame: its size (4), its time in the time base (8), the frame.
+    if (size < 32 || memcmp(data, "DKIF", 4) != 0 ||
+        (memcmp(data + 8, "VP80", 4) != 0 && memcmp(data + 8, "VP90", 4) != 0))
+        return false;
+    vp9 = data[10] == '9';
+    const auto le = [data](const int at, const int bytes)
+    {
+        uint64_t v = 0;
+        for (int i = bytes - 1; i >= 0; --i) v = v << 8 | data[at + i];
+        return v;
+    };
+    const auto den = static_cast<double>(le(16, 4));
+    const auto num = static_cast<double>(le(20, 4));
+    fps = 0.0;
+    if (den <= 0 || num <= 0)
+        return true;
+    // The time base is not the frame rate: one writer counts frames, another milliseconds. The rate is the mean spacing
+    // of the first frames' times, snapped to a standard rate as for a Matroska track without DefaultDuration.
+    int at = static_cast<int>(le(6, 2));
+    int frames = 0;
+    uint64_t first = 0, last = 0;
+    while (frames < 240 && at + 12 <= size)
+    {
+        const uint64_t t = le(at + 4, 8);
+        if (frames == 0)
+            first = t;
+        last = t;
+        ++frames;
+        at += 12 + static_cast<int>(le(at, 4));
+    }
+    if (frames >= 2 && last > first)
+        fps = den / num / (static_cast<double>(last - first) / (frames - 1));
+    else
+        fps = den / num;
+    for (const double standard : {12.5, 15000.0 / 1001, 15.0, 24000.0 / 1001, 24.0, 25.0, 30000.0 / 1001, 30.0,
+                                  48000.0 / 1001, 48.0, 50.0, 60000.0 / 1001, 60.0, 100.0, 120000.0 / 1001, 120.0})
+        if (std::fabs(fps - standard) < standard * 0.0004)
+            fps = standard;
+    return true;
+}
+
+void VpxStreamReader::setBuffer(uint8_t* data, const uint32_t dataLen, const bool lastBlock)
+{
+    // Every block arrives behind the front pad the reader protocol puts in front of it.
+    const uint8_t* const block = data + MAX_AV_PACKET_SIZE;
+    if (m_input == Input::UNDECIDED && dataLen > 0)
+    {
+        bool vp9 = false;
+        double fps = 0;
+        if (readIvfHeader(block, static_cast<int>(dataLen), vp9, fps))
+        {
+            m_input = Input::IVF;
+            m_ivfHeaderLeft = block[6] | block[7] << 8;
+            if (m_fps == 0.0 && fps > 0)
+                setFPS(correctFps(fps));
+        }
+        else
+            m_input = Input::FRAMED;
+    }
+    if (m_input != Input::IVF)
+    {
+        MPEGStreamReader::setBuffer(data, dataLen, lastBlock);
+        return;
+    }
+    m_pending.insert(m_pending.end(), block, block + dataLen);
+    size_t at = 0;
+    if (m_ivfHeaderLeft > 0)
+    {
+        at = (std::min)(static_cast<size_t>(m_ivfHeaderLeft), m_pending.size());
+        m_ivfHeaderLeft -= static_cast<int>(at);
+    }
+    // each frame: its size (4, little endian), its time (8), the frame
+    std::vector<uint8_t> framed;
+    while (at + 12 <= m_pending.size())
+    {
+        const uint32_t frameSize = m_pending[at] | m_pending[at + 1] << 8 | m_pending[at + 2] << 16 |
+                                   static_cast<uint32_t>(m_pending[at + 3]) << 24;
+        if (at + 12 + frameSize > m_pending.size())
+            break;
+        const size_t start = framed.size();
+        framed.resize(start + 4 + frameSize + frameSize / 2 + 8);
+        framed[start] = framed[start + 1] = 0;
+        framed[start + 2] = 1;
+        int encoded = frameSize > 0
+                          ? NALUnit::encodeNAL(m_pending.data() + at + 12, m_pending.data() + at + 12 + frameSize,
+                                               framed.data() + start + 3, framed.size() - start - 4)
+                          : 0;
+        if (encoded < 0)
+            encoded = 0;
+        framed[start + 3 + encoded] = 0x80;
+        framed.resize(start + 4 + encoded);
+        at += 12 + frameSize;
+    }
+    m_pending.erase(m_pending.begin(), m_pending.begin() + static_cast<std::ptrdiff_t>(at));
+    if (lastBlock && !m_pending.empty())
+    {
+        LTRACE(LT_WARN, 2, "IVF: the file ends inside a frame, " << m_pending.size() << " bytes left out");
+        m_pending.clear();
+    }
+    m_convBuffer.resize(MAX_AV_PACKET_SIZE + framed.size());
+    memcpy(m_convBuffer.data() + MAX_AV_PACKET_SIZE, framed.data(), framed.size());
+    MPEGStreamReader::setBuffer(m_convBuffer.data(), static_cast<uint32_t>(framed.size()), lastBlock);
 }
 
 int VpxStreamReader::prepareDemuxPacket(uint8_t* data, const int size, const uint8_t** outData)
@@ -188,20 +300,32 @@ CheckStreamRez VpxStreamReader::checkStream(uint8_t* buffer, const int len)
 {
     CheckStreamRez rez;
     uint8_t* end = buffer + len;
+    bool ivfVp9 = false;
+    double ivfFps = 0;
+    const bool ivf = readIvfHeader(buffer, len, ivfVp9, ivfFps);
+    if (ivf && ivfVp9 != m_vp9)
+        return rez;
     uint8_t* frame = NALUnit::findNextNAL(buffer, end);
-    if (frame < end)
+    if (ivf || frame < end)
     {
         uint8_t* frameEnd = NALUnit::findNALWithStartCode(frame, end, true);
         uint8_t header[96];
-        const int headerLen = NALUnit::decodeNAL(frame, (std::min)(frameEnd, frame + 64), header, sizeof header);
-        if (parseFrameHeader(header, headerLen) && m_width > 0 && m_height > 0)
+        const int ivfHeader = ivf ? (buffer[6] | buffer[7] << 8) + 12 : 0;
+        const int headerLen = ivf ? (std::min)(64, len - ivfHeader)
+                                  : NALUnit::decodeNAL(frame, (std::min)(frameEnd, frame + 64), header, sizeof header);
+        if (ivf && headerLen > 0)
+            memcpy(header, buffer + ivfHeader, headerLen);
+        if (headerLen > 0 && parseFrameHeader(header, headerLen) && m_width > 0 && m_height > 0)
         {
             rez.codecInfo = getCodecInfo();
             std::ostringstream str;
             str << "Profile: " << m_profile << "  Resolution: " << m_width << ":" << m_height << "p";
             if (m_vp9)
                 str << "  Bit depth: " << m_bitDepth << "bit";
-            str << "  Frame rate: not found";
+            if (ivf && ivfFps > 0)
+                str << "  Frame rate: " << correctFps(ivfFps);
+            else
+                str << "  Frame rate: not found";
             rez.streamDescr = str.str();
         }
     }

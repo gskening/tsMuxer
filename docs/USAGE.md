@@ -140,8 +140,8 @@ V_MPEG4/ISO/MVC   | H.264/MVC
 V_MS/VFW/WVC1     | VC1 
 V_MPEG-2          | MPEG2 
 V_AV1             | AV1 
-V_VP8             | VP8 (read from MKV and WebM; MKV output, or demuxed to an .ivf file)
-V_VP9             | VP9 (read from MKV and WebM; MKV output, or demuxed to an .ivf file)
+V_VP8             | VP8 (read from MKV, WebM and .ivf files; MKV output, or demuxed to an .ivf file)
+V_VP9             | VP9 (read from MKV, WebM and .ivf files; MKV output, or demuxed to an .ivf file)
 A_AC3             | AC3/AC3+/TRUE-HD 
 A_AAC             | AAC 
 A_DTS             | DTS/DTS-Express/DTS-HD 

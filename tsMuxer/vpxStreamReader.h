@@ -12,6 +12,9 @@
 // frame may end in zero bytes and those would be taken for the start of the next start code. The Matroska muxer takes
 // all of it off again (unframe).
 //
+// An IVF file, the elementary file of both codecs, is read as well: its frames are framed the same way as they are
+// read (setBuffer).
+//
 // Neither codec has a form in a transport stream or on a Blu-ray disc: they go into a Matroska output, or are demuxed
 // into an IVF file (prepareDemuxPacket). MuxerManager::checkTrackList refuses the rest.
 class VpxStreamReader final : public MPEGStreamReader
@@ -24,6 +27,10 @@ class VpxStreamReader final : public MPEGStreamReader
     int getTSDescriptor(uint8_t* dstBuff, bool blurayMode, bool hdmvDescriptors) override { return 0; }
     [[nodiscard]] bool needSPSForSplit() const override { return false; }
     int prepareDemuxPacket(uint8_t* data, int size, const uint8_t** outData) override;
+    void setBuffer(uint8_t* data, uint32_t dataLen, bool lastBlock = false) override;
+
+    // An IVF file header: its codec (true for VP9), picture size and frame rate. False when data is not one.
+    static bool readIvfHeader(const uint8_t* data, int size, bool& vp9, double& fps);
 
     // One framed frame as it arrives here, back to the frame itself: the start code, the escaping and the stop byte
     // taken off.
@@ -54,6 +61,17 @@ class VpxStreamReader final : public MPEGStreamReader
     int m_bitDepth;
     bool m_lastIFrame;
     bool m_firstFrame;
+    // input: an IVF file, its frames framed as they arrive
+    enum class Input
+    {
+        UNDECIDED,
+        FRAMED,
+        IVF
+    };
+    Input m_input = Input::UNDECIDED;
+    std::vector<uint8_t> m_pending;     // bytes of the file not yet framed, a frame may span blocks
+    std::vector<uint8_t> m_convBuffer;  // front pad plus the framed frames handed to the base
+    int m_ivfHeaderLeft = 0;            // bytes of the file header still to skip
     // demux: an IVF file
     std::vector<uint8_t> m_demuxBuffer;
     bool m_ivfHeaderWritten = false;
