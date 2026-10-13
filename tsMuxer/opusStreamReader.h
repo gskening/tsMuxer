@@ -36,6 +36,11 @@ class OpusStreamReader final : public SimplePacketizerReader
 
     void applyDiscoveryData(const StreamDiscoveryData& data) override;
 
+    // Demux: the last page is marked as the end of the stream, its granule position less the samples the source trims
+    // from the end of its last packet (its DiscardPadding, setEndTrim).
+    bool beforeFileCloseEvent(File& file) override;
+    void setEndTrim(const int64_t nanoseconds) { m_endTrimNs = nanoseconds; }
+
    protected:
     void fillDiscoveryData(StreamDiscoveryData& data) override;
     int getHeaderLen() override { return 4; }  // 4-byte length prefix
@@ -68,6 +73,10 @@ class OpusStreamReader final : public SimplePacketizerReader
 
     /// OGG bitstream serial number.
     uint32_t m_oggSerialNo;
+
+    std::vector<uint8_t> m_lastPage;  // the last packet's page, header and packet, rewritten at the end
+    int m_lastPageHeader = 0;
+    int64_t m_endTrimNs = 0;
 
     /// Raw CodecPrivate data (OpusHead).
     std::vector<uint8_t> m_codecPrivate;

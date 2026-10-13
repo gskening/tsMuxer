@@ -2,6 +2,7 @@
 
 #include <fs/systemlog.h>
 
+#include <algorithm>
 #include <cstring>
 #include <sstream>
 
@@ -479,6 +480,29 @@ int OpusStreamReader::writeOggPageHeader(uint8_t* dst, uint8_t* dstEnd, const in
 // TS mux / Demux: write control header or OGG pages
 // ---------------------------------------------------------------------------
 
+bool OpusStreamReader::beforeFileCloseEvent(File& file)
+{
+    if (!m_demuxMode || m_lastPage.size() < 27 || m_lastPageHeader < 27)
+        return true;
+    // The end of the stream, and a granule position short of the packet's end by the samples the source trims there,
+    // which a player then leaves out (RFC 7845, 4.4). Opus counts at 48 kHz.
+    const int64_t trim = m_endTrimNs > 0 ? (m_endTrimNs * 48000 + 500000000) / 1000000000 : 0;
+    const int64_t granule = (std::max)(int64_t{0}, m_granulePos - trim);
+    uint8_t* p = m_lastPage.data();
+    p[5] |= OGG_FLAG_LAST;
+    for (int i = 0; i < 8; i++) p[6 + i] = static_cast<uint8_t>(granule >> (8 * i));
+    memset(p + 22, 0, 4);
+    const uint32_t crc = oggCrc32(m_lastPage.data(), static_cast<int>(m_lastPage.size()));
+    for (int i = 0; i < 4; i++) p[22 + i] = static_cast<uint8_t>(crc >> (8 * i));
+    file.sync();
+    int64_t fileSize = 0;
+    file.size(&fileSize);
+    if (fileSize < static_cast<int64_t>(m_lastPage.size()) ||
+        file.seek(fileSize - static_cast<int64_t>(m_lastPage.size()), File::SeekMethod::smBegin) == -1)
+        return false;
+    return file.write(p, m_lastPageHeader) == m_lastPageHeader;
+}
+
 int OpusStreamReader::writeAdditionData(uint8_t* dstBuffer, uint8_t* dstEnd, AVPacket& avPacket,
                                         PriorityDataInfo* priorityData)
 {
@@ -636,6 +660,9 @@ int OpusStreamReader::writeAdditionData(uint8_t* dstBuffer, uint8_t* dstEnd, AVP
         crcPos[3] = static_cast<uint8_t>((crc >> 24) & 0xFF);
 
         m_oggPageSeqNo++;
+        m_lastPage.assign(pageStart, pageStart + headerSize);
+        m_lastPage.insert(m_lastPage.end(), avPacket.data, avPacket.data + payloadSize);
+        m_lastPageHeader = headerSize;
         dst += headerSize;
     }
 

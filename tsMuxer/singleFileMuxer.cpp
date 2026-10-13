@@ -12,6 +12,7 @@
 #include "lpcmStreamReader.h"
 #include "mpegAudioStreamReader.h"
 #include "muxerManager.h"
+#include "opusStreamReader.h"
 #include "pgsStreamReader.h"
 #include "srtStreamReader.h"
 #include "trueHDAC3MergeReader.h"
@@ -96,6 +97,10 @@ void SingleFileMuxer::intAddStream(const std::string& streamName, const std::str
     else if (codecName == "A_OPUS")
     {
         fileExt = ".opus";
+        // the samples the source trims from the end of the last packet, for the granule position of the last page
+        if (const auto src = params.find("srcendpadding"); src != params.end())
+            if (const auto opus = dynamic_cast<OpusStreamReader*>(codecReader))
+                opus->setEndTrim(strtoll(src->second.c_str(), nullptr, 10));
     }
     else if (codecName == "A_VORBIS")
     {
