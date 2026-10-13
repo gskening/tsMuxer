@@ -139,6 +139,7 @@ class MatroskaDemuxer final : public IOContextDemuxer
     void loadTrackExtras(const std::string& fileName);
     // Per track number, what loadTrackExtras found, under the keys the muxers read (srcflags, srccolour, ...).
     std::map<int64_t, std::map<std::string, std::string>> m_trackExtras;
+    std::map<uint32_t, double> m_estimatedFps;  // getTrackFps for a video track without DefaultDuration
     void applyStartCodeRule();
     std::vector<std::string> m_joinFiles;  // the files of a joined input, in order; empty for a single file
     size_t m_joinPart = 0;                 // the part being read: one more for each header met inside the stream

@@ -2558,7 +2558,6 @@ std::string hexUuid(const std::string& uuid)
 }
 }  // namespace
 
-
 AbstractDemuxer::SourceEditions MatroskaDemuxer::getSourceEditions()
 {
     SourceEditions out;
@@ -4494,7 +4493,50 @@ double MatroskaDemuxer::getTrackFps(const uint32_t trackId)
     const MatroskaTrack* track = tracks[trackId - 1];
     if (track->default_duration > 0)
         return 1000000000.0 / static_cast<double>(track->default_duration);
-    return 0.0;
+
+    // A video track without DefaultDuration, as many WebM files have: the frame rate was taken to be 25 and every
+    // picture retimed to it. The mean spacing of its first pictures says it instead: their times sorted, since pictures
+    // are stored in decoding order, and taken from first to last, so that times rounded to the millisecond cancel out.
+    // A track whose rate varies gets its mean rate.
+    if (track->type != MatroskaTrackType::VIDEO || m_sourceName.empty())
+        return 0.0;
+    if (const auto known = m_estimatedFps.find(trackId); known != m_estimatedFps.end())
+        return known->second;
+    static constexpr size_t PICTURES = 240;
+    double fps = 0.0;
+    SegmentFacts facts;
+    File f;
+    if (readSegmentFacts(m_sourceName, facts) && facts.firstCluster > 0 && f.open(m_sourceName.c_str(), File::ofRead))
+    {
+        EbmlScan scan(f);
+        std::vector<int64_t> times;
+        walkTrackBlocks(scan, facts.firstCluster, facts.segmentEnd, 256, track->num,
+                        [&](const int64_t time, int64_t, bool, int)
+                        {
+                            times.push_back(time);
+                            return times.size() < PICTURES;
+                        });
+        std::sort(times.begin(), times.end());
+        times.erase(std::unique(times.begin(), times.end()), times.end());
+        if (times.size() >= 8 && times.back() > times.front())
+        {
+            const double spacingNs = static_cast<double>(times.back() - times.front()) *
+                                     static_cast<double>(facts.timestampScale) / static_cast<double>(times.size() - 1);
+            fps = 1e9 / spacingNs;
+            // The rate the times stand for: a standard one within 0.04 % (240 pictures rounded to the millisecond are
+            // out by about 0.013 % at most; 29.97 and 30 are 0.1 % apart).
+            for (const double standard :
+                 {12.5, 15000.0 / 1001, 15.0, 24000.0 / 1001, 24.0, 25.0, 30000.0 / 1001, 30.0, 48000.0 / 1001, 48.0,
+                  50.0, 60000.0 / 1001, 60.0, 100.0, 120000.0 / 1001, 120.0})
+                if (std::fabs(fps - standard) < standard * 0.0004)
+                    fps = standard;
+            LTRACE(LT_INFO, 2,
+                   "Track " << trackId << " gives no frame rate (DefaultDuration). Taken from the times of its first "
+                            << times.size() << " pictures: " << fps << " fps. fps= on the track's line sets another.");
+        }
+    }
+    m_estimatedFps[trackId] = fps;
+    return fps;
 }
 
 const uint8_t* MatroskaDemuxer::getTrackCodecPrivate(const int32_t pid, int& size)
