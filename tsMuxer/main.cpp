@@ -950,6 +950,15 @@ All parameters in this group start with two dashes:
                       (pt-BR) is written as its ISO 639-2 code in this form.
                       Unlike the options below it is a command line argument, not
                       a MUXOPT entry, so that it also applies when listing a file.
+--keep-editions       Matroska output only, from one Matroska file: keep its
+                      chapters exactly as they are, every edition of them and
+                      every link to another file, and its segment identity
+                      (SegmentUID, PrevUUID, NextUUID), so that ordered editions
+                      and linked files still work after a remux. The file is
+                      read as it is stored, not as its ordered edition plays it.
+                      Remux each file of a linked set this way. Not with a join,
+                      a cut, a split, --custom-chapters, --chapters-file or a
+                      .webm output.
 --split-chapters      Split the output at the chapter marks the source carries,
                       so each file begins at a chapter. Takes no value. A
                       Blu-ray playlist's marks and a Matroska's own chapter

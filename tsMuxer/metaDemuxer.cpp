@@ -829,9 +829,13 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
         fileList = extractFileList(codecStreamName);
     }
 
+    if (m_keepEditions && fileList.size() > 1)
+        THROW(ERR_COMMON, "--keep-editions keeps one Matroska file as it is stored, and cannot be used with a join.")
+
     // A Matroska file is played as a player plays it: by its ordered edition, or with the files linked after it.
+    // Not with --keep-editions, which keeps the file as it is stored, editions and all.
     std::vector<JoinRange> timelineRanges;
-    if (fileList.size() == 1)
+    if (fileList.size() == 1 && !m_keepEditions)
     {
         const std::string ext = strToLowerCase(extractFileExt(fileList[0]));
         if (ext == "mkv" || ext == "mka" || ext == "mks" || ext == "mk3d" || ext == "webm")
@@ -1331,6 +1335,16 @@ std::vector<std::vector<uint8_t>> METADemuxer::getPassThroughAttachments()
                 if (std::find(out.begin(), out.end(), raw) == out.end())
                     out.push_back(std::move(raw));
     return out;
+}
+
+AbstractDemuxer::SourceEditions METADemuxer::getSourceEditions()
+{
+    for (auto& [name, demuxerData] : m_containerReader.m_demuxers)
+        if (demuxerData.m_demuxer)
+            if (SourceEditions editions = demuxerData.m_demuxer->getSourceEditions();
+                !editions.chapters.empty() || !editions.segmentUid.empty())
+                return editions;
+    return {};
 }
 
 std::vector<std::vector<uint8_t>> METADemuxer::getGlobalTags()

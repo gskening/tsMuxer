@@ -2558,6 +2558,33 @@ std::string hexUuid(const std::string& uuid)
 }
 }  // namespace
 
+
+AbstractDemuxer::SourceEditions MatroskaDemuxer::getSourceEditions()
+{
+    SourceEditions out;
+    SegmentFacts facts;
+    if (readSegmentFacts(m_sourceName, facts))
+    {
+        out.segmentUid = facts.uuid;
+        out.prevUid = facts.prevUuid;
+        out.nextUid = facts.nextUuid;
+    }
+    File f;
+    if (!f.open(m_sourceName.c_str(), File::ofRead))
+        return out;
+    const int64_t fileSize = f.size();
+    EbmlScan scan(f);
+    int64_t body = 0, size = 0;
+    if (findTopLevelElement(scan, fileSize, MATROSKA_ID_CHAPTERS, body, size) && size > 0 && size < (64 << 20))
+    {
+        out.chapters.resize(static_cast<size_t>(size));
+        f.seek(body);
+        if (f.read(out.chapters.data(), static_cast<uint32_t>(size)) != static_cast<int>(size))
+            out.chapters.clear();
+    }
+    return out;
+}
+
 std::vector<MatroskaPlayPart> MatroskaDemuxer::playTimeline(const std::string& file, std::string& how)
 {
     std::vector<MatroskaPlayPart> parts;

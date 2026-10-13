@@ -1172,6 +1172,15 @@ void MatroskaMuxer::writeSegmentInfo()
     // The title of the file: --title=, or a Matroska source's own, which a remux used to drop.
     if (!m_title.empty())
         pos += ebml_write_string(buf + pos, MATROSKA_ID_TITLE, m_title);
+    // --keep-editions: the source's identity, which the ordered editions of this file and of the files linked to it
+    // name it by.
+    if (m_keepEditions)
+        for (const auto& [id, uid] :
+             {std::pair<uint32_t, const std::string*>{MATROSKA_ID_SEGMENTUID, &m_sourceEditions.segmentUid},
+              {0x3CB923, &m_sourceEditions.prevUid},
+              {0x3EB923, &m_sourceEditions.nextUid}})
+            if (uid->size() == 16)
+                pos += ebml_write_binary(buf + pos, id, reinterpret_cast<const uint8_t*>(uid->data()), 16);
     // MuxingApp names the library with its version (RFC 9559, 5.1.2.13); the version was missing.
     pos += ebml_write_string(buf + pos, MATROSKA_ID_MUXINGAPP, "tsMuxeR " TSMUXER_VERSION);
     // The version that wrote the file. Without it nobody could tell from a file which tsMuxeR
@@ -1664,6 +1673,9 @@ void MatroskaMuxer::openDstFile()
     // A .webm output is WebM, the subset of Matroska a web browser plays: VP8, VP9 and AV1 video, Opus and Vorbis
     // audio, and of the elements only those the WebM container guidelines list.
     m_webm = strToLowerCase(extractFileExt(m_origFileName)) == "webm";
+    if (m_keepEditions && (m_webm || isSplitting()))
+        THROW(ERR_COMMON, "--keep-editions keeps one Matroska file as it is stored: it cannot be used with "
+                              << (m_webm ? "a WebM output, which has no editions or segment links." : "a split."))
     if (m_webm)
         for (const auto& [index, track] : m_tracks)
             if (track.codecID != CODEC_V_VP8 && track.codecID != CODEC_V_VP9 && track.codecID != CODEC_V_AV1 &&
@@ -2244,6 +2256,21 @@ void MatroskaMuxer::writeDeferredHeader()
 // playlist marks (BlurayHelper::createMPLSFile).
 void MatroskaMuxer::writeChapters()
 {
+    // --keep-editions: the source's own Chapters, every edition and every link to another file, as they stand.
+    if (m_keepEditions)
+    {
+        if (m_sourceEditions.chapters.empty())
+            return;
+        uint8_t hdr[16];
+        const int h =
+            ebml_write_master_open(hdr, MATROSKA_ID_CHAPTERS, m_sourceEditions.chapters.size() + CRC_ELEMENT_BYTES);
+        m_chaptersPos = m_file.pos() - m_segmentStartPos;
+        writeToFile(hdr, h);
+        beginCrc();
+        writeToFile(m_sourceEditions.chapters.data(), static_cast<int>(m_sourceEditions.chapters.size()));
+        endCrc();
+        return;
+    }
     if (m_chapters.empty())
         return;
 

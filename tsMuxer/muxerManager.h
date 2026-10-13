@@ -116,6 +116,7 @@ class MuxerManager final
     std::vector<double> m_chapters;        // chapter start times in seconds, applied once the muxer exists
     std::vector<AVChapter> m_chapterInfo;  // the same chapters with their names, when known
     std::unique_ptr<AbstractMuxer> m_mainMuxer;
+    bool m_keepEditions = false;  // --keep-editions
     std::unique_ptr<AbstractMuxer> m_subMuxer;
 
     bool m_asyncMode;

@@ -39,6 +39,7 @@ class MatroskaDemuxer final : public IOContextDemuxer
     // or the files of a hard-linked chain when this file is the first of it. Empty when the file plays as it is.
     // `how` says what was found, for the log.
     static std::vector<MatroskaPlayPart> playTimeline(const std::string& file, std::string& how);
+    [[nodiscard]] SourceEditions getSourceEditions() override;
 
     [[nodiscard]] bool isPidFilterSupported() const override { return true; }
     int64_t getTrackDelay(const int32_t pid) override

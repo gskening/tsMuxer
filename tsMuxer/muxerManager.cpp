@@ -158,6 +158,24 @@ void MuxerManager::preinitMux(const std::string& outFileName, FileFactory* fileF
                 m_mainMuxer->parseMuxOpt(m_muxOpts);
                 m_mainMuxer->setSourceExtras(m_metaDemuxer.getTitle(), m_metaDemuxer.getPassThroughAttachments(),
                                              m_metaDemuxer.getGlobalTags());
+                // --keep-editions: the source's chapters, every edition of them, and its segment identity, as they
+                // stand. They are times on the file's own timeline, which a cut would move, and they replace the
+                // chapters the output would otherwise get.
+                if (m_keepEditions)
+                {
+                    auto* const mkv = dynamic_cast<MatroskaMuxer*>(m_mainMuxer.get());
+                    if (!mkv)
+                        THROW(ERR_COMMON, "--keep-editions applies to a Matroska output (.mkv) only.")
+                    if (m_cutStart > 0 || m_cutEnd > 0)
+                        THROW(ERR_COMMON,
+                              "--keep-editions keeps the source's chapter times, which a cut would move. "
+                              "Leave out --cut-start and --cut-end, or --keep-editions.")
+                    if (!m_chapters.empty())
+                        THROW(ERR_COMMON,
+                              "--keep-editions keeps the source's own chapters, and cannot be used with "
+                              "--custom-chapters or --chapters-file.")
+                    mkv->setSourceEditions(m_metaDemuxer.getSourceEditions());
+                }
                 // Now that the muxer exists it can be given the chapter list main() supplied.
                 // With no --custom-chapters, fall back to whatever the source container carries,
                 // the same way a source language fills in for a missing lang=. An MKV with its
@@ -747,6 +765,7 @@ void MuxerManager::warnUnknownMuxOpts(const string& opts)
                                                       "--dv-profile",
                                                       "--extra-iso-space",
                                                       "--insertBlankPL",
+                                                      "--keep-editions",
                                                       "--label",
                                                       "--layer-break-guard",
                                                       "--layer-break-guard-before",
@@ -808,6 +827,11 @@ void MuxerManager::parseMuxOpt(const string& opts)
         }
         else if (paramPair[0] == "--no-asyncio")
             setAsyncMode(false);
+        else if (paramPair[0] == "--keep-editions")
+        {
+            m_keepEditions = true;
+            m_metaDemuxer.setKeepEditions(true);
+        }
         else if (paramPair[0] == "--cut-start" || paramPair[0] == "--cut-end")
         {
             if (paramPair.size() < 2)

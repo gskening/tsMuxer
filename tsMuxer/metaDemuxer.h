@@ -215,6 +215,10 @@ class METADemuxer final : public AbstractDemuxer
     [[nodiscard]] std::vector<AVChapter> getChapters() override;
     [[nodiscard]] std::string getTitle() override;
     [[nodiscard]] std::vector<std::vector<uint8_t>> getPassThroughAttachments() override;
+    // --keep-editions: a Matroska source is read as it is stored, not as its ordered edition plays it, and its
+    // chapters and segment identity go to the output unchanged.
+    void setKeepEditions(const bool value) { m_keepEditions = value; }
+    [[nodiscard]] SourceEditions getSourceEditions() override;
     [[nodiscard]] std::vector<std::vector<uint8_t>> getGlobalTags() override;
     // How long the sources say they run, without reading them: a playlist by its play items, a container by the
     // length it states. A join counts its first file only and an elementary stream states nothing, so this can fall
@@ -249,6 +253,7 @@ class METADemuxer final : public AbstractDemuxer
     int m_lastProgressY;
     std::chrono::steady_clock::time_point m_lastReportTime;
     std::set<std::string> m_timelinesReported;  // the Matroska files whose play timeline was said in the log
+    bool m_keepEditions = false;                // --keep-editions (setKeepEditions)
     double m_lastProgress = 0.0;                // the last value printed
     int64_t m_totalSize;
     bool m_flushDataMode;

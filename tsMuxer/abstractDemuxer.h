@@ -163,6 +163,14 @@ class AbstractDemuxer
     /// other container.
     [[nodiscard]] virtual std::string getTitle() { return {}; }
     [[nodiscard]] virtual std::vector<std::vector<uint8_t>> getPassThroughAttachments() { return {}; }
+    // A Matroska source's Chapters element as it stands (its body) and its SegmentUID, PrevUUID and NextUUID (16
+    // bytes each, empty where it has none), for --keep-editions.
+    struct SourceEditions
+    {
+        std::vector<uint8_t> chapters;
+        std::string segmentUid, prevUid, nextUid;
+    };
+    [[nodiscard]] virtual SourceEditions getSourceEditions() { return {}; }
     [[nodiscard]] virtual std::vector<std::vector<uint8_t>> getGlobalTags() { return {}; }
 
     [[nodiscard]] SubTrackFilter* getPidFilter(const int pid)

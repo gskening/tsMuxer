@@ -334,7 +334,18 @@ class MatroskaMuxer final : public AbstractMuxer
     void putCrcElement(uint8_t* at, uint32_t crc) const;
     // A .webm output: DocType webm and the WebM subset of Matroska (openDstFile).
     bool m_webm = false;
+    // --keep-editions: the source's Chapters body and segment identity, written as they stand.
+    bool m_keepEditions = false;
+    AbstractDemuxer::SourceEditions m_sourceEditions;
 
+   public:
+    void setSourceEditions(const AbstractDemuxer::SourceEditions& editions)
+    {
+        m_keepEditions = true;
+        m_sourceEditions = editions;
+    }
+
+   private:
     // Low-level: write bytes to the output file
     void writeToFile(const uint8_t* data, int len);
     // CRC-32 as the first child of every top-level element (RFC 9559, 6.2). beginCrc writes the element with a
