@@ -285,6 +285,8 @@ constexpr auto MATROSKA_CODEC_ID_SUBTITLE_PGS = "S_HDMV/PGS";
 constexpr auto MATROSKA_CODEC_ID_SUBTITLE_VOBSUB = "S_VOBSUB";
 constexpr auto MATROSKA_CODEC_ID_SUBTITLE_DVB = "S_DVBSUB";
 constexpr auto MATROSKA_CODEC_ID_AV1 = "V_AV1";
+constexpr auto MATROSKA_CODEC_ID_VP8 = "V_VP8";
+constexpr auto MATROSKA_CODEC_ID_VP9 = "V_VP9";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_DTS = "A_DTS";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_EAC3 = "A_EAC3";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_TRUEHD = "A_TRUEHD";
@@ -443,6 +445,16 @@ class ParsedFLACTrackData final : public ParsedTrackPrivData
    private:
     bool m_firstPacket;
     std::vector<uint8_t> m_codecPrivate;
+};
+
+// VP8 and VP9: each block is one frame and has no framing of its own. It is framed as VpxStreamReader reads it, a
+// start code, the frame escaped as in H.264, and a stop byte 0x80.
+class ParsedVpxTrackData final : public ParsedTrackPrivData
+{
+   public:
+    ParsedVpxTrackData() = default;
+    ~ParsedVpxTrackData() override = default;
+    void extractData(AVPacket* pkt, uint8_t* buff, int size) override;
 };
 
 class ParsedOpusTrackData final : public ParsedTrackPrivData

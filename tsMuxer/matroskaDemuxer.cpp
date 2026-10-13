@@ -1664,6 +1664,10 @@ int MatroskaDemuxer::matroska_read_header()
             {
                 track->parsed_priv_data = new ParsedOpusTrackData(track->codec_priv, track->codec_priv_size);
             }
+            else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_VP8) || !strcmp(track->codec_id, MATROSKA_CODEC_ID_VP9))
+            {
+                track->parsed_priv_data = new ParsedVpxTrackData();
+            }
             else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SRT) ||
                      !strcmp(track->codec_id, MATROSKA_CODEC_ID_TEXT_ASCII))
             {
@@ -4424,6 +4428,20 @@ void MatroskaDemuxer::getTrackList(std::map<int32_t, TrackInfo>& trackList)
             trackList[i + 1].m_srcParams = extras->second;
         if (tracks[i]->name && tracks[i]->name[0])
             trackList[i + 1].m_srcParams["srcname"] = tracks[i]->name;
+        // A VP9 track's CodecPrivate (profile, level, bit depth, chroma subsampling), which the stream says only in
+        // part, for a Matroska output to keep (srcvpxprivate, in hex).
+        if (tracks[i]->codec_id && !strcmp(tracks[i]->codec_id, MATROSKA_CODEC_ID_VP9) && tracks[i]->codec_priv &&
+            tracks[i]->codec_priv_size > 0)
+        {
+            static const char* HEX = "0123456789abcdef";
+            std::string hex;
+            for (int k = 0; k < tracks[i]->codec_priv_size; ++k)
+            {
+                hex += HEX[tracks[i]->codec_priv[k] >> 4];
+                hex += HEX[tracks[i]->codec_priv[k] & 15];
+            }
+            trackList[i + 1].m_srcParams["srcvpxprivate"] = hex;
+        }
         // DVD or DVB subtitles in a file without video: the frame rate their display sets carry is a guess, which
         // fps= replaces rather than converts from.
         if (const auto* bitmapSub = dynamic_cast<ParsedBitmapSubTrackData*>(tracks[i]->parsed_priv_data);
@@ -4486,6 +4504,10 @@ int MatroskaDemuxer::getTrackType(const MatroskaTrack* track)
         return static_cast<int>(StreamType::VIDEO_H265);
     if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_VVC_FOURCC))
         return static_cast<int>(StreamType::VIDEO_H266);
+    if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_VP8))
+        return TRACKTYPE_VP8;
+    if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_VP9))
+        return TRACKTYPE_VP9;
 
     return 0;
 }

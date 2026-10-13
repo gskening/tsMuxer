@@ -44,6 +44,7 @@ static bool isKnownTrackParam(const std::string& name);
 #include "vc1StreamReader.h"
 #include "vodCoreException.h"
 #include "vod_common.h"
+#include "vpxStreamReader.h"
 #include "vvcStreamReader.h"
 
 extern "C"
@@ -1305,7 +1306,7 @@ static bool isKnownTrackParam(const std::string& name)
         // not warn. srcdefault is the source container's own default track flag.
         "forced", "hearing-impaired", "visual-impaired", "text-descriptions", "original", "commentary", "srclang",
         "srclangbcp47", "srcdefault", "srcname", "srcflags", "srccolour", "srcdisplay", "srcendpadding", "srcpgsrate",
-        "srccrop", "srcfieldorder", "srcprojection", "srccodecdelay", "langbcp47"};
+        "srccrop", "srcfieldorder", "srcprojection", "srccodecdelay", "langbcp47", "srcvpxprivate"};
     return known.find(name) != known.end();
 }
 
@@ -2268,6 +2269,12 @@ CheckStreamRez METADemuxer::detectTrackReader(uint8_t* tmpBuffer, int len,
     if (len == 0)
         return rez;
 
+    // VP8 and VP9 are known only by the name a Matroska source gives them: neither has start codes or any mark of its
+    // own. Their reader is the only one asked. The other probes found an AV1 sequence header in VP8 and VP9 frames
+    // and listed both as AV1, with a made up picture size, and a mux wrote them out as such.
+    if (containerDataType == TRACKTYPE_VP8 || containerDataType == TRACKTYPE_VP9)
+        return VpxStreamReader(containerDataType == TRACKTYPE_VP9).checkStream(tmpBuffer, len);
+
     // The container says what the track is, and that was being thrown away. Every video probe
     // below runs before the MPEG audio one, which is alone among the audio readers in sitting
     // after them, so a track a PMT declares as stream type 0x04 reached the AV1 detector first.
@@ -2524,6 +2531,17 @@ AbstractStreamReader* METADemuxer::createCodec(const string& codecName, const ma
             double fps = parseFpsValue(itr->second);
             fps = correctFps(fps);
             dynamic_cast<AV1StreamReader*>(rez)->setFPS(fps);
+        }
+    }
+    else if (codecName == "V_VP8" || codecName == "V_VP9")
+    {
+        rez = new VpxStreamReader(codecName == "V_VP9");
+        auto itr = addParams.find("fps");
+        if (itr != addParams.end())
+        {
+            double fps = parseFpsValue(itr->second);
+            fps = correctFps(fps);
+            dynamic_cast<VpxStreamReader*>(rez)->setFPS(fps);
         }
     }
     else if (codecName == "V_MS/VFW/WVC1")

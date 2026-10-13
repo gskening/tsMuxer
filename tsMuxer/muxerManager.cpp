@@ -13,6 +13,7 @@
 #include "chapterFile.h"
 #include "h264StreamReader.h"
 #include "iso_writer.h"
+#include "matroskaMuxer.h"
 #include "mpegStreamReader.h"
 #include "tsMuxer.h"
 #include "vodCoreException.h"
@@ -279,6 +280,16 @@ void MuxerManager::preinitMux(const std::string& outFileName, FileFactory* fileF
 
 void MuxerManager::checkTrackList(const vector<StreamInfo>& ci) const
 {
+    // VP8 and VP9 have no form in a transport stream or on a Blu-ray disc, and tsMuxeR writes no file of their own for
+    // a demux: a Matroska output is the only one that can carry them.
+    if (m_demuxMode || !dynamic_cast<MatroskaMuxer*>(m_mainMuxer.get()))
+        for (const StreamInfo& si : ci)
+            if (si.m_codec == vp8CodecInfo.programName || si.m_codec == vp9CodecInfo.programName)
+                THROW(ERR_COMMON, (si.m_codec == vp8CodecInfo.programName ? "VP8" : "VP9")
+                                      << " can only be muxed into a Matroska file (.mkv). It has no form in a "
+                                         "transport stream or on a Blu-ray disc, and a demux has no file to write "
+                                         "it to. Choose MKV output, or leave the track out.")
+
     if (m_demuxMode)
         return;
 

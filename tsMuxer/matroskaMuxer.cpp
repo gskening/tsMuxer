@@ -39,6 +39,7 @@ extern "C"
 #include "tsMuxer.h"  // HDR10_metadata, filled from the HEVC SEI while parsing
 #include "vc1StreamReader.h"
 #include "vodCoreException.h"
+#include "vpxStreamReader.h"
 #include "vvc.h"
 #include "vvcStreamReader.h"
 
@@ -396,6 +397,9 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
     if (const auto src = params.find("srcprojection"); src != params.end())
         for (size_t i = 0; i + 1 < src->second.size(); i += 2)
             track.srcProjection.push_back(static_cast<uint8_t>(strtoul(src->second.substr(i, 2).c_str(), nullptr, 16)));
+    if (const auto src = params.find("srcvpxprivate"); src != params.end() && track.codecID == CODEC_V_VP9)
+        for (size_t i = 0; i + 1 < src->second.size(); i += 2)
+            track.srcVpxPrivate.push_back(static_cast<uint8_t>(strtoul(src->second.substr(i, 2).c_str(), nullptr, 16)));
     // The priming at the start of an AAC track, from an MP4 source's edit list (srccodecdelay, in nanoseconds).
     if (const auto src = params.find("srccodecdelay"); src != params.end() && track.codecID == CODEC_A_AAC)
         track.srcCodecDelayNs = strtoull(src->second.c_str(), nullptr, 10);
@@ -935,6 +939,10 @@ void MatroskaMuxer::buildCodecPrivate(MkvTrackInfo& track)
             track.codecPrivate = opus->getCodecPrivate();
         break;
     }
+    case CODEC_V_VP9:
+        // Optional for VP9, and kept as the source wrote it; VP8 has none.
+        track.codecPrivate = track.srcVpxPrivate;
+        break;
     default:
         // AC3, DTS, LPCM, SRT, PGS, MPEG-2, VC-1 etc. – no codec private needed in MKV
         // (or it's handled differently)
@@ -2795,6 +2803,12 @@ void MatroskaMuxer::flushPendingFrame(MkvTrackInfo& track)
     {
     case CODEC_V_AV1:
         convertedData = convertAV1ToLowOverhead(frameData, frameSize);
+        break;
+    case CODEC_V_VP8:
+    case CODEC_V_VP9:
+        convertedData = VpxStreamReader::unframe(frameData, frameSize);
+        frameData = convertedData.data();
+        frameSize = static_cast<int>(convertedData.size());
         break;
     case CODEC_V_MPEG4_H264:
     case CODEC_V_MPEG4_H265:

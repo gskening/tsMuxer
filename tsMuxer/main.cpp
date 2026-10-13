@@ -677,6 +677,8 @@ Names of codecs in the meta file:
 - V_MS/VFW/WVC1     VC1
 - V_MPEG-2          MPEG2
 - V_AV1             AV1
+- V_VP8             VP8, from MKV/WebM, to MKV output only
+- V_VP9             VP9, from MKV/WebM, to MKV output only
 - A_AC3             AC3/AC3+/TRUE-HD
 - A_MLP             TRUE-HD (standalone TrueHD stream). For Blu-ray style TrueHD + AC-3 core from an MKV that
                     stores them as separate tracks, use merge-ac3-track=<n> with track=<TrueHD n> (see below).

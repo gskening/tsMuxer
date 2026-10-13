@@ -6,6 +6,7 @@ add_executable (tsmuxer
   aacStreamReader.cpp
   av1.cpp
   av1StreamReader.cpp
+  vpxStreamReader.cpp
   bdSsifImport.cpp
   abstractDemuxer.cpp
   abstractMuxer.cpp

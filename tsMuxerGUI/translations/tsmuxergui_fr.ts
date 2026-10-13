@@ -4333,6 +4333,11 @@ Créer l'ISO malgré tout ?</translation>
         <source>The name and the flags are written to a Matroska output only.</source>
         <translation>Le nom et les indicateurs ne sont écrits que dans une sortie Matroska.</translation>
     </message>
+    <message>
+        <location filename="../tsmuxerwindow.cpp" line="2901"/>
+        <source>%1 is only supported for MKV output. This track will be ignored for the selected output format.</source>
+        <translation>%1 n'est pris en charge que pour la sortie MKV. Cette piste sera ignorée pour le format de sortie sélectionné.</translation>
+    </message>
 </context>
 <context>
     <name>muxForm</name>

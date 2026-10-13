@@ -4334,6 +4334,11 @@ Build the ISO anyway?</source>
         <source>The name and the flags are written to a Matroska output only.</source>
         <translation>Имя и флаги записываются только в вывод Matroska.</translation>
     </message>
+    <message>
+        <location filename="../tsmuxerwindow.cpp" line="2901"/>
+        <source>%1 is only supported for MKV output. This track will be ignored for the selected output format.</source>
+        <translation>%1 поддерживается только для вывода в MKV. Эта дорожка будет проигнорирована при выбранном формате вывода.</translation>
+    </message>
 </context>
 <context>
     <name>muxForm</name>

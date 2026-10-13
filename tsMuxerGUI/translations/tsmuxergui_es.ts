@@ -4334,6 +4334,11 @@ Mantener la imagen en torno a 66 GB (las dos primeras capas) mejora las probabil
         <source>The name and the flags are written to a Matroska output only.</source>
         <translation>El nombre y los indicadores solo se escriben en una salida Matroska.</translation>
     </message>
+    <message>
+        <location filename="../tsmuxerwindow.cpp" line="2901"/>
+        <source>%1 is only supported for MKV output. This track will be ignored for the selected output format.</source>
+        <translation>%1 solo se admite con salida MKV. Esta pista se ignorará con el formato de salida seleccionado.</translation>
+    </message>
 </context>
 <context>
     <name>muxForm</name>

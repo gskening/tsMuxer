@@ -8,7 +8,7 @@ This project is for tsMuxer - a transport stream muxer for remuxing/muxing eleme
 
 EVO/VOB/MPG, MKV/MKA, MP4/MOV, TS, M2TS to TS, M2TS, or MKV.
 
-Supported video codecs H.264/AVC, H.265/HEVC, H.266/VVC (Alpha release), AV1, VC-1, MPEG2. 
+Supported video codecs H.264/AVC, H.265/HEVC, H.266/VVC (Alpha release), AV1, VC-1, MPEG2, and VP8 and VP9 (from MKV/WebM, to MKV only). 
 Supported audio codecs AAC, AC3 / E-AC3(DD+), DTS/ DTS-HD, TrueHD, Opus, FLAC, LPCM, MP3.
 
 **TrueHD note (Blu-ray output):** Blu-ray players typically expect Dolby TrueHD to be muxed in a Blu-ray style

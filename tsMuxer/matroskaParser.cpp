@@ -732,6 +732,22 @@ void ParsedFLACTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int si
     }
 }
 
+// ------------ VP8 and VP9 ---------------
+void ParsedVpxTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int size)
+{
+    // Escaping adds at most one byte for every two.
+    const size_t room = static_cast<size_t>(size) + size / 2 + 8;
+    pkt->data = new uint8_t[room];
+    pkt->data[0] = 0;
+    pkt->data[1] = 0;
+    pkt->data[2] = 1;
+    int encoded = size > 0 ? NALUnit::encodeNAL(buff, buff + size, pkt->data + 3, room - 4) : 0;
+    if (encoded < 0)
+        encoded = 0;
+    pkt->data[3 + encoded] = 0x80;
+    pkt->size = encoded + 4;
+}
+
 // ------------ Opus ---------------
 ParsedOpusTrackData::ParsedOpusTrackData(uint8_t* buff, const int size)
     : ParsedTrackPrivData(buff, size), m_firstPacket(true)
