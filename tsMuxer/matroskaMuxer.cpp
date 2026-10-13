@@ -1907,15 +1907,34 @@ void MatroskaMuxer::writeChapters()
         if (language.empty())
             language = "und";
 
-        // Sized from the string rather than fixed, because a source title has no length limit.
-        std::vector<uint8_t> display(name.size() + language.size() + 64);
-        int d = 0;
-        d += ebml_write_string(display.data() + d, MATROSKA_ID_CHAPSTRING, name);
-        // The source's own language where it gave one. "und" otherwise, which is what tsMuxeR
-        // already uses for an unknown track language, rather than claiming a language it guessed.
-        d += ebml_write_string(display.data() + d, MATROSKA_ID_CHAPTERLANGUAGE, language);
-        uint8_t dispHdr[16];
-        const int dh = ebml_write_master_open(dispHdr, MATROSKA_ID_CHAPTERDISPLAY, d);
+        // Every name the source gave, one ChapterDisplay each, in the source's order; one name otherwise. A Matroska
+        // source with a title in several languages kept only one of them.
+        std::vector<AVChapter::Name> names;
+        if (index < m_chapterInfo.size())
+            names = m_chapterInfo[index].names;
+        if (names.empty())
+            names.push_back({name, language, ""});
+        std::vector<uint8_t> displays;
+        for (auto& [title, lang, tag] : names)
+        {
+            if (title.empty())
+                title = name;
+            // The source's own language where it gave one. "und" otherwise, which is what tsMuxeR
+            // already uses for an unknown track language, rather than claiming a language it guessed.
+            if (lang.empty())
+                lang = "und";
+            // Sized from the strings rather than fixed, because a source title has no length limit.
+            std::vector<uint8_t> display(title.size() + lang.size() + tag.size() + 64);
+            int d = 0;
+            d += ebml_write_string(display.data() + d, MATROSKA_ID_CHAPSTRING, title);
+            d += ebml_write_string(display.data() + d, MATROSKA_ID_CHAPTERLANGUAGE, lang);
+            if (!tag.empty())
+                d += ebml_write_string(display.data() + d, MATROSKA_ID_CHAPLANGUAGEBCP47, tag);
+            uint8_t dispHdr[16];
+            const int dh = ebml_write_master_open(dispHdr, MATROSKA_ID_CHAPTERDISPLAY, d);
+            displays.insert(displays.end(), dispHdr, dispHdr + dh);
+            displays.insert(displays.end(), display.begin(), display.begin() + d);
+        }
 
         std::vector<uint8_t> atom(64);
         int p = 0;
@@ -1924,8 +1943,7 @@ void MatroskaMuxer::writeChapters()
                              static_cast<uint64_t>(startSec * 1000000000.0 + 0.5));
         p += ebml_write_uint(atom.data() + p, MATROSKA_ID_CHAPTERFLAGHIDDEN, 0);
         atom.resize(p);
-        atom.insert(atom.end(), dispHdr, dispHdr + dh);
-        atom.insert(atom.end(), display.begin(), display.begin() + d);
+        atom.insert(atom.end(), displays.begin(), displays.end());
 
         uint8_t hdr[16];
         const int h = ebml_write_master_open(hdr, MATROSKA_ID_CHAPTERATOM, atom.size());
