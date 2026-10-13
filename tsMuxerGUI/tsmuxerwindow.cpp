@@ -4943,14 +4943,10 @@ void TsMuxerWindow::onChapterParamsChanged()
     updateMetaLines();
 }
 
-// Splitting is written by the transport stream muxer. Matroska output has no notion of it and demux
-// output refuses it as well, so neither can split. Ticking the boxes there changed nothing at all
-// and said nothing about it: a 421 MB source asked to split at 50 MB came back as one whole file
-// with a success message, while the same settings aimed at .ts gave nine parts.
-bool TsMuxerWindow::outputCanSplit() const
-{
-    return !(ui->radioButtonMKV->isChecked() || ui->radioButtonDemux->isChecked());
-}
+// Demux output refuses splitting, so it cannot split. Ticking the boxes there changed nothing at all and said nothing
+// about it: a 421 MB source asked to split at 50 MB came back as one whole file with a success message, while the same
+// settings aimed at .ts gave nine parts. Matroska output splits by all three options, and is offered them.
+bool TsMuxerWindow::outputCanSplit() const { return !ui->radioButtonDemux->isChecked(); }
 
 void TsMuxerWindow::onSplitCutParamsChanged()
 {
