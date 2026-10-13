@@ -692,7 +692,8 @@ If a parameter's value consists of several words, it must be enclosed in quotes.
 
 Common additional parameters for any type of track:
 - track             track number if input file is a container.
-- lang              track language. MUST contain exactly 3 letters.
+- lang              track language: three letters, an ISO 639-2 code such as eng
+                    or deu, or a BCP 47 tag such as de, pt-BR or zh-Hant.
 
 Additional parameters for audio tracks:
 - timeshift         Shift a track by the given number of milliseconds. Video too, see below.
