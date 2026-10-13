@@ -296,9 +296,24 @@ uint8_t* VorbisStreamReader::findFrame(uint8_t* buff, uint8_t* end)
 int VorbisStreamReader::decodeFrame(uint8_t* buff, uint8_t* end, int& skipBytes, int& skipBeforeBytes)
 {
     skipBytes = 0;
-    skipBeforeBytes = FRAME_PREFIX_LEN;
-    if (end - buff < FRAME_PREFIX_LEN)
+    // Every file of a join begins with its own header packets, in front of its first packet (findFrame reads them at
+    // the start of the stream).
+    int head = 0;
+    if (end - buff >= 8 && memcmp(buff, PRIVATE_MARK, 8) == 0)
+    {
+        if (end - buff < 12)
+            return NOT_ENOUGH_BUFFER;
+        const int len =
+            static_cast<int>(static_cast<uint32_t>(buff[8]) << 24 | buff[9] << 16 | buff[10] << 8 | buff[11]);
+        if (end - buff < 12 + len)
+            return NOT_ENOUGH_BUFFER;
+        setCodecPrivate(buff + 12, len);
+        head = 12 + len;
+    }
+    skipBeforeBytes = head + FRAME_PREFIX_LEN;
+    if (end - buff < head + FRAME_PREFIX_LEN)
         return NOT_ENOUGH_BUFFER;
+    buff += head;
     const uint32_t len = static_cast<uint32_t>(buff[0]) << 24 | buff[1] << 16 | buff[2] << 8 | buff[3];
     if (len == 0 || len > MAX_VORBIS_PACKET || m_modeLong.empty())
         return 0;

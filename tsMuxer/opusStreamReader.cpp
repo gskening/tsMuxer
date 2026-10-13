@@ -314,10 +314,21 @@ int OpusStreamReader::parseFrameSamples(const uint8_t* opusData, const int size)
 int OpusStreamReader::decodeFrame(uint8_t* buff, uint8_t* end, int& skipBytes, int& skipBeforeBytes)
 {
     skipBytes = 0;
-    skipBeforeBytes = FRAME_PREFIX_LEN;  // skip the 4-byte length prefix
 
-    if (end - buff < FRAME_PREFIX_LEN)
+    // Every file of a join begins with its own OpusHead, in front of its first packet. It was read only at the start
+    // of the stream: in the middle its first bytes were taken for a length, the search that followed took bytes of
+    // the head for packets, and the second file of a join lost its first packets and came out seconds late.
+    int head = 0;
+    if (end - buff >= 8 && memcmp(buff, OPUS_HEAD_MAGIC, 8) == 0)
+    {
+        if (end - buff < 19)
+            return NOT_ENOUGH_BUFFER;
+        head = buff[18] > 0 ? 21 + buff[9] : 19;
+    }
+    skipBeforeBytes = head + FRAME_PREFIX_LEN;  // the head, if there is one, and the 4-byte length prefix
+    if (end - buff < head + FRAME_PREFIX_LEN)
         return NOT_ENOUGH_BUFFER;
+    buff += head;
 
     const uint32_t len = (static_cast<uint32_t>(buff[0]) << 24) | (buff[1] << 16) | (buff[2] << 8) | buff[3];
 
