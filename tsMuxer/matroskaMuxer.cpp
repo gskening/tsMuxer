@@ -3044,9 +3044,14 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
             m_muxStartPts = m_firstTimecode;
             m_muxStartSet = true;
         }
+        // A part starts at the earliest picture it shows, which with reordered pictures may come before the keyframe.
+        // VP8, VP9 and AV1 never reorder, but their readers put the decoding time a frame before the keyframe's, so
+        // a part started a frame early and its first picture showed at 42 ms instead of 0.
+        const bool reorders =
+            track.codecID != CODEC_V_VP8 && track.codecID != CODEC_V_VP9 && track.codecID != CODEC_V_AV1;
         if (track.trackNumber == m_mainTrackNumber && (pendingFlags & AVPacket::IS_IFRAME) && m_clusterOpen &&
             splitDue(pts))
-            startNextPart(track, (std::min)(pts, track.hasPendingFrame ? track.pendingDts : pts));
+            startNextPart(track, (std::min)(pts, track.hasPendingFrame && reorders ? track.pendingDts : pts));
     }
     if (track.trackType != MKV_TRACK_TYPE_SUBTITLE && !m_heldText.empty())
         flushHeldText(pts);
