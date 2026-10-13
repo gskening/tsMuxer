@@ -331,6 +331,9 @@ class MatroskaMuxer final : public AbstractMuxer
     bool writeFrontSeekHead();
     // Write a Void element occupying exactly this many bytes, header included.
     void writeVoid(int totalBytes);
+    void putCrcElement(uint8_t* at, uint32_t crc) const;
+    // A .webm output: DocType webm and the WebM subset of Matroska (openDstFile).
+    bool m_webm = false;
 
     // Low-level: write bytes to the output file
     void writeToFile(const uint8_t* data, int len);

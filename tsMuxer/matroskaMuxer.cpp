@@ -1063,11 +1063,12 @@ void MatroskaMuxer::writeToFile(const std::vector<uint8_t>& data)
 // little endian (RFC 8794, 11.3.1). Six bytes, which every top-level element counts in its size.
 static constexpr int CRC_ELEMENT_BYTES = 6;
 
-static void putCrcElement(uint8_t* at, const uint32_t crc)
+// WebM has no CRC-32. Its place is taken by a Void element of the same six bytes, so no size changes.
+void MatroskaMuxer::putCrcElement(uint8_t* at, const uint32_t crc) const
 {
-    at[0] = 0xBF;
+    at[0] = m_webm ? 0xEC : 0xBF;
     at[1] = 0x84;
-    for (int i = 0; i < 4; ++i) at[2 + i] = static_cast<uint8_t>(crc >> (8 * i));
+    for (int i = 0; i < 4; ++i) at[2 + i] = m_webm ? 0 : static_cast<uint8_t>(crc >> (8 * i));
 }
 
 void MatroskaMuxer::beginCrc()
@@ -1132,7 +1133,7 @@ void MatroskaMuxer::writeEBMLHeader()
     pos += ebml_write_uint(buf + pos, EBML_ID_EBMLREADVERSION, 1);
     pos += ebml_write_uint(buf + pos, EBML_ID_EBMLMAXIDLENGTH, 4);
     pos += ebml_write_uint(buf + pos, EBML_ID_EBMLMAXSIZELENGTH, 8);
-    pos += ebml_write_string(buf + pos, EBML_ID_DOCTYPE, "matroska");
+    pos += ebml_write_string(buf + pos, EBML_ID_DOCTYPE, m_webm ? "webm" : "matroska");
     pos += ebml_write_uint(buf + pos, EBML_ID_DOCTYPEVERSION, 4);
     pos += ebml_write_uint(buf + pos, EBML_ID_DOCTYPEREADVERSION, 2);
 
@@ -1651,6 +1652,19 @@ void MatroskaMuxer::openDstFile()
     if (m_dvWriteProfile81 && !couldFoldDualLayer())
         THROW(ERR_COMMON, DV_PROFILE81_NEEDS_DUAL_LAYER)
 
+    // A .webm output is WebM, the subset of Matroska a web browser plays: VP8, VP9 and AV1 video, Opus and Vorbis
+    // audio, and of the elements only those the WebM container guidelines list.
+    m_webm = strToLowerCase(extractFileExt(m_origFileName)) == "webm";
+    if (m_webm)
+        for (const auto& [index, track] : m_tracks)
+            if (track.codecID != CODEC_V_VP8 && track.codecID != CODEC_V_VP9 && track.codecID != CODEC_V_AV1 &&
+                track.codecID != CODEC_A_OPUS && track.codecID != CODEC_A_VORBIS)
+                THROW(ERR_COMMON,
+                      (track.codecReader ? track.codecReader->getCodecInfo().displayName : std::string("A track"))
+                          << " cannot go into a WebM file, which holds VP8, VP9 and AV1 video and Opus and "
+                             "Vorbis audio only. Give the output an .mkv name for it, or leave the track "
+                             "out.")
+
     // ** THE DESTINATION IS NOT CREATED HERE, AND THAT IS THE WHOLE POINT. **
     //
     // Opening a file for writing truncates it, so creating it here meant that every refusal raised
@@ -2119,6 +2133,15 @@ void MatroskaMuxer::writeDeferredHeader()
     // the exact Dolby Vision test lives and where it throws, so nothing below it may run before it.
     refreshTrackProperties();
 
+    // WebM has no attachments.
+    if (m_webm && !m_sourceAttachments.empty())
+    {
+        LTRACE(LT_INFO, 2,
+               "Matroska: " << m_sourceAttachments.size()
+                            << " attachment(s) of the source left out: a WebM file cannot hold attachments.");
+        m_sourceAttachments.clear();
+    }
+
     // A merged Dolby Vision or 3D track holds frames back for the other layer, and a part cannot be closed with frames
     // still held. Splitting is refused for it, rather than parts that lose pictures at every cut, and here, before the
     // destination exists, so that the refusal leaves no file behind.
@@ -2279,7 +2302,8 @@ void MatroskaMuxer::writeChapters()
             m_chapterInfo[index].end > static_cast<int64_t>(startSec * 1000000000.0 + 0.5))
             p += ebml_write_uint(atom.data() + p, MATROSKA_ID_CHAPTERTIMEEND,
                                  static_cast<uint64_t>(m_chapterInfo[index].end));
-        p += ebml_write_uint(atom.data() + p, MATROSKA_ID_CHAPTERFLAGHIDDEN, 0);
+        if (!m_webm)  // not a WebM element
+            p += ebml_write_uint(atom.data() + p, MATROSKA_ID_CHAPTERFLAGHIDDEN, 0);
         atom.resize(p);
         atom.insert(atom.end(), displays.begin(), displays.end());
 
@@ -2294,9 +2318,12 @@ void MatroskaMuxer::writeChapters()
     std::vector<uint8_t> edition;
     uint8_t ed[32];
     int e = 0;
-    e += ebml_write_uint(ed + e, MATROSKA_ID_EDITIONUID, 0x0EDU);
-    // No EditionFlagHidden: RFC 9559 does not define it (0x45BD is not in its element list).
-    e += ebml_write_uint(ed + e, MATROSKA_ID_EDITIONFLAGDEFAULT, 1);
+    if (!m_webm)  // neither is a WebM element
+    {
+        e += ebml_write_uint(ed + e, MATROSKA_ID_EDITIONUID, 0x0EDU);
+        // No EditionFlagHidden: RFC 9559 does not define it (0x45BD is not in its element list).
+        e += ebml_write_uint(ed + e, MATROSKA_ID_EDITIONFLAGDEFAULT, 1);
+    }
     edition.insert(edition.end(), ed, ed + e);
     edition.insert(edition.end(), atoms.begin(), atoms.end());
 

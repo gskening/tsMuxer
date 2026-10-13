@@ -81,7 +81,8 @@ void MuxerManager::preinitMux(const std::string& outFileName, FileFactory* fileF
     // muxers ignore m_ptsOffset, so warning about Blu-ray navigation and rewriting the value
     // for a .mkv would be noise about something that cannot happen.
     const std::string outExt = strToLowerCase(extractFileExt(outFileName));
-    const bool tsFamilyOutput = outExt != "mkv" && outExt != "mka" && outExt != "mks" && outExt != "ts";
+    const bool tsFamilyOutput =
+        outExt != "mkv" && outExt != "mka" && outExt != "mks" && outExt != "webm" && outExt != "ts";
     if (!m_demuxMode && tsFamilyOutput && m_ptsOffset < MIN_BD_PTS_OFFSET)
     {
         LTRACE(LT_WARN, 2,
