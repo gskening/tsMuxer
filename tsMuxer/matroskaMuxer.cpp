@@ -1177,15 +1177,18 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
         // Dolby Vision configuration, as a BlockAdditionMapping beside the Video master. Without
         // it a player has no way to know the track is Dolby Vision, even when the RPU is present
         // in the stream, so the track simply plays as its HDR10 base layer.
+        //
+        // These mappings, and the hvcE and mvcC ones below, carry a configuration record and nothing else: no block of
+        // the track has BlockAdditions. So they have no BlockAddIDValue, and MaxBlockAdditionID keeps its default, 0,
+        // which says so. The value was written as 1, which RFC 9559 allows only for a mapping of type 0 (5.1.4.1.17.1
+        // and .3), and MaxBlockAdditionID as 1 although no block had one.
         if (track.dvBlockAddIdType)
         {
             uint8_t body[64];
             int b = 0;
-            b += ebml_write_uint(body + b, MATROSKA_ID_BLOCKADDIDVALUE, 1);
             b += ebml_write_uint(body + b, MATROSKA_ID_BLOCKADDIDTYPE, track.dvBlockAddIdType);
             b += ebml_write_binary(body + b, MATROSKA_ID_BLOCKADDIDEXTRADATA, track.dvConfig,
                                    static_cast<int>(sizeof(track.dvConfig)));
-            pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_MAXBLOCKADDITIONID, 1);
             pos += ebml_write_master_open(inner.data() + pos, MATROSKA_ID_BLOCKADDITIONMAPPING, b);
             memcpy(inner.data() + pos, body, b);
             pos += b;
@@ -1197,7 +1200,6 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
             {
                 std::vector<uint8_t> body2(64 + track.dvElConfig.size());
                 int b2 = 0;
-                b2 += ebml_write_uint(body2.data() + b2, MATROSKA_ID_BLOCKADDIDVALUE, 1);
                 b2 += ebml_write_uint(body2.data() + b2, MATROSKA_ID_BLOCKADDIDTYPE, 0x68766345 /* hvcE */);
                 b2 += ebml_write_binary(body2.data() + b2, MATROSKA_ID_BLOCKADDIDEXTRADATA, track.dvElConfig.data(),
                                         static_cast<int>(track.dvElConfig.size()));
@@ -1212,11 +1214,9 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
         {
             std::vector<uint8_t> body(64 + track.mvcConfig.size());
             int b = 0;
-            b += ebml_write_uint(body.data() + b, MATROSKA_ID_BLOCKADDIDVALUE, 1);
             b += ebml_write_uint(body.data() + b, MATROSKA_ID_BLOCKADDIDTYPE, 0x6D766343 /* mvcC */);
             b += ebml_write_binary(body.data() + b, MATROSKA_ID_BLOCKADDIDEXTRADATA, track.mvcConfig.data(),
                                    static_cast<int>(track.mvcConfig.size()));
-            pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_MAXBLOCKADDITIONID, 1);
             pos += ebml_write_master_open(inner.data() + pos, MATROSKA_ID_BLOCKADDITIONMAPPING, b);
             memcpy(inner.data() + pos, body.data(), b);
             pos += b;
