@@ -2357,8 +2357,16 @@ void MatroskaDemuxer::loadTrackExtras(const std::string& fileName)
         std::string flags;
         std::string colour;
         std::string display;
+        bool encrypted = false;
         for (const auto& [id, b, len] : elementsOf(entryBody, entrySize))
         {
+            // ContentEncodings > ContentEncoding > ContentEncryption, or a ContentEncodingType of 1 (encryption)
+            if (id == MATROSKA_ID_TRACKCONTENTENCODINGS)
+                for (const auto& [eid, eb, elen] : elementsOf(b, len))
+                    if (eid == MATROSKA_ID_TRACKCONTENTENCODING)
+                        for (const auto& [cid, cb, clen] : elementsOf(eb, elen))
+                            if (cid == 0x5035 || (cid == 0x5033 && readUInt(cb, clen) == 1))
+                                encrypted = true;
             static const std::pair<uint32_t, const char*> FLAGS[] = {{0x55AA, "forced"},   {0x55AB, "hearing"},
                                                                      {0x55AC, "visual"},   {0x55AD, "descriptions"},
                                                                      {0x55AE, "original"}, {0x55AF, "commentary"}};
@@ -2417,6 +2425,8 @@ void MatroskaDemuxer::loadTrackExtras(const std::string& fileName)
         if (number < 0)
             continue;
         auto& extras = m_trackExtras[number];
+        if (encrypted)
+            extras["encrypted"] = "1";
         if (!flags.empty())
             extras["srcflags"] = flags;
         if (!colour.empty())

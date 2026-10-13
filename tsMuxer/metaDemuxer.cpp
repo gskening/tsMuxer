@@ -1082,15 +1082,15 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
         streamInfo.m_lang = langFromFileName(fileList[0]);
         LTRACE(LT_INFO, 2, "Applying language " << streamInfo.m_lang << " taken from the file name");
     }
-    else if (dataReader == &m_containerReader)
+    if (dataReader == &m_containerReader)
     {
-        // No explicit lang=, so ask the container, exactly as the FPS block above asks it for a
-        // frame rate. A track that was tagged "deu" in its source used to come out untagged: the
-        // language was parsed and printed but never reached a muxer, and StreamInfo::m_lang has
-        // been sitting here unread ever since somebody started this and stopped.
+        // Ask the container about the track, exactly as the FPS block above asks it for a frame rate: its language
+        // where the meta gave no lang=, and, whatever the meta says, what only the Matroska muxer reads. Those used to
+        // be asked only without a lang=, so a lang= on the line dropped the source's default flag as well.
         //
-        // Deliberately NOT written into addParams["lang"]: SingleFileMuxer builds demuxed file
-        // names from that key, so filling it would silently rename every file a --demux produces.
+        // A track that was tagged "deu" in its source used to come out untagged: the language was parsed and printed
+        // but never reached a muxer. It is deliberately NOT written into addParams["lang"]: SingleFileMuxer builds
+        // demuxed file names from that key, so filling it would silently rename every file a --demux produces.
         // muxerManager passes this field on under its own key instead.
         //
         // ONLY for a single file, and that restriction is load bearing. getTrackList CONSUMES the
@@ -1099,8 +1099,8 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
         // JOINED track, "a"+"b", the files share one FileListIterator, so consuming the reader
         // here walks it past the first file and that file's picture never reaches the mux, while
         // the log still says "Mux successful complete". A first file smaller than one read block
-        // vanished completely. Asking the container for a language is not worth silently dropping
-        // a reel, and an explicit lang= still works on joined tracks.
+        // vanished completely. Asking the container is not worth silently dropping a reel, and an
+        // explicit lang= still works on joined tracks.
         if (const auto demuxerIt = fileList.size() == 1 ? m_containerReader.m_demuxers.find(fileList[0])
                                                         : m_containerReader.m_demuxers.end();
             demuxerIt != m_containerReader.m_demuxers.end() && demuxerIt->second.m_demuxer)
@@ -1109,8 +1109,17 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
             demuxerIt->second.m_demuxer->getTrackList(trackList);
             if (const auto trackIt = trackList.find(pid); trackIt != trackList.end())
             {
-                streamInfo.m_lang = trackIt->second.m_lang;
-                streamInfo.m_langBCP47 = trackIt->second.m_langBCP47;
+                // An encrypted track cannot be read without its key, which no file carries (RFC 9559, 14). Its blocks
+                // were muxed as they stand, and the output held noise in place of the track.
+                if (trackIt->second.m_srcParams.count("encrypted"))
+                    THROW(ERR_COMMON, "Track " << pid << " of " << unquoteStr(fileList[0])
+                                               << " is encrypted (Matroska ContentEncryption). tsMuxeR cannot "
+                                                  "decrypt it; leave the track out of the meta file.")
+                if (addParams.find("lang") == addParams.end())
+                {
+                    streamInfo.m_lang = trackIt->second.m_lang;
+                    streamInfo.m_langBCP47 = trackIt->second.m_langBCP47;
+                }
                 // Under their own keys, which only the Matroska muxer reads, and never over what the meta says.
                 for (const auto& [key, value] : trackIt->second.m_srcParams)
                     if (addParams.find(key) == addParams.end())
