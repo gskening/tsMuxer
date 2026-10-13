@@ -385,8 +385,23 @@ void ParsedAV1TrackData::extractData(AVPacket* pkt, uint8_t* buff, const int siz
 // ------------ VC-1 ---------------
 
 static constexpr int MS_BIT_MAP_HEADER_SIZE = 40;
-ParsedVC1TrackData::ParsedVC1TrackData(uint8_t* buff, const int size) : ParsedTrackPrivData(buff, size)
+ParsedVC1TrackData::ParsedVC1TrackData(uint8_t* buff, const int size, const bool decSpecStruc)
+    : ParsedTrackPrivData(buff, size)
 {
+    m_firstPacket = true;
+    if (decSpecStruc)
+    {
+        // V_VC1 (Matroska codec mapping, 3.3.27): a VC1DecSpecStruc (SMPTE RP 2025), whose fixed fields are followed
+        // by the sequence header and the entry point, each with its start code. Taken from the sequence header's
+        // start code on. The track was not read at all.
+        for (int i = 0; i + 4 <= size; ++i)
+            if (buff[i] == 0 && buff[i + 1] == 0 && buff[i + 2] == 1 && buff[i + 3] == 0x0F)
+            {
+                m_seqHeader.assign(buff + i, buff + size);
+                break;
+            }
+        return;
+    }
     if (size < MS_BIT_MAP_HEADER_SIZE)
         THROW(ERR_MATROSKA_PARSE, "Matroska parse error: Invalid or unsupported VC-1 stream")
     // After the 40 byte bitmap header: one byte with the length of the sequence header, then the header. A

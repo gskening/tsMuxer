@@ -269,6 +269,7 @@ constexpr auto MATROSKA_CODEC_ID_VVC_FOURCC = "V_MPEGI/ISO/VVC";
 constexpr auto MATROSKA_CODEC_ID_HEVC_FOURCC = "V_MPEGH/ISO/HEVC";
 constexpr auto MATROSKA_CODEC_ID_AVC_FOURCC = "V_MPEG4/ISO/AVC";
 constexpr auto MATROSKA_CODEC_ID_VIDEO_VFW_FOURCC = "V_MS/VFW/FOURCC";
+constexpr auto MATROSKA_CODEC_ID_VIDEO_VC1 = "V_VC1";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_ACM = "A_MS/ACM";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_AC3 = "A_AC3";
 constexpr auto MATROSKA_CODEC_ID_SRT = "S_TEXT/UTF8";
@@ -422,7 +423,8 @@ class ParsedSRTTrackData final : public ParsedTrackPrivData
 class ParsedVC1TrackData final : public ParsedTrackPrivData
 {
    public:
-    ParsedVC1TrackData(uint8_t* buff, int size);
+    // decSpecStruc: the CodecPrivate is a VC1DecSpecStruc (V_VC1) rather than a bitmap header (V_MS/VFW/FOURCC).
+    ParsedVC1TrackData(uint8_t* buff, int size, bool decSpecStruc = false);
     void extractData(AVPacket* pkt, uint8_t* buff, int size) override;
     ~ParsedVC1TrackData() override = default;
 

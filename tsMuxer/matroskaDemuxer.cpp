@@ -1637,6 +1637,10 @@ int MatroskaDemuxer::matroska_read_header()
             {
                 track->parsed_priv_data = new ParsedVC1TrackData(track->codec_priv, track->codec_priv_size);
             }
+            else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_VIDEO_VC1) && (track->codec_priv != nullptr))
+            {
+                track->parsed_priv_data = new ParsedVC1TrackData(track->codec_priv, track->codec_priv_size, true);
+            }
             else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_AUDIO_AC3))
             {
                 track->parsed_priv_data = new ParsedAC3TrackData(track->codec_priv, track->codec_priv_size);
