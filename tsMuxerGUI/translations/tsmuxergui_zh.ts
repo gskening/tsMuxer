@@ -4338,6 +4338,21 @@ Build the ISO anyway?</source>
         <source>%1 is only supported for MKV output. This track will be ignored for the selected output format.</source>
         <translation>%1 仅支持 MKV 输出。该轨道在所选输出格式下将被忽略。</translation>
     </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2974"/>
+        <source>Title:</source>
+        <translation>标题：</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2987"/>
+        <source>Keep the editions and links of a Matroska source</source>
+        <translation>保留 Matroska 源的版本和链接</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2984"/>
+        <source>Keep a Matroska source's chapters exactly as they are, every edition and every link to another file, and its segment identity, so that ordered editions and linked files still work after the remux. The file is read as it is stored, not as its ordered edition plays it. Not with a join, a cut or a split.</source>
+        <translation>按原样保留 Matroska 源的章节，包括每个版本和指向其他文件的每个链接，以及其分段标识，使有序版本和链接的文件在重新封装后仍能正常工作。文件按存储方式读取，而不是按其有序版本的播放方式读取。不能与合并、剪切或分割同时使用。</translation>
+    </message>
 </context>
 <context>
     <name>muxForm</name>

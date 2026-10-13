@@ -4339,6 +4339,21 @@ Mantener la imagen en torno a 66 GB (las dos primeras capas) mejora las probabil
         <source>%1 is only supported for MKV output. This track will be ignored for the selected output format.</source>
         <translation>%1 solo se admite con salida MKV. Esta pista se ignorará con el formato de salida seleccionado.</translation>
     </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2974"/>
+        <source>Title:</source>
+        <translation>Título:</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2987"/>
+        <source>Keep the editions and links of a Matroska source</source>
+        <translation>Conservar las ediciones y los enlaces de una fuente Matroska</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2984"/>
+        <source>Keep a Matroska source's chapters exactly as they are, every edition and every link to another file, and its segment identity, so that ordered editions and linked files still work after the remux. The file is read as it is stored, not as its ordered edition plays it. Not with a join, a cut or a split.</source>
+        <translation>Conserva los capítulos de una fuente Matroska tal como están, cada edición y cada enlace a otro archivo, y su identidad de segmento, para que las ediciones ordenadas y los archivos enlazados sigan funcionando tras el remux. El archivo se lee tal como está guardado, no como lo reproduce su edición ordenada. No con unión, corte ni división.</translation>
+    </message>
 </context>
 <context>
     <name>muxForm</name>

@@ -988,6 +988,13 @@ TsMuxerWindow::TsMuxerWindow()
 
     ui->DiskLabel->setVisible(false);
     ui->DiskLabelEdit->setVisible(false);
+    // The Matroska output's title and --keep-editions, shown for MKV output only. A double quote would end the quoted
+    // title in the meta, so it cannot be typed.
+    ui->mkvTitleEdit->setValidator(
+        new QRegularExpressionValidator(QRegularExpression(QStringLiteral("[^\"]*")), ui->mkvTitleEdit));
+    connect(ui->mkvTitleEdit, &QLineEdit::textChanged, this, &TsMuxerWindow::updateMetaLines);
+    connect(ui->mkvKeepEditionsCheck, &QCheckBox::checkStateChanged, this, &TsMuxerWindow::updateMetaLines);
+    updateMkvOutputOptions();
     // Nothing has been loaded yet, so nothing about Dolby Vision applies. The designer file hides
     // this row too, so it is never seen even for a frame; the call is here so the state comes from
     // the same rule that maintains it afterwards rather than from a designer default.
@@ -3269,6 +3276,14 @@ void TsMuxerWindow::showMkvTrackOptions(const QtvCodecInfo* codecInfo)
     updateMkvTrackOptionsEnabled();
 }
 
+void TsMuxerWindow::updateMkvOutputOptions()
+{
+    const bool mkv = ui->radioButtonMKV->isChecked();
+    ui->mkvTitleLabel->setVisible(mkv);
+    ui->mkvTitleEdit->setVisible(mkv);
+    ui->mkvKeepEditionsCheck->setVisible(mkv);
+}
+
 void TsMuxerWindow::updateMkvTrackOptionsEnabled()
 {
     const bool mkv = ui->radioButtonMKV->isChecked();
@@ -4148,6 +4163,15 @@ QString TsMuxerWindow::getMuxOpts()
     else if (ui->radioButtonMKV->isChecked() && ui->comboBoxDvProfile->isVisible() &&
              ui->comboBoxDvProfile->currentIndex() == 1)
         rez += " --dv-profile=8.1";
+    if (ui->radioButtonMKV->isChecked())
+    {
+        QString title = ui->mkvTitleEdit->text().trimmed();
+        title.remove(QLatin1Char('"'));
+        if (!title.isEmpty())
+            rez += QString(" --title=\"%1\"").arg(title);
+        if (ui->mkvKeepEditionsCheck->isChecked())
+            rez += " --keep-editions";
+    }
     // dual-layer guard options (Blu-ray / Blu-ray ISO output; the layer-break guard only takes effect
     // for ISO output, where tsMuxeR itself writes the image).
     if (ui->radioButtonBluRay->isChecked() || ui->radioButtonBluRayISO->isChecked())
@@ -5494,6 +5518,7 @@ void TsMuxerWindow::RadioButtonMuxClick()
     }
     ui->DiskLabel->setVisible(ui->radioButtonBluRayISO->isChecked());
     ui->DiskLabelEdit->setVisible(ui->radioButtonBluRayISO->isChecked());
+    updateMkvOutputOptions();
     ui->editDelay->setEnabled(!ui->radioButtonDemux->isChecked());
     updateMkvTrackOptionsEnabled();
     colorizeAllRows();
@@ -5530,7 +5555,7 @@ void TsMuxerWindow::outFileNameChanged()
     // starts, with a message that names the extension it needs.
     if (ext == "M2TS")
         ui->radioButtonM2TS->setChecked(true);
-    else if (ext == "MKV" || ext == "MKA")
+    else if (ext == "MKV" || ext == "MKA" || ext == "WEBM")
         ui->radioButtonMKV->setChecked(true);
     else if (ext == "ISO")
         ui->radioButtonBluRayISO->setChecked(true);
@@ -5539,6 +5564,7 @@ void TsMuxerWindow::outFileNameChanged()
 
     ui->DiskLabel->setVisible(ui->radioButtonBluRayISO->isChecked());
     ui->DiskLabelEdit->setVisible(ui->radioButtonBluRayISO->isChecked());
+    updateMkvOutputOptions();
     // A name whose extension chooses another output changes everything the output decides, exactly
     // as a click on that output's button does. Only the switch to or from ISO used to rebuild the
     // meta, so a name ending in .mkv typed while TS was chosen left the meta as it was for TS: a

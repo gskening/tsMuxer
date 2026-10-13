@@ -4338,6 +4338,21 @@ Créer l'ISO malgré tout ?</translation>
         <source>%1 is only supported for MKV output. This track will be ignored for the selected output format.</source>
         <translation>%1 n'est pris en charge que pour la sortie MKV. Cette piste sera ignorée pour le format de sortie sélectionné.</translation>
     </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2974"/>
+        <source>Title:</source>
+        <translation>Titre :</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2987"/>
+        <source>Keep the editions and links of a Matroska source</source>
+        <translation>Conserver les éditions et les liens d'une source Matroska</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="2984"/>
+        <source>Keep a Matroska source's chapters exactly as they are, every edition and every link to another file, and its segment identity, so that ordered editions and linked files still work after the remux. The file is read as it is stored, not as its ordered edition plays it. Not with a join, a cut or a split.</source>
+        <translation>Conserve les chapitres d'une source Matroska tels quels, chaque édition et chaque lien vers un autre fichier, ainsi que son identité de segment, pour que les éditions ordonnées et les fichiers liés fonctionnent encore après le remux. Le fichier est lu tel qu'il est stocké, et non tel que son édition ordonnée le lit. Pas avec une jonction, une coupe ou un découpage.</translation>
+    </message>
 </context>
 <context>
     <name>muxForm</name>
