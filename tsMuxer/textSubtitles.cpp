@@ -196,7 +196,7 @@ RGBQUAD TextToPGSConverter::YUVAToRGBA(const YUVQuad& yuv)
     rez.rgbBlue = static_cast<uint8_t>(FFMAX(FFMIN(tmp, 255L), 0));
     tmp = lround(298.082 * yuv.Y - 208.120 * yuv.Cr - 100.291 * yuv.Cb + 34835.456) >> 8;
     rez.rgbGreen = static_cast<uint8_t>(FFMAX(FFMIN(tmp, 255L), 0));
-    tmp = lround(298.082 * yuv.Y + 516.412 * yuv.Cr - 56939.776) >> 8;
+    tmp = lround(298.082 * yuv.Y + 408.583 * yuv.Cr - 56939.776) >> 8;
     rez.rgbRed = static_cast<uint8_t>(FFMAX(FFMIN(tmp, 255L), 0));
     rez.rgbReserved = yuv.alpha;
     return rez;
