@@ -80,6 +80,12 @@ class MatroskaMuxer final : public AbstractMuxer
         bool defaultExplicit;         // the meta carried "default" on this track at all
         bool markedDefault;           // and it did not say none, no, 0, false or off
         bool isDefault;               // resolved: exactly one per track type
+        // FlagForced and the five accessibility and origin flags, by element id, as the source or the meta gave them.
+        std::map<uint32_t, int> flags;
+        // From the source container, for what the stream itself does not say (srccolour, srcdisplay).
+        std::map<std::string, double> srcColour;  // m, r, t, p, cll, fall, rx ... lmin, as present
+        unsigned srcDisplayWidth = 0;
+        unsigned srcDisplayHeight = 0;
         AbstractStreamReader* codecReader;
 
         // Video-specific

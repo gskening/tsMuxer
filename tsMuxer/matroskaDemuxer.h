@@ -105,6 +105,9 @@ class MatroskaDemuxer final : public IOContextDemuxer
     std::string m_sourceName;        // the file openFile opened: getVideoSpanNano reads it on a handle of its own
     void loadAttachments(const std::string& fileName);
     void loadChapters(const std::string& fileName);
+    void loadTrackExtras(const std::string& fileName);
+    // Per track number, what loadTrackExtras found, under the keys the muxers read (srcflags, srccolour, ...).
+    std::map<int64_t, std::map<std::string, std::string>> m_trackExtras;
     void applyStartCodeRule();
     std::vector<std::string> m_joinFiles;  // the files of a joined input, in order; empty for a single file
     size_t m_joinPart = 0;                 // the part being read: one more for each header met inside the stream

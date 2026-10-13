@@ -121,6 +121,13 @@ static constexpr uint16_t MATROSKA_ID_VIDEODISPLAYWIDTH = 0x54B0;
 static constexpr uint16_t MATROSKA_ID_VIDEODISPLAYHEIGHT = 0x54BA;
 static constexpr uint8_t MATROSKA_ID_VIDEOPIXELWIDTH = 0xB0;
 static constexpr uint8_t MATROSKA_ID_VIDEOPIXELHEIGHT = 0xBA;
+static constexpr uint16_t MATROSKA_ID_VIDEODISPLAYUNIT = 0x54B2;
+static constexpr uint16_t MATROSKA_ID_TRACKFLAGFORCED = 0x55AA;
+static constexpr uint16_t MATROSKA_ID_TRACKFLAGHEARINGIMPAIRED = 0x55AB;
+static constexpr uint16_t MATROSKA_ID_TRACKFLAGVISUALIMPAIRED = 0x55AC;
+static constexpr uint16_t MATROSKA_ID_TRACKFLAGTEXTDESCRIPTIONS = 0x55AD;
+static constexpr uint16_t MATROSKA_ID_TRACKFLAGORIGINAL = 0x55AE;
+static constexpr uint16_t MATROSKA_ID_TRACKFLAGCOMMENTARY = 0x55AF;
 static constexpr uint8_t MATROSKA_ID_VIDEOFLAGINTERLACED = 0x9A;
 static constexpr uint16_t MATROSKA_ID_VIDEOSTEREOMODE = 0x53B9;
 // 0x53B9 above is OldStereoMode, which almost nothing writes any more. The current element

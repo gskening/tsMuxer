@@ -331,6 +331,40 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
 
     if (const auto nm = params.find("track-name"); nm != params.end())
         track.name = nm->second;
+    else if (const auto src = params.find("srcname"); src != params.end())
+        track.name = src->second;  // the source's own name, which a remux used to drop
+
+    // The source's track flags (srcflags: forced=1,hearing=0,...), which a remux used to drop.
+    if (const auto src = params.find("srcflags"); src != params.end())
+    {
+        static const std::pair<const char*, uint32_t> NAMES[] = {
+            {"forced", MATROSKA_ID_TRACKFLAGFORCED},         {"hearing", MATROSKA_ID_TRACKFLAGHEARINGIMPAIRED},
+            {"visual", MATROSKA_ID_TRACKFLAGVISUALIMPAIRED}, {"descriptions", MATROSKA_ID_TRACKFLAGTEXTDESCRIPTIONS},
+            {"original", MATROSKA_ID_TRACKFLAGORIGINAL},     {"commentary", MATROSKA_ID_TRACKFLAGCOMMENTARY}};
+        for (const std::string& item : splitStr(src->second.c_str(), ','))
+        {
+            const size_t eq = item.find('=');
+            for (const auto& [flagName, flagId] : NAMES)
+                if (eq != std::string::npos && item.compare(0, eq, flagName) == 0)
+                    track.flags[flagId] = item.substr(eq + 1) == "1" ? 1 : 0;
+        }
+    }
+    // Container colour and mastering metadata (srccolour: m=9;t=16;...), for when the stream carries none.
+    if (const auto src = params.find("srccolour"); src != params.end())
+        for (const std::string& item : splitStr(src->second.c_str(), ';'))
+            if (const size_t eq = item.find('='); eq != std::string::npos)
+                track.srcColour[item.substr(0, eq)] = strtod(item.c_str() + eq + 1, nullptr);
+    // The size the container said to show the picture at (srcdisplay: 640x480). It says more than the stream's own
+    // aspect ratio, which for square pixels is just the picture's shape; an ar= in the meta says more than both.
+    if (const auto src = params.find("srcdisplay"); src != params.end() && params.find("ar") == params.end())
+    {
+        const size_t x = src->second.find('x');
+        if (x != std::string::npos)
+        {
+            track.srcDisplayWidth = static_cast<unsigned>(strtoul(src->second.c_str(), nullptr, 10));
+            track.srcDisplayHeight = static_cast<unsigned>(strtoul(src->second.c_str() + x + 1, nullptr, 10));
+        }
+    }
     // "default" already exists and is documented for Blu-ray; it just never reached Matroska.
     // Its VALUE is read now. Testing only for presence meant default=0 marked the track as THE
     // default, and it also meant "no default for this type" could not be said at all, because a
@@ -338,6 +372,10 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
     const auto defaultParam = params.find("default");
     track.defaultExplicit = defaultParam != params.end();
     track.markedDefault = track.defaultExplicit && !defaultParamMeansNo(defaultParam->second);
+    // default=forced, also set from a subtitle file named "forced", is the forced track. Matroska has a flag for that,
+    // FlagForced, and it was not written: the track came out as the default one and nothing more.
+    if (track.defaultExplicit && strToLowerCase(defaultParam->second) == "forced")
+        track.flags[MATROSKA_ID_TRACKFLAGFORCED] = 1;
     if (!track.defaultExplicit)
     {
         // Nothing said in the meta, so the source container's own flag stands in. METADemuxer puts
@@ -1005,7 +1043,14 @@ void MatroskaMuxer::writeSegmentInfo()
 int MatroskaMuxer::writeColourInfo(uint8_t* dst, const MkvTrackInfo& track)
 {
     const bool haveMastering = track.isHdr10 && (HDR10_metadata[3] != 0 || HDR10_metadata[4] != 0);
-    if (!track.hasColourDesc && !haveMastering)
+    // What the source container says, for what the stream does not. HDR metadata that a file keeps only in its
+    // container, as many do, was dropped by a remux, so the copy played as plain SDR.
+    const auto src = [&track](const char* key) { return track.srcColour.find(key); };
+    const bool srcColourDesc =
+        src("m") != track.srcColour.end() || src("t") != track.srcColour.end() || src("p") != track.srcColour.end();
+    const bool srcMastering = src("lmax") != track.srcColour.end() || src("rx") != track.srcColour.end();
+    const bool srcLight = src("cll") != track.srcColour.end() || src("fall") != track.srcColour.end();
+    if (!track.hasColourDesc && !haveMastering && track.srcColour.empty())
         return 0;
 
     uint8_t body[256];
@@ -1015,6 +1060,43 @@ int MatroskaMuxer::writeColourInfo(uint8_t* dst, const MkvTrackInfo& track)
         p += ebml_write_uint(body + p, MATROSKA_ID_COLOURMATRIXCOEFF, track.colourMatrix);
         p += ebml_write_uint(body + p, MATROSKA_ID_COLOURTRANSFERCHARACTER, track.colourTransfer);
         p += ebml_write_uint(body + p, MATROSKA_ID_COLOURPRIMARIES, track.colourPrimaries);
+    }
+    else if (srcColourDesc)
+    {
+        for (const auto& [key, id] : {std::pair<const char*, uint32_t>{"m", MATROSKA_ID_COLOURMATRIXCOEFF},
+                                      {"t", MATROSKA_ID_COLOURTRANSFERCHARACTER},
+                                      {"p", MATROSKA_ID_COLOURPRIMARIES}})
+            if (const auto it = src(key); it != track.srcColour.end())
+                p += ebml_write_uint(body + p, id, static_cast<uint64_t>(it->second));
+    }
+    if (const auto it = src("r"); it != track.srcColour.end())
+        p += ebml_write_uint(body + p, MATROSKA_ID_COLOURRANGE, static_cast<uint64_t>(it->second));
+    if (!haveMastering && (srcLight || srcMastering))
+    {
+        for (const auto& [key, id] :
+             {std::pair<const char*, uint32_t>{"cll", MATROSKA_ID_COLOURMAXCLL}, {"fall", MATROSKA_ID_COLOURMAXFALL}})
+            if (const auto it = src(key); it != track.srcColour.end() && it->second > 0)
+                p += ebml_write_uint(body + p, id, static_cast<uint64_t>(it->second));
+        if (srcMastering)
+        {
+            uint8_t mm[192];
+            int m = 0;
+            for (const auto& [key, id] : {std::pair<const char*, uint32_t>{"rx", MATROSKA_ID_PRIMARYRCHROMATICITYX},
+                                          {"ry", MATROSKA_ID_PRIMARYRCHROMATICITYY},
+                                          {"gx", MATROSKA_ID_PRIMARYGCHROMATICITYX},
+                                          {"gy", MATROSKA_ID_PRIMARYGCHROMATICITYY},
+                                          {"bx", MATROSKA_ID_PRIMARYBCHROMATICITYX},
+                                          {"by", MATROSKA_ID_PRIMARYBCHROMATICITYY},
+                                          {"wx", MATROSKA_ID_WHITEPOINTCHROMATICITYX},
+                                          {"wy", MATROSKA_ID_WHITEPOINTCHROMATICITYY},
+                                          {"lmax", MATROSKA_ID_LUMINANCEMAX},
+                                          {"lmin", MATROSKA_ID_LUMINANCEMIN}})
+                if (const auto it = src(key); it != track.srcColour.end())
+                    m += ebml_write_float(mm + m, id, it->second);
+            p += ebml_write_master_open(body + p, MATROSKA_ID_MASTERINGMETADATA, m);
+            memcpy(body + p, mm, m);
+            p += m;
+        }
     }
 
     if (haveMastering)
@@ -1076,6 +1158,7 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
     pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_TRACKTYPE, track.trackType);
     pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_TRACKFLAGLACING, 0);
     pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_TRACKFLAGDEFAULT, track.isDefault ? 1 : 0);
+    for (const auto& [flagId, value] : track.flags) pos += ebml_write_uint(inner.data() + pos, flagId, value);
     if (!track.name.empty())
         pos += ebml_write_string(inner.data() + pos, MATROSKA_ID_TRACKNAME, track.name);
     pos += ebml_write_string(inner.data() + pos, MATROSKA_ID_CODECID, track.matroskaCodecID);
@@ -1131,8 +1214,14 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
         if (track.interlaced)
             vPos += ebml_write_uint(videoBuf + vPos, MATROSKA_ID_VIDEOFLAGINTERLACED, 1);
 
-        // Write DisplayWidth / DisplayHeight for non-square-pixel content
-        if (track.streamAR != VideoAspectRatio::AR_KEEP_DEFAULT && track.streamAR != VideoAspectRatio::AR_VGA)
+        // Write DisplayWidth / DisplayHeight for non-square-pixel content. The size the source container gave comes
+        // first: a picture shown 4:3 by its container came out shown at its pixel size.
+        if (track.srcDisplayWidth && track.srcDisplayHeight)
+        {
+            vPos += ebml_write_uint(videoBuf + vPos, MATROSKA_ID_VIDEODISPLAYWIDTH, track.srcDisplayWidth);
+            vPos += ebml_write_uint(videoBuf + vPos, MATROSKA_ID_VIDEODISPLAYHEIGHT, track.srcDisplayHeight);
+        }
+        else if (track.streamAR != VideoAspectRatio::AR_KEEP_DEFAULT && track.streamAR != VideoAspectRatio::AR_VGA)
         {
             unsigned displayWidth = track.width;
             unsigned displayHeight = track.height;

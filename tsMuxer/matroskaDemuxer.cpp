@@ -4,6 +4,8 @@
 #include <climits>
 #include <functional>
 #include <set>
+#include <sstream>
+#include <tuple>
 
 #include <fs/systemlog.h>
 #include <types/types.h>
@@ -1115,6 +1117,7 @@ void MatroskaDemuxer::openFile(const std::string& streamName)
     // Separately, on its own handle, so nothing about the streaming read is disturbed.
     loadAttachments(streamName);
     loadChapters(streamName);
+    loadTrackExtras(streamName);
     applyStartCodeRule();
 }
 
@@ -2265,6 +2268,160 @@ void MatroskaDemuxer::loadChapters(const std::string& fileName)
         scan.pos = b + len;
     }
     chapters = std::move(found);
+}
+
+// What a Matroska source says about a track beyond what the stream itself carries, for the outputs that can keep it:
+// its flags, its colour description and mastering metadata, and the size to show it at. All of it was parsed and
+// dropped, or not parsed, so a remux lost the forced flag of a subtitle, the HDR metadata that lives only in the
+// container (common in files from other muxers), and a display aspect ratio given by the container. Read on a handle
+// of its own, keyed by track number, as strings the muxers take or leave:
+//   srcflags    forced=1,hearing=1,visual=1,descriptions=1,original=1,commentary=1 (the flags present, with their
+//   value) srccolour   m=,r=,t=,p=,cll=,fall= and rx= ry= gx= gy= bx= by= wx= wy= lmax= lmin= (the elements present)
+//   srcdisplay  WIDTHxHEIGHT, when DisplayUnit is pixels and the size differs from the picture's
+void MatroskaDemuxer::loadTrackExtras(const std::string& fileName)
+{
+    m_trackExtras.clear();
+    File f;
+    if (!f.open(fileName.c_str(), File::ofRead))
+        return;
+    const int64_t fileSize = f.size();
+    EbmlScan scan(f);
+    int64_t body = 0, size = 0;
+    if (!findTopLevelElement(scan, fileSize, MATROSKA_ID_TRACKS, body, size))
+        return;
+
+    const auto readUInt = [&](const int64_t at, const int64_t width) -> uint64_t
+    {
+        uint64_t out = 0;
+        if (width <= 0 || width > 8)
+            return 0;
+        uint8_t buf[8] = {0};
+        scan.f.seek(at);
+        if (scan.f.read(buf, static_cast<uint32_t>(width)) != static_cast<int>(width))
+            return 0;
+        for (int i = 0; i < static_cast<int>(width); ++i) out = (out << 8) | buf[i];
+        return out;
+    };
+    const auto readFloat = [&](const int64_t at, const int64_t width) -> double
+    {
+        uint8_t buf[8] = {0};
+        if (width != 4 && width != 8)
+            return 0;
+        scan.f.seek(at);
+        if (scan.f.read(buf, static_cast<uint32_t>(width)) != static_cast<int>(width))
+            return 0;
+        uint64_t bits = 0;
+        for (int i = 0; i < static_cast<int>(width); ++i) bits = (bits << 8) | buf[i];
+        if (width == 4)
+        {
+            const auto b32 = static_cast<uint32_t>(bits);
+            float v;
+            memcpy(&v, &b32, 4);
+            return v;
+        }
+        double v;
+        memcpy(&v, &bits, 8);
+        return v;
+    };
+    const auto toText = [](const double v)
+    {
+        std::ostringstream s;
+        s.precision(10);
+        s << v;
+        return s.str();
+    };
+    // The elements of one master, as (id, body, size).
+    const auto elementsOf = [&](const int64_t at, const int64_t len)
+    {
+        std::vector<std::tuple<uint32_t, int64_t, int64_t>> out;
+        scan.pos = at;
+        while (scan.pos < at + len)
+        {
+            uint32_t id = 0;
+            int64_t sz = 0, b = 0;
+            if (!scan.readElement(id, sz, b) || b + sz > at + len)
+                break;
+            out.emplace_back(id, b, sz);
+            scan.pos = b + sz;
+        }
+        return out;
+    };
+
+    for (const auto& [entryId, entryBody, entrySize] : elementsOf(body, size))
+    {
+        if (entryId != MATROSKA_ID_TRACKENTRY)
+            continue;
+        int64_t number = -1;
+        std::string flags;
+        std::string colour;
+        std::string display;
+        for (const auto& [id, b, len] : elementsOf(entryBody, entrySize))
+        {
+            static const std::pair<uint32_t, const char*> FLAGS[] = {{0x55AA, "forced"},   {0x55AB, "hearing"},
+                                                                     {0x55AC, "visual"},   {0x55AD, "descriptions"},
+                                                                     {0x55AE, "original"}, {0x55AF, "commentary"}};
+            if (id == MATROSKA_ID_TRACKNUMBER)
+                number = static_cast<int64_t>(readUInt(b, len));
+            for (const auto& [flagId, flagName] : FLAGS)
+                if (id == flagId)
+                    flags += std::string(flags.empty() ? "" : ",") + flagName + "=" + (readUInt(b, len) ? "1" : "0");
+            if (id != MATROSKA_ID_TRACKVIDEO)
+                continue;
+            uint64_t pixelWidth = 0, pixelHeight = 0, displayWidth = 0, displayHeight = 0, displayUnit = 0;
+            for (const auto& [vid, vb, vlen] : elementsOf(b, len))
+            {
+                if (vid == MATROSKA_ID_VIDEOPIXELWIDTH)
+                    pixelWidth = readUInt(vb, vlen);
+                else if (vid == MATROSKA_ID_VIDEOPIXELHEIGHT)
+                    pixelHeight = readUInt(vb, vlen);
+                else if (vid == MATROSKA_ID_VIDEODISPLAYWIDTH)
+                    displayWidth = readUInt(vb, vlen);
+                else if (vid == MATROSKA_ID_VIDEODISPLAYHEIGHT)
+                    displayHeight = readUInt(vb, vlen);
+                else if (vid == MATROSKA_ID_VIDEODISPLAYUNIT)
+                    displayUnit = readUInt(vb, vlen);
+                else if (vid == MATROSKA_ID_VIDEOCOLOUR)
+                {
+                    static const std::pair<uint32_t, const char*> UINTS[] = {
+                        {MATROSKA_ID_COLOURMATRIXCOEFF, "m"},       {MATROSKA_ID_COLOURRANGE, "r"},
+                        {MATROSKA_ID_COLOURTRANSFERCHARACTER, "t"}, {MATROSKA_ID_COLOURPRIMARIES, "p"},
+                        {MATROSKA_ID_COLOURMAXCLL, "cll"},          {MATROSKA_ID_COLOURMAXFALL, "fall"}};
+                    static const std::pair<uint32_t, const char*> FLOATS[] = {
+                        {MATROSKA_ID_PRIMARYRCHROMATICITYX, "rx"},   {MATROSKA_ID_PRIMARYRCHROMATICITYY, "ry"},
+                        {MATROSKA_ID_PRIMARYGCHROMATICITYX, "gx"},   {MATROSKA_ID_PRIMARYGCHROMATICITYY, "gy"},
+                        {MATROSKA_ID_PRIMARYBCHROMATICITYX, "bx"},   {MATROSKA_ID_PRIMARYBCHROMATICITYY, "by"},
+                        {MATROSKA_ID_WHITEPOINTCHROMATICITYX, "wx"}, {MATROSKA_ID_WHITEPOINTCHROMATICITYY, "wy"},
+                        {MATROSKA_ID_LUMINANCEMAX, "lmax"},          {MATROSKA_ID_LUMINANCEMIN, "lmin"}};
+                    for (const auto& [cid, cb, clen] : elementsOf(vb, vlen))
+                    {
+                        for (const auto& [uid, key] : UINTS)
+                            if (cid == uid)
+                                colour += std::string(colour.empty() ? "" : ";") + key + "=" +
+                                          std::to_string(readUInt(cb, clen));
+                        if (cid != MATROSKA_ID_MASTERINGMETADATA)
+                            continue;
+                        for (const auto& [mid, mb, mlen] : elementsOf(cb, clen))
+                            for (const auto& [fid, key] : FLOATS)
+                                if (mid == fid)
+                                    colour += std::string(colour.empty() ? "" : ";") + key + "=" +
+                                              toText(readFloat(mb, mlen));
+                    }
+                }
+            }
+            if (displayUnit == 0 && displayWidth && displayHeight &&
+                (displayWidth != pixelWidth || displayHeight != pixelHeight))
+                display = std::to_string(displayWidth) + "x" + std::to_string(displayHeight);
+        }
+        if (number < 0)
+            continue;
+        auto& extras = m_trackExtras[number];
+        if (!flags.empty())
+            extras["srcflags"] = flags;
+        if (!colour.empty())
+            extras["srccolour"] = colour;
+        if (!display.empty())
+            extras["srcdisplay"] = display;
+    }
 }
 
 void MatroskaDemuxer::loadAttachments(const std::string& fileName)
@@ -3420,6 +3577,10 @@ void MatroskaDemuxer::getTrackList(std::map<int32_t, TrackInfo>& trackList)
         trackList[i + 1] = TrackInfo(getTrackType(tracks[i]), tracks[i]->language, 0, 0,
                                      (tracks[i]->flags & MATROSKA_TRACK_DEFAULT) ? 1 : 0);
         trackList[i + 1].m_langBCP47 = tracks[i]->languageBCP47;
+        if (const auto extras = m_trackExtras.find(tracks[i]->num); extras != m_trackExtras.end())
+            trackList[i + 1].m_srcParams = extras->second;
+        if (tracks[i]->name && tracks[i]->name[0])
+            trackList[i + 1].m_srcParams["srcname"] = tracks[i]->name;
     }
 }
 

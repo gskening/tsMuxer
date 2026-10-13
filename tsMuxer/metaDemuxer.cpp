@@ -1108,6 +1108,10 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
             {
                 streamInfo.m_lang = trackIt->second.m_lang;
                 streamInfo.m_langBCP47 = trackIt->second.m_langBCP47;
+                // Under their own keys, which only the Matroska muxer reads, and never over what the meta says.
+                for (const auto& [key, value] : trackIt->second.m_srcParams)
+                    if (addParams.find(key) == addParams.end())
+                        streamInfo.m_addParams[key] = value;
 
                 // The source's own default flag, under a key only the Matroska muxer reads. It was
                 // parsed and thrown away, so a remux replaced the source's choice with "the first
@@ -1179,7 +1183,7 @@ static bool isKnownTrackParam(const std::string& name)
         "font-border", "font-charset", "line-spacing", "bottom-offset", "fadein-time", "fadeout-time", "keep-text",
         // set internally, never written by a user, but accepted so a round tripped meta does
         // not warn. srcdefault is the source container's own default track flag.
-        "srclang", "srclangbcp47", "srcdefault"};
+        "srclang", "srclangbcp47", "srcdefault", "srcname", "srcflags", "srccolour", "srcdisplay"};
     return known.find(name) != known.end();
 }
 
