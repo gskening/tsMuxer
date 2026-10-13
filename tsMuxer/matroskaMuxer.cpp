@@ -1264,8 +1264,13 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
         int vPos = 0;
         vPos += ebml_write_uint(videoBuf + vPos, MATROSKA_ID_VIDEOPIXELWIDTH, track.width);
         vPos += ebml_write_uint(videoBuf + vPos, MATROSKA_ID_VIDEOPIXELHEIGHT, track.height);
+        // FlagInterlaced: 1 interlaced, 2 progressive. Progressive was not written, which a reader takes as
+        // undetermined (RFC 9559, 5.1.4.1.28.1, where 0 SHOULD be avoided). Only the MPEG-2, H.264 and VC-1 readers
+        // find out which it is; for the others nothing is written, as before.
         if (track.interlaced)
             vPos += ebml_write_uint(videoBuf + vPos, MATROSKA_ID_VIDEOFLAGINTERLACED, 1);
+        else if (track.codecID == CODEC_V_MPEG2 || track.codecID == CODEC_V_MPEG4_H264 || track.codecID == CODEC_V_VC1)
+            vPos += ebml_write_uint(videoBuf + vPos, MATROSKA_ID_VIDEOFLAGINTERLACED, 2);
 
         // Write DisplayWidth / DisplayHeight for non-square-pixel content. The size the source container gave comes
         // first: a picture shown 4:3 by its container came out shown at its pixel size.
