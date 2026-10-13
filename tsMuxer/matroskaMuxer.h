@@ -93,7 +93,10 @@ class MatroskaMuxer final : public AbstractMuxer
         unsigned srcDisplayHeight = 0;
         int64_t endPaddingNs = 0;      // DiscardPadding for the track's last block (Opus), from the source
         uint64_t srcCodecDelayNs = 0;  // CodecDelay from the source's edit list (srccodecdelay), AAC from MP4
-        bool finalFlush = false;       // the frame being written is the track's last
+        bool mp3InfoChecked = false;   // the first MPEG audio frame was looked at for a Xing/Info frame
+        int mp3Delay = -1;             // its LAME encoder delay and padding in samples, -1 without one
+        int mp3Padding = 0;
+        bool finalFlush = false;  // the frame being written is the track's last
         AbstractStreamReader* codecReader;
 
         // Video-specific

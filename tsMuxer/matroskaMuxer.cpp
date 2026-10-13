@@ -1798,6 +1798,15 @@ void MatroskaMuxer::refreshTrackProperties()
                 track.bitDepth = lpcmReader->m_bitsPerSample;
             // BitDepth for the lossless codecs whose readers know it: FLAC from its STREAMINFO, DTS-HD from its
             // extension. It was written for LPCM alone.
+            // An MP3's LAME delay and padding (muxPacket), in samples, with the 529 samples an MP3 decoder itself puts
+            // in front: what a player skips at the start, and what it drops of the last frame.
+            if (track.mp3Delay >= 0 && track.sampleRate > 0)
+            {
+                track.srcCodecDelayNs = static_cast<uint64_t>(track.mp3Delay + 529) * 1000000000ULL /
+                                        static_cast<uint64_t>(track.sampleRate);
+                if (track.mp3Padding > 529)
+                    track.endPaddingNs = static_cast<int64_t>(track.mp3Padding - 529) * 1000000000LL / track.sampleRate;
+            }
             if (const auto flac = dynamic_cast<FLACStreamReader*>(track.codecReader);
                 flac && flac->getBitsPerSample() > 0)
                 track.bitDepth = flac->getBitsPerSample();
@@ -3124,6 +3133,47 @@ void MatroskaMuxer::drainHeldFrames(MkvTrackInfo& track, const bool atEndOfStrea
     }
 }
 
+// The first frame of an MP3 written by LAME and its kind is a Xing or Info frame: no sound, but the stream's length
+// and, in the LAME tag after it, the encoder delay and padding in samples (12 bits each). True when frame is one, with
+// delay and padding set, -1 for the delay when it has no LAME tag.
+static bool readMp3InfoFrame(const uint8_t* frame, const int size, int& delay, int& padding)
+{
+    delay = -1;
+    padding = 0;
+    if (size < 4 || frame[0] != 0xFF || (frame[1] & 0xE0) != 0xE0)
+        return false;
+    const bool mpeg1 = (frame[1] >> 3 & 3) == 3;
+    const bool crc = (frame[1] & 1) == 0;
+    const bool mono = (frame[3] >> 6) == 3;
+    const int sideInfo = mpeg1 ? (mono ? 17 : 32) : (mono ? 9 : 17);
+    const int tag = 4 + (crc ? 2 : 0) + sideInfo;
+    if (tag + 8 > size || (memcmp(frame + tag, "Xing", 4) != 0 && memcmp(frame + tag, "Info", 4) != 0))
+        return false;
+    const uint32_t flags =
+        static_cast<uint32_t>(frame[tag + 4]) << 24 | frame[tag + 5] << 16 | frame[tag + 6] << 8 | frame[tag + 7];
+    int p = tag + 8;
+    if (flags & 1)
+        p += 4;  // frames
+    if (flags & 2)
+        p += 4;  // bytes
+    if (flags & 4)
+        p += 100;  // seek table
+    if (flags & 8)
+        p += 4;  // quality
+    // the LAME tag: a 9 character encoder name, then at 21 bytes from it the delay and the padding
+    if (p + 24 <= size)
+    {
+        bool printable = true;
+        for (int i = 0; i < 4; ++i) printable = printable && frame[p + i] >= 0x20 && frame[p + i] < 0x7F;
+        if (printable)
+        {
+            delay = frame[p + 21] << 4 | frame[p + 22] >> 4;
+            padding = (frame[p + 22] & 0x0F) << 8 | frame[p + 23];
+        }
+    }
+    return true;
+}
+
 bool MatroskaMuxer::muxPacket(AVPacket& avPacket)
 {
     if (avPacket.data == nullptr || avPacket.size == 0)
@@ -3132,6 +3182,16 @@ bool MatroskaMuxer::muxPacket(AVPacket& avPacket)
     auto it = m_tracks.find(avPacket.stream_index);
     if (it == m_tracks.end())
         return true;
+
+    // The Xing or Info frame at the start of an MP3 holds no sound, and was written as a frame of silence. It is left
+    // out, and the LAME encoder delay and padding it gives become CodecDelay and DiscardPadding (writeDeferredHeader),
+    // as a player skips them in an MP3 file.
+    if (it->second.codecID == CODEC_A_MPEG_AUDIO && !it->second.mp3InfoChecked)
+    {
+        it->second.mp3InfoChecked = true;
+        if (readMp3InfoFrame(avPacket.data, avPacket.size, it->second.mp3Delay, it->second.mp3Padding))
+            return true;
+    }
 
     // Before the header is written, buffer packets and wait until every track that needs its first
     // packet has delivered one. This ensures those codec readers are fully initialized (e.g. audio
