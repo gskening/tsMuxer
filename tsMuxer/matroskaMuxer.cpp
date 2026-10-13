@@ -2135,7 +2135,7 @@ void MatroskaMuxer::writeChapters()
     uint8_t ed[32];
     int e = 0;
     e += ebml_write_uint(ed + e, MATROSKA_ID_EDITIONUID, 0x0EDU);
-    e += ebml_write_uint(ed + e, MATROSKA_ID_EDITIONFLAGHIDDEN, 0);
+    // No EditionFlagHidden: RFC 9559 does not define it (0x45BD is not in its element list).
     e += ebml_write_uint(ed + e, MATROSKA_ID_EDITIONFLAGDEFAULT, 1);
     edition.insert(edition.end(), ed, ed + e);
     edition.insert(edition.end(), atoms.begin(), atoms.end());
