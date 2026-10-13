@@ -1113,9 +1113,13 @@ void MovDemuxer::getTrackList(std::map<int32_t, TrackInfo>& trackList)
     for (int i = 0; i < num_tracks; i++)
     {
         if (tracks[i]->type != IOContextTrackType::CONTROL)
+        {
             trackList.insert(
                 std::make_pair(i + 1, TrackInfo(tracks[i]->type == IOContextTrackType::SUBTITLE ? TRACKTYPE_SRT : 0,
                                                 tracks[i]->language, 0)));
+            if (const auto delay = m_codecDelayNs.find(i + 1); delay != m_codecDelayNs.end() && delay->second > 0)
+                trackList[i + 1].m_srcParams["srccodecdelay"] = std::to_string(delay->second);
+        }
     }
 }
 
@@ -1718,6 +1722,17 @@ int MovDemuxer::mov_read_moov(MOVAtom atom)
         m_firstTimecode[track] = units * 1000 / m_timescale;
     }
     m_emptyEditUnits.clear();
+    // An audio track's edit list start in its own time scale, in nanoseconds, for a Matroska output's CodecDelay. It
+    // was not read, so the priming came out as sound at the start of the track.
+    for (const auto& [track, mediaTime] : m_editMediaTime)
+    {
+        if (track <= 0 || track > num_tracks || tracks[track - 1]->type != IOContextTrackType::AUDIO)
+            continue;
+        const auto st = reinterpret_cast<MOVStreamContext*>(tracks[track - 1]);
+        if (st->time_scale > 0)
+            m_codecDelayNs[track] = mediaTime * 1000000000LL / st->time_scale;
+    }
+    m_editMediaTime.clear();
     return 0;
 }
 
@@ -2226,22 +2241,32 @@ int MovDemuxer::mov_read_elst(MOVAtom atom)
     for (unsigned i = 0; i < count; i++)
     {
         int64_t duration = 0;
+        int64_t mediaTime = 0;
         bool empty = false;
         if (version == 1)
         {
             duration = get_be64();
-            empty = static_cast<int64_t>(get_be64()) == -1;
+            mediaTime = static_cast<int64_t>(get_be64());
+            empty = mediaTime == -1;
         }
         else
         {
             duration = get_be32();
-            empty = get_be32() == UINT_MAX;
+            const uint32_t raw = get_be32();
+            empty = raw == UINT_MAX;
+            mediaTime = empty ? -1 : static_cast<int64_t>(raw);
         }
         get_be32();  // media rate
         if (leading && empty)
             leadingEmpty += duration;
         else
+        {
+            // The first edit that plays something: where in the media it starts. For AAC that is the priming the
+            // encoder put in front, 1024 or 2112 samples, which a player skips.
+            if (leading && mediaTime > 0)
+                m_editMediaTime[num_tracks] = mediaTime;
             leading = false;
+        }
     }
     if (leadingEmpty > 0)
         m_emptyEditUnits[num_tracks] = leadingEmpty;

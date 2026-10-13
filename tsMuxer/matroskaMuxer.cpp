@@ -393,6 +393,9 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
     if (const auto src = params.find("srcprojection"); src != params.end())
         for (size_t i = 0; i + 1 < src->second.size(); i += 2)
             track.srcProjection.push_back(static_cast<uint8_t>(strtoul(src->second.substr(i, 2).c_str(), nullptr, 16)));
+    // The priming at the start of an AAC track, from an MP4 source's edit list (srccodecdelay, in nanoseconds).
+    if (const auto src = params.find("srccodecdelay"); src != params.end() && track.codecID == CODEC_A_AAC)
+        track.srcCodecDelayNs = strtoull(src->second.c_str(), nullptr, 10);
     // The size the container said to show the picture at (srcdisplay: 640x480). It says more than the stream's own
     // aspect ratio, which for square pixels is just the picture's shape; an ar= in the meta says more than both.
     if (const auto src = params.find("srcdisplay"); src != params.end() && params.find("ar") == params.end())
@@ -1316,6 +1319,10 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
             pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_CODECDELAY,
                                    static_cast<uint64_t>(preSkip) * 1000000000ULL / 48000);
     }
+    // The encoder priming an MP4 source's edit list skips (srccodecdelay): a player drops it as CodecDelay asks,
+    // where it came out as sound at the start of the track.
+    else if (track.srcCodecDelayNs > 0)
+        pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_CODECDELAY, track.srcCodecDelayNs);
 
     if (track.fps > 0)
     {
