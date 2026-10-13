@@ -218,7 +218,8 @@ static NamedAs familyOfExt(const std::string& ext)
         return NamedAs::ctPS;
     if (ext == "mp4" || ext == "mov" || ext == "m4v" || ext == "m4a")
         return NamedAs::ctMP4;
-    if (ext == "mkv" || ext == "mka" || ext == "mks")
+    // WebM is Matroska with a narrower set of codecs, and .mk3d is the name used for 3D Matroska files.
+    if (ext == "mkv" || ext == "mka" || ext == "mks" || ext == "mk3d" || ext == "webm")
         return NamedAs::ctMKV;
     // The only elementary extensions the dispatch acts on. Every other unknown extension already
     // reaches the reader that works the codec out from the bytes, so naming one would gain nothing.
@@ -908,7 +909,8 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
         else
             codecReader->setSrcContainerType(AbstractStreamReader::ContainerType::ctVOB);
     }
-    else if (strEndWith(tmpname, ".mkv") || strEndWith(tmpname, ".mka") || strEndWith(tmpname, ".mks"))
+    else if (strEndWith(tmpname, ".mkv") || strEndWith(tmpname, ".mka") || strEndWith(tmpname, ".mks") ||
+             strEndWith(tmpname, ".mk3d") || strEndWith(tmpname, ".webm"))
     {
         if (pid)
             dataReader = &m_containerReader;
@@ -1414,7 +1416,7 @@ std::vector<StreamDiscoveryData> METADemuxer::discoverStreams() const
             demuxer = std::make_unique<ProgramStreamDemuxer>(m_readManager);
             containerType = AbstractStreamReader::ContainerType::ctEVOB;
         }
-        else if (fileExt == "mkv" || fileExt == "mka" || fileExt == "mks")
+        else if (fileExt == "mkv" || fileExt == "mka" || fileExt == "mks" || fileExt == "mk3d" || fileExt == "webm")
         {
             demuxer = std::make_unique<MatroskaDemuxer>(m_readManager);
             containerType = AbstractStreamReader::ContainerType::ctMKV;
@@ -1857,7 +1859,7 @@ DetectStreamRez METADemuxer::DetectStreamReader(const BufferedReaderManager& rea
         demuxer = std::make_unique<ProgramStreamDemuxer>(readManager);
         containerType = AbstractStreamReader::ContainerType::ctEVOB;
     }
-    else if (fileExt == "mkv" || fileExt == "mka" || fileExt == "mks")
+    else if (fileExt == "mkv" || fileExt == "mka" || fileExt == "mks" || fileExt == "mk3d" || fileExt == "webm")
     {
         demuxer = std::make_unique<MatroskaDemuxer>(readManager);
         containerType = AbstractStreamReader::ContainerType::ctMKV;
@@ -2952,7 +2954,7 @@ bool ContainerToReaderWrapper::openStream(int readerID, const char* streamName, 
             demuxer = m_demuxers[streamName].m_demuxer = new ProgramStreamDemuxer(m_readManager);
             m_demuxers[streamName].m_streamName = streamName;
         }
-        else if (ext == "MKV" || ext == "MKA" || ext == "MKS")
+        else if (ext == "MKV" || ext == "MKA" || ext == "MKS" || ext == "MK3D" || ext == "WEBM")
         {
             demuxer = m_demuxers[streamName].m_demuxer = new MatroskaDemuxer(m_readManager);
             m_demuxers[streamName].m_streamName = streamName;

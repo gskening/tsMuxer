@@ -1343,7 +1343,9 @@ int MatroskaDemuxer::matroska_read_header()
     // ebml_read_header hands back a string it allocated, and it was never released on any path,
     // including the two that throw just below. Nine bytes on every Matroska file opened.
     const std::unique_ptr<char[]> doctypeOwner(doctype);
-    if ((doctype == nullptr) || strcmp(doctype, "matroska") != 0)
+    // WebM is Matroska with a narrower set of codecs and its own DocType. It was refused outright, although the same
+    // file with the DocType "matroska" reads.
+    if ((doctype == nullptr) || (strcmp(doctype, "matroska") != 0 && strcmp(doctype, "webm") != 0))
     {
         THROW(ERR_MATROSKA_PARSE, "Wrong EBML doctype ('" << (doctype ? doctype : "(none)") << "' != 'matroska').")
     }
