@@ -1010,13 +1010,64 @@ void MatroskaMuxer::parseMuxOpt(const std::string& opts)
 void MatroskaMuxer::writeToFile(const uint8_t* data, int len)
 {
     if (len > 0)
+    {
         m_file.write(data, len);
+        if (m_crcActive)
+            m_crcValue = static_cast<uint32_t>(crc32(m_crcValue, data, static_cast<uInt>(len)));
+    }
 }
 
 void MatroskaMuxer::writeToFile(const std::vector<uint8_t>& data)
 {
     if (!data.empty())
-        m_file.write(data.data(), static_cast<int>(data.size()));
+        writeToFile(data.data(), static_cast<int>(data.size()));
+}
+
+// The CRC-32 element: ID 0xBF, size 4, then the checksum (IEEE 802.3) of everything in the parent after it, stored
+// little endian (RFC 8794, 11.3.1). Six bytes, which every top-level element counts in its size.
+static constexpr int CRC_ELEMENT_BYTES = 6;
+
+static void putCrcElement(uint8_t* at, const uint32_t crc)
+{
+    at[0] = 0xBF;
+    at[1] = 0x84;
+    for (int i = 0; i < 4; ++i) at[2 + i] = static_cast<uint8_t>(crc >> (8 * i));
+}
+
+void MatroskaMuxer::beginCrc()
+{
+    uint8_t element[CRC_ELEMENT_BYTES];
+    putCrcElement(element, 0);
+    writeToFile(element, CRC_ELEMENT_BYTES);
+    m_crcValuePos = m_file.pos() - 4;
+    m_crcValue = static_cast<uint32_t>(crc32(0L, Z_NULL, 0));
+    m_crcActive = true;
+}
+
+void MatroskaMuxer::endCrc()
+{
+    m_crcActive = false;
+    uint8_t element[CRC_ELEMENT_BYTES];
+    putCrcElement(element, m_crcValue);
+    const int64_t resume = m_file.pos();
+    m_file.seek(m_crcValuePos);
+    m_file.write(element + 2, 4);
+    m_file.seek(resume);
+}
+
+void MatroskaMuxer::patchHeaderBody(std::vector<uint8_t>& body, const int64_t bodyFilePos,
+                                    const int64_t crcValueFilePos, const size_t at, const uint8_t* bytes,
+                                    const size_t len)
+{
+    if (body.empty() || at + len > body.size())
+        return;
+    memcpy(body.data() + at, bytes, len);
+    m_file.seek(bodyFilePos + static_cast<int64_t>(at));
+    m_file.write(bytes, static_cast<int>(len));
+    uint8_t element[CRC_ELEMENT_BYTES];
+    putCrcElement(element, static_cast<uint32_t>(crc32(0L, body.data(), static_cast<uInt>(body.size()))));
+    m_file.seek(crcValueFilePos);
+    m_file.write(element + 2, 4);
 }
 
 // A Void element occupying EXACTLY totalBytes, header included, so a reserved area can be filled
@@ -1083,13 +1134,18 @@ void MatroskaMuxer::writeSegmentInfo()
 
     uint8_t header[16];
     int hdrLen = ebml_write_id(header, MATROSKA_ID_INFO);
-    hdrLen += ebml_write_size(header + hdrLen, pos);
+    hdrLen += ebml_write_size(header + hdrLen, pos + CRC_ELEMENT_BYTES);
     writeToFile(header, hdrLen);
+    beginCrc();
+    m_infoCrcFilePos = m_crcValuePos;
+    m_infoBodyFilePos = m_file.pos();
+    m_infoBody.assign(buf, buf + pos);
 
     // MATROSKA_ID_DURATION (0x4489) = 2-byte ID + 1-byte size → float64 at offset +3
     m_durationValueFilePos = m_file.pos() + durationElementStart + 3;
 
     writeToFile(buf, pos);
+    endCrc();
 }
 
 // ──────────────── Tracks ─────────────────────────────────────────────────────
@@ -1447,11 +1503,16 @@ void MatroskaMuxer::writeTracks()
     // Write Tracks master element
     uint8_t header[16];
     int hdrLen = ebml_write_id(header, MATROSKA_ID_TRACKS);
-    hdrLen += ebml_write_size(header + hdrLen, allEntries.size());
+    hdrLen += ebml_write_size(header + hdrLen, allEntries.size() + CRC_ELEMENT_BYTES);
     writeToFile(header, hdrLen);
+    beginCrc();
+    m_tracksCrcFilePos = m_crcValuePos;
     const int64_t entriesFilePos = m_file.pos();
+    m_tracksBodyFilePos = entriesFilePos;
+    m_tracksBody = allEntries;
     for (const auto& [streamIdx, at] : channelsAtInEntries) m_channelsValueFilePos[streamIdx] = entriesFilePos + at;
     writeToFile(allEntries);
+    endCrc();
 }
 
 // ──────────────── openDstFile ────────────────────────────────────────────────
@@ -2172,10 +2233,12 @@ void MatroskaMuxer::writeChapters()
     std::vector<uint8_t> chapters(hdr, hdr + h);
     chapters.insert(chapters.end(), edition.begin(), edition.end());
 
-    h = ebml_write_master_open(hdr, MATROSKA_ID_CHAPTERS, chapters.size());
+    h = ebml_write_master_open(hdr, MATROSKA_ID_CHAPTERS, chapters.size() + CRC_ELEMENT_BYTES);
     m_chaptersPos = m_file.pos() - m_segmentStartPos;
     writeToFile(hdr, h);
+    beginCrc();
     writeToFile(chapters.data(), static_cast<int>(chapters.size()));
+    endCrc();
 }
 
 // How many tracks have to deliver a packet before the header can be written. Subtitle tracks do
@@ -2282,6 +2345,11 @@ void MatroskaMuxer::startCluster(int64_t timecodeMs)
 
     // Record cluster position for cue entries
     m_clusterStartFilePos = m_file.pos() - m_segmentStartPos;
+
+    // The CRC-32 first, its value filled in by flushCluster. A cue's position inside the cluster counts it.
+    m_clusterBuf.resize(CRC_ELEMENT_BYTES);
+    putCrcElement(m_clusterBuf.data(), 0);
+    m_clusterDataSize += CRC_ELEMENT_BYTES;
 
     // Write ClusterTimecode into buffer
     uint8_t buf[16];
@@ -2648,6 +2716,10 @@ void MatroskaMuxer::flushCluster()
     int hdrLen = ebml_write_id(header, MATROSKA_ID_CLUSTER);
     hdrLen += ebml_write_size(header + hdrLen, m_clusterBuf.size());
     writeToFile(header, hdrLen);
+    if (m_clusterBuf.size() >= CRC_ELEMENT_BYTES)
+        putCrcElement(m_clusterBuf.data(),
+                      static_cast<uint32_t>(crc32(0L, m_clusterBuf.data() + CRC_ELEMENT_BYTES,
+                                                  static_cast<uInt>(m_clusterBuf.size() - CRC_ELEMENT_BYTES))));
     writeToFile(m_clusterBuf);
 
     m_clusterBuf.clear();
@@ -3387,9 +3459,11 @@ void MatroskaMuxer::writeCues()
     // Write Cues master element
     uint8_t header[16];
     int hdrLen = ebml_write_id(header, MATROSKA_ID_CUES);
-    hdrLen += ebml_write_size(header + hdrLen, allPoints.size());
+    hdrLen += ebml_write_size(header + hdrLen, allPoints.size() + CRC_ELEMENT_BYTES);
     writeToFile(header, hdrLen);
+    beginCrc();
     writeToFile(allPoints);
+    endCrc();
 }
 
 // ──────────────── Attachments ────────────────────────────────────────────────
@@ -3584,14 +3658,16 @@ void MatroskaMuxer::writeStartCodeOnlyManifest(const std::string& scRule)
 
     m_attachmentsPos = m_file.pos() - m_segmentStartPos;
     uint8_t header[16];
-    const int hdrLen =
-        ebml_write_master_open(header, MATROSKA_ID_ATTACHMENTS, fileHdrLen + fileSize + sourceAttachmentBytes());
+    const int hdrLen = ebml_write_master_open(header, MATROSKA_ID_ATTACHMENTS,
+                                              fileHdrLen + fileSize + sourceAttachmentBytes() + CRC_ELEMENT_BYTES);
     writeToFile(header, hdrLen);
+    beginCrc();
     writeToFile(fileHdr, fileHdrLen);
     writeToFile(head);
     writeToFile(dataHdr, dataHdrLen);
     writeToFile(reinterpret_cast<const uint8_t*>(manifest.data()), static_cast<int>(manifest.size()));
     writeSourceAttachments();
+    endCrc();
 
     LTRACE(LT_INFO, 2,
            "Recorded how the source framed the video (" << scRule
@@ -3631,9 +3707,12 @@ void MatroskaMuxer::writeAttachments()
         {
             m_attachmentsPos = m_file.pos() - m_segmentStartPos;
             uint8_t header[16];
-            const int hdrLen = ebml_write_master_open(header, MATROSKA_ID_ATTACHMENTS, sourceAttachmentBytes());
+            const int hdrLen =
+                ebml_write_master_open(header, MATROSKA_ID_ATTACHMENTS, sourceAttachmentBytes() + CRC_ELEMENT_BYTES);
             writeToFile(header, hdrLen);
+            beginCrc();
             writeSourceAttachments();
+            endCrc();
         }
         return;
     }
@@ -3774,8 +3853,9 @@ void MatroskaMuxer::writeAttachments()
     m_attachmentsPos = m_file.pos() - m_segmentStartPos;
 
     uint8_t header[16];
-    const int hdrLen = ebml_write_master_open(header, MATROSKA_ID_ATTACHMENTS, total);
+    const int hdrLen = ebml_write_master_open(header, MATROSKA_ID_ATTACHMENTS, total + CRC_ELEMENT_BYTES);
     writeToFile(header, hdrLen);
+    beginCrc();
 
     writeToFile(rpuFileHdr, rpuFileHdrLen);
     writeToFile(rpuHead);
@@ -3806,6 +3886,7 @@ void MatroskaMuxer::writeAttachments()
         writeToFile(s.data);
     }
     writeSourceAttachments();
+    endCrc();
 
     LTRACE(LT_INFO, 2,
            "Dolby Vision: attached " << m_dvRpuIndex.size() << " original profile 7 RPUs (" << rpuBytes
@@ -3848,9 +3929,11 @@ void MatroskaMuxer::writeTags()
     for (const auto& raw : m_sourceTags) total += raw.size();
     m_tagsPos = m_file.pos() - m_segmentStartPos;
     uint8_t header[16];
-    const int hdrLen = ebml_write_master_open(header, MATROSKA_ID_TAGS, total);
+    const int hdrLen = ebml_write_master_open(header, MATROSKA_ID_TAGS, total + CRC_ELEMENT_BYTES);
     writeToFile(header, hdrLen);
+    beginCrc();
     for (const auto& raw : m_sourceTags) writeToFile(raw);
+    endCrc();
 }
 
 // Everything that closes one output file, once its last block is written: its chapters when the output is split, the
@@ -3932,14 +4015,19 @@ void MatroskaMuxer::finishPart(const int64_t partEndPts)
             !ac3->hasExtChannels() || track.channels != ac3->getChannels())
             continue;
         const auto full = static_cast<uint8_t>(ac3->getChannels() + 2);
-        m_file.seek(at->second);
-        m_file.write(&full, 1);
+        patchHeaderBody(m_tracksBody, m_tracksBodyFilePos, m_tracksCrcFilePos,
+                        static_cast<size_t>(at->second - m_tracksBodyFilePos), &full, 1);
     }
 
     if (m_durationValueFilePos > 0 && !(std::isfinite(durationMs) && durationMs > 0))
     {
-        m_file.seek(m_durationValueFilePos - 3);  // back over the 2 byte ID and 1 byte size
-        writeVoid(3 + 8);
+        // back over the 2 byte ID and 1 byte size: a Void of the same 11 bytes, written as writeVoid writes one
+        uint8_t voidBytes[3 + 8] = {0};
+        const int idLen = ebml_write_id(voidBytes, EBML_ID_VOID);
+        ebml_write_size_fixed(voidBytes + idLen, static_cast<uint64_t>(3 + 8) - VOID_MIN_BYTES, 2);
+        patchHeaderBody(m_infoBody, m_infoBodyFilePos, m_infoCrcFilePos,
+                        static_cast<size_t>(m_durationValueFilePos - 3 - m_infoBodyFilePos), voidBytes,
+                        sizeof(voidBytes));
     }
     else if (m_durationValueFilePos > 0)
     {
@@ -3952,8 +4040,8 @@ void MatroskaMuxer::finishPart(const int64_t partEndPts)
             durationBuf[i] = static_cast<uint8_t>(bits & 0xFF);
             bits >>= 8;
         }
-        m_file.seek(m_durationValueFilePos);
-        m_file.write(durationBuf, 8);
+        patchHeaderBody(m_infoBody, m_infoBodyFilePos, m_infoCrcFilePos,
+                        static_cast<size_t>(m_durationValueFilePos - m_infoBodyFilePos), durationBuf, 8);
     }
 
     m_file.close();
@@ -4096,11 +4184,15 @@ std::vector<uint8_t> MatroskaMuxer::buildSeekHead() const
         allEntries.insert(allEntries.end(), entryBuf, entryBuf + entryLen);
     }
 
+    uint8_t crcElement[CRC_ELEMENT_BYTES];
+    putCrcElement(crcElement,
+                  static_cast<uint32_t>(crc32(0L, allEntries.data(), static_cast<uInt>(allEntries.size()))));
     uint8_t header[16];
     int hdrLen = ebml_write_id(header, MATROSKA_ID_SEEKHEAD);
-    hdrLen += ebml_write_size(header + hdrLen, allEntries.size());
+    hdrLen += ebml_write_size(header + hdrLen, allEntries.size() + CRC_ELEMENT_BYTES);
 
     std::vector<uint8_t> out(header, header + hdrLen);
+    out.insert(out.end(), crcElement, crcElement + CRC_ELEMENT_BYTES);
     out.insert(out.end(), allEntries.begin(), allEntries.end());
     return out;
 }

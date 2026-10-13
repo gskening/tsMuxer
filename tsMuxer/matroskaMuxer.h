@@ -326,6 +326,13 @@ class MatroskaMuxer final : public AbstractMuxer
 
     // Low-level: write bytes to the output file
     void writeToFile(const uint8_t* data, int len);
+    // CRC-32 as the first child of every top-level element (RFC 9559, 6.2). beginCrc writes the element with a
+    // zero value and counts every byte written from then on; endCrc writes the value it came to.
+    void beginCrc();
+    void endCrc();
+    // Change bytes of the Info or Tracks body already written, and the CRC-32 that covers them.
+    void patchHeaderBody(std::vector<uint8_t>& body, int64_t bodyFilePos, int64_t crcValueFilePos, size_t at,
+                         const uint8_t* bytes, size_t len);
     void writeToFile(const std::vector<uint8_t>& data);
 
     // ── Data members ──
@@ -429,6 +436,13 @@ class MatroskaMuxer final : public AbstractMuxer
     int64_t m_firstTimecode;  // the timeline's origin in INTERNAL_PTS_FREQ units (see replayBufferedPackets)
     bool m_firstTimecodeSet;
     int64_t m_durationValueFilePos;  // absolute file position of the Duration float64 value
+    bool m_crcActive = false;
+    uint32_t m_crcValue = 0;
+    int64_t m_crcValuePos = 0;
+    // The bodies of Info and Tracks as written, for the values patched in at the end, and where they and their
+    // CRC-32 values are in the file.
+    std::vector<uint8_t> m_infoBody, m_tracksBody;
+    int64_t m_infoBodyFilePos = 0, m_infoCrcFilePos = 0, m_tracksBodyFilePos = 0, m_tracksCrcFilePos = 0;
     // stream index -> absolute file position of the one byte value of an audio track's Channels element
     std::map<int, int64_t> m_channelsValueFilePos;
 
