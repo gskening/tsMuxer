@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <cmath>
 #include <functional>
 #include <set>
 #include <sstream>
