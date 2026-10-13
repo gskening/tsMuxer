@@ -1124,6 +1124,8 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
                 for (const auto& [key, value] : trackIt->second.m_srcParams)
                     if (addParams.find(key) == addParams.end())
                         streamInfo.m_addParams[key] = value;
+                if (auto* pgStream = dynamic_cast<PGSStreamReader*>(codecReader))
+                    pgStream->setRateGuessed(trackIt->second.m_srcParams.count("srcpgsrate") > 0);
 
                 // The source's own default flag, under a key only the Matroska muxer reads. It was
                 // parsed and thrown away, so a remux replaced the source's choice with "the first
@@ -1196,7 +1198,7 @@ static bool isKnownTrackParam(const std::string& name)
         // set internally, never written by a user, but accepted so a round tripped meta does
         // not warn. srcdefault is the source container's own default track flag.
         "forced", "hearing-impaired", "visual-impaired", "text-descriptions", "original", "commentary", "srclang",
-        "srclangbcp47", "srcdefault", "srcname", "srcflags", "srccolour", "srcdisplay", "srcendpadding"};
+        "srclangbcp47", "srcdefault", "srcname", "srcflags", "srccolour", "srcdisplay", "srcendpadding", "srcpgsrate"};
     return known.find(name) != known.end();
 }
 

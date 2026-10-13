@@ -759,6 +759,30 @@ void ParsedOpusTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int si
 }
 
 // ------------ PG ---------------
+// The display sets that one block of a DVD subtitle track becomes, the end of the picture before among them.
+static void setPacketData(AVPacket* pkt, const std::vector<uint8_t>& data)
+{
+    pkt->size = static_cast<int>(data.size());
+    pkt->data = data.empty() ? nullptr : new uint8_t[data.size()];
+    if (!data.empty())
+        memcpy(pkt->data, data.data(), data.size());
+}
+
+void ParsedVobSubTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int size)
+{
+    std::vector<uint8_t> out;
+    m_decoder.decode(buff, size, pkt->pts, pkt->duration == AV_NOPTS_VALUE_INTERNAL ? -1 : pkt->duration, out);
+    setPacketData(pkt, out);
+}
+
+bool ParsedVobSubTrackData::finish(AVPacket* pkt)
+{
+    std::vector<uint8_t> out;
+    m_decoder.finish(out);
+    setPacketData(pkt, out);
+    return !out.empty();
+}
+
 void ParsedPGTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int size)
 {
     static constexpr int PG_HEADER_SIZE = 10;

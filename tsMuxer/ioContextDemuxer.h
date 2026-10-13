@@ -22,6 +22,8 @@ class ParsedTrackPrivData
 
     virtual void setPrivData(uint8_t* buff, int size) {}
     virtual void extractData(AVPacket* pkt, uint8_t* buff, int size) = 0;
+    // What the converter still holds when its track ends, as one more packet: true when it filled pkt.
+    virtual bool finish(AVPacket* pkt) { return false; }
     virtual unsigned newBufferSize(uint8_t* buff, unsigned size) { return 0; }
     // How the source framed its start codes, for the track types that rebuild Annex-B. Everything
     // else has no start codes to write and ignores it. See parseStartCodeRule in nalUnits.h.

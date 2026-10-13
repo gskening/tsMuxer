@@ -50,6 +50,9 @@ class TextToPGSConverter  //: public TextSubtitlesRenderWin32
     TextToPGSConverter(bool sourceIsText);
     ~TextToPGSConverter();
     void setVideoInfo(uint16_t width, uint16_t height, double fps);
+    // The size exactly as given, for a picture that is drawn already: setVideoInfo moves a size to the nearest
+    // standard one, which for a width of 720 depends on the frame rate set before.
+    void setCanvas(uint16_t width, uint16_t height, double fps);
     void enlargeCrop(uint16_t width, uint16_t height, uint16_t* newWidth, uint16_t* newHeight) const;
     void setBottomOffset(const int offset) { m_bottomOffset = offset; }
     uint8_t* doConvert(const std::string& text, const TextAnimation& animation, double inTimeSec, double outTimeSec,

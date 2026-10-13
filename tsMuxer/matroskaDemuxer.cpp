@@ -1272,16 +1272,25 @@ int MatroskaDemuxer::readPacket(AVPacket& avPacket)
     AVPacket* newPacket = nullptr;
     while (matroska_deliver_packet(newPacket) != 0)
     {
-        // Have we already reached the end?
+        // Have we already reached the end? Then what the converters still hold, once, before the end is reported.
         if (done)
+        {
+            if (!m_tracksFinished)
+            {
+                m_tracksFinished = true;
+                if (queueFinalPackets())
+                    continue;
+            }
             return BufferedReader::DATA_EOF;
+        }
 
         int res = 0;
         while (res == 0)
         {
             if ((id = ebml_peek_id(&level_up)) == 0)
             {
-                return BufferedReader::DATA_EOF;
+                done = true;
+                break;
             }
             if (level_up)
             {
@@ -1298,8 +1307,11 @@ int MatroskaDemuxer::readPacket(AVPacket& avPacket)
                     res = 1;  // Parsed one cluster, let's get out.
                 break;
             case EBML_ID_HEADER:
+                // The next file of a join: what the tracks of this one still hold comes first.
+                queueFinalPackets();
                 matroska_read_header();
                 nextJoinPart();
+                m_tracksFinished = false;
                 break;
             default:
                 res = ebml_read_skip();
@@ -1323,6 +1335,37 @@ int MatroskaDemuxer::readPacket(AVPacket& avPacket)
         avPacket = AVPacket();
     m_lastDeliveryPacket = newPacket;
     return 0;
+}
+
+// One more packet for each track whose converter still holds something at the end of its file: the end of the last
+// DVD subtitle picture, which is held until the next picture says whether it comes first.
+bool MatroskaDemuxer::queueFinalPackets()
+{
+    bool queued = false;
+    for (int i = 0; i < num_tracks; i++)
+    {
+        if (tracks[i]->parsed_priv_data == nullptr || tracks[i]->stream_index < 0)
+            continue;
+        auto* pkt = new AVPacket();
+        pkt->data = nullptr;
+        pkt->size = 0;
+        pkt->pts = AV_NOPTS_VALUE;
+        pkt->dts = AV_NOPTS_VALUE;
+        pkt->duration = AV_NOPTS_VALUE;
+        pkt->stream_index = i + 1;
+        pkt->flags = 0;
+        if (tracks[i]->parsed_priv_data->finish(pkt) && pkt->size > 0)
+        {
+            matroska_queue_packet(pkt);
+            queued = true;
+        }
+        else
+        {
+            delete[] pkt->data;
+            delete pkt;
+        }
+    }
+    return queued;
 }
 
 int MatroskaDemuxer::matroska_read_header()
@@ -1555,6 +1598,17 @@ int MatroskaDemuxer::matroska_read_header()
             else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_PGS))
             {
                 track->parsed_priv_data = new ParsedPGTrackData();
+            }
+            else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_VOBSUB))
+            {
+                // DVD subtitles were not read at all. Their pictures become PGS, timed to the frame rate of the
+                // file's first video track.
+                double videoFps = 0;
+                for (int j = 0; j < num_tracks && videoFps == 0; j++)
+                    if (tracks[j]->type == IOContextTrackType::VIDEO && tracks[j]->default_duration > 0)
+                        videoFps = 1e9 / static_cast<double>(tracks[j]->default_duration);
+                track->parsed_priv_data =
+                    new ParsedVobSubTrackData(track->codec_priv, track->codec_priv_size, videoFps);
             }
         }
         res = 0;
@@ -3788,6 +3842,11 @@ void MatroskaDemuxer::getTrackList(std::map<int32_t, TrackInfo>& trackList)
             trackList[i + 1].m_srcParams = extras->second;
         if (tracks[i]->name && tracks[i]->name[0])
             trackList[i + 1].m_srcParams["srcname"] = tracks[i]->name;
+        // DVD subtitles in a file without video: the frame rate their display sets carry is a guess, which fps=
+        // replaces rather than converts from.
+        if (const auto* vobSub = dynamic_cast<ParsedVobSubTrackData*>(tracks[i]->parsed_priv_data);
+            vobSub && vobSub->rateGuessed())
+            trackList[i + 1].m_srcParams["srcpgsrate"] = "guessed";
     }
 }
 
@@ -3830,7 +3889,8 @@ int MatroskaDemuxer::getTrackType(const MatroskaTrack* track)
         return TRACKTYPE_WAV;
     if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_AUDIO_ACM))
         return TRACKTYPE_WAV;
-    if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_PGS))
+    if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_PGS) ||
+        !strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_VOBSUB))
         return TRACKTYPE_PGS;
 
     // The video codecs are named as well, so that detection asks that reader first: MPEG-2 video from a DVD was taken

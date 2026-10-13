@@ -82,6 +82,8 @@ class MatroskaDemuxer final : public IOContextDemuxer
     int level_up;
     int peek_id;
     bool done;
+    bool m_tracksFinished = false;  // the converters were asked for what they still held
+    bool queueFinalPackets();
     char m_title[1024];
 
     uint64_t segment_start;

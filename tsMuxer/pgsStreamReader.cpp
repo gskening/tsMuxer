@@ -494,7 +494,12 @@ int PGSStreamReader::readPacket(AVPacket& avPacket)
                (m_renderedFromText ? "Drawing text subtitles into pictures (track " : "Decoding PGS stream (track ")
                    << m_streamIndex << "): "
                    << " Resolution: " << m_video_width << ':' << m_video_height << "  Frame rate: " << m_frame_rate);
-        if (m_newFps != 0.0 && fabs(m_newFps - m_frame_rate) > 1e-4)
+        if (m_newFps != 0.0 && fabs(m_newFps - m_frame_rate) > 1e-4 && m_rateGuessed)
+        {
+            LTRACE(LT_INFO, 2, "PGS stream #" << m_streamIndex << " is marked with frame rate " << m_newFps);
+            m_replaceRate = true;
+        }
+        else if (m_newFps != 0.0 && fabs(m_newFps - m_frame_rate) > 1e-4)
         {
             LTRACE(LT_INFO, 2,
                    "Change FPS from " << m_frame_rate << " to " << m_newFps << " for PGS stream #" << m_streamIndex);
@@ -700,7 +705,7 @@ int PGSStreamReader::readPacket(AVPacket& avPacket)
             break;
         case PCS_DEF_SEGMENT:
             // Presentation Composition Segment
-            if (fabs(m_scale - 1.0) > 1e-4)
+            if (fabs(m_scale - 1.0) > 1e-4 || m_replaceRate)
                 m_curPos[4] = static_cast<uint8_t>(calcFpsIndex(m_newFps) << 4);
             bitReader.setBuffer(m_curPos, m_bufEnd);
             video_descriptor(bitReader);

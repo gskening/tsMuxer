@@ -13,6 +13,7 @@ add_executable (tsmuxer
   ac3StreamReader.cpp
   avCodecs.cpp
   bitStream.cpp
+  bitmapSubtitles.cpp
   blurayHelper.cpp
   chapterFile.cpp
   bufferedFileReader.cpp

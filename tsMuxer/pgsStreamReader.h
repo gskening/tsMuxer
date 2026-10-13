@@ -17,6 +17,9 @@ class PGSStreamReader final : public AbstractStreamReader
     // announces a text subtitle as "Decoding PGS stream", which is where it ends up but not what the
     // user handed over, and his report had three SRT tracks all described that way.
     void setRenderedFromText(const bool value) { m_renderedFromText = value; }
+    // The frame rate the stream is marked with is a guess (DVD subtitles from a file without video): fps= replaces
+    // it, where for any other PGS stream fps= converts the times from it.
+    void setRateGuessed(const bool value) { m_rateGuessed = value; }
     struct BitmapInfo
     {
         int Width;
@@ -125,6 +128,8 @@ class PGSStreamReader final : public AbstractStreamReader
     uint16_t m_scaled_height;
     bool m_firstRenderedPacket;
     bool m_renderedFromText;
+    bool m_rateGuessed = false;
+    bool m_replaceRate = false;
 
     text_subtitles::TextToPGSConverter* m_render;
     uint8_t* m_renderedData;

@@ -9,6 +9,7 @@
 #include "aac.h"
 #include "abstractStreamReader.h"
 #include "avPacket.h"
+#include "bitmapSubtitles.h"
 #include "ioContextDemuxer.h"
 
 typedef IOContextTrackType MatroskaTrackType;
@@ -273,6 +274,7 @@ constexpr auto MATROSKA_CODEC_ID_AUDIO_AAC = "A_AAC";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_PCM_BIG = "A_PCM/INT/BIG";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_PCM_LIT = "A_PCM/INT/LIT";
 constexpr auto MATROSKA_CODEC_ID_SUBTITLE_PGS = "S_HDMV/PGS";
+constexpr auto MATROSKA_CODEC_ID_SUBTITLE_VOBSUB = "S_VOBSUB";
 constexpr auto MATROSKA_CODEC_ID_AV1 = "V_AV1";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_DTS = "A_DTS";
 constexpr auto MATROSKA_CODEC_ID_AUDIO_EAC3 = "A_EAC3";
@@ -443,6 +445,20 @@ class ParsedOpusTrackData final : public ParsedTrackPrivData
    private:
     bool m_firstPacket;
     std::vector<uint8_t> m_codecPrivate;
+};
+
+// A DVD subtitle track (S_VOBSUB), its pictures redrawn as PGS display sets with their "PG" headers, read on as a
+// PGS track.
+class ParsedVobSubTrackData final : public ParsedTrackPrivData
+{
+   public:
+    ParsedVobSubTrackData(uint8_t* buff, int size, double videoFps) : m_decoder(buff, size, videoFps) {}
+    void extractData(AVPacket* pkt, uint8_t* buff, int size) override;
+    bool finish(AVPacket* pkt) override;
+    [[nodiscard]] bool rateGuessed() const { return m_decoder.rateGuessed(); }
+
+   private:
+    VobSubDecoder m_decoder;
 };
 
 class ParsedPGTrackData final : public ParsedTrackPrivData

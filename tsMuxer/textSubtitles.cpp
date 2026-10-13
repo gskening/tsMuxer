@@ -105,6 +105,15 @@ void TextToPGSConverter::setVideoInfo(const uint16_t width, const uint16_t heigh
     m_renderedData = new uint8_t[len];
 }
 
+void TextToPGSConverter::setCanvas(const uint16_t width, const uint16_t height, const double fps)
+{
+    m_videoWidth = width;
+    m_videoHeight = height;
+    m_videoFps = fps;
+    delete[] m_renderedData;
+    m_renderedData = new uint8_t[(m_videoWidth + 16) * m_videoHeight];
+}
+
 double TextToPGSConverter::alignToGrid(const double value) const
 {
     // How many frames have passed until this moment in time, rounded to the nearest frame, a time
