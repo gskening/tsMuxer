@@ -2993,8 +2993,8 @@ void MatroskaDemuxer::loadTrackExtras(const std::string& fileName)
 
     // The DiscardPadding of each track's LAST block, in nanoseconds: the samples at the end of an Opus track that
     // are only there to fill its last frame (RFC 9559, 5.1.3.5.7). Taken from the clusters from the last cue point
-    // on, so only the end of the file is read; a file without Cues gives none. A remux dropped it, and the track
-    // played that much longer than its source, 13.5 ms for a usual encoder.
+    // on, so only the end of the file is read; a file without Cues from the clusters of its last 16 MB. A remux dropped
+    // it, and the track played that much longer than its source, 13.5 ms for a usual encoder.
     std::map<int64_t, int64_t> endPadding;
     {
         int64_t cuesBody = 0, cuesSize = 0, segmentData = 0;
@@ -3006,18 +3006,64 @@ void MatroskaDemuxer::loadTrackExtras(const std::string& fileName)
                         for (const auto& [kid, kb, klen] : elementsOf(tb, tlen))
                             if (kid == MATROSKA_ID_CUECLUSTERPOSITION)
                                 lastCluster = std::max(lastCluster, static_cast<int64_t>(readUInt(kb, klen)));
-        if (lastCluster >= 0)
+        // A file without Cues, as a file written live has: the first cluster of its last 16 MB, found by its id and the
+        // timestamp that opens every cluster.
+        int64_t walkFrom = lastCluster >= 0 ? segmentData + lastCluster : -1;
+        if (walkFrom < 0 && fileSize > 64)
         {
-            scan.pos = segmentData + lastCluster;
+            const int64_t tail = (std::max)(int64_t{0}, fileSize - (int64_t{16} << 20));
+            std::vector<uint8_t> buf(static_cast<size_t>(fileSize - tail));
+            scan.f.seek(tail);
+            if (scan.f.read(buf.data(), static_cast<uint32_t>(buf.size())) == static_cast<int>(buf.size()))
+                for (size_t i = 0; i + 12 < buf.size() && walkFrom < 0; ++i)
+                {
+                    if (buf[i] != 0x1F || buf[i + 1] != 0x43 || buf[i + 2] != 0xB6 || buf[i + 3] != 0x75)
+                        continue;
+                    uint32_t id = 0;
+                    int64_t len = 0, b = 0;
+                    scan.pos = tail + static_cast<int64_t>(i);
+                    uint32_t first = 0;
+                    int64_t firstLen = 0, firstBody = 0;
+                    if (scan.readElement(id, len, b) && scan.readElement(first, firstLen, firstBody) &&
+                        first == MATROSKA_ID_CLUSTERTIMECODE && firstLen > 0 && firstLen <= 8)
+                        walkFrom = tail + static_cast<int64_t>(i);
+                }
+        }
+        // Where a cluster ends. A cluster written live has no size: it ends where the next top-level element begins.
+        const auto clusterEnd = [&](const int64_t body, const int64_t len)
+        {
+            if (body + len <= fileSize)
+                return body + len;
+            scan.pos = body;
+            while (scan.pos < fileSize)
+            {
+                const int64_t at = scan.pos;
+                uint32_t id = 0;
+                int64_t sz = 0, b = 0;
+                if (!scan.readElement(id, sz, b))
+                    return at;
+                if (id == MATROSKA_ID_CLUSTER || id == MATROSKA_ID_CUES || id == MATROSKA_ID_TAGS ||
+                    id == MATROSKA_ID_CHAPTERS || id == MATROSKA_ID_ATTACHMENTS || id == MATROSKA_ID_SEEKHEAD ||
+                    b + sz > fileSize)
+                    return at;
+                scan.pos = b + sz;
+            }
+            return fileSize;
+        };
+        if (walkFrom >= 0)
+        {
+            scan.pos = walkFrom;
             while (scan.pos < fileSize)
             {
                 uint32_t id = 0;
                 int64_t len = 0, b = 0;
-                if (!scan.readElement(id, len, b) || b + len > fileSize)
+                if (!scan.readElement(id, len, b))
                     break;
-                const int64_t next = b + len;
+                if (id != MATROSKA_ID_CLUSTER && b + len > fileSize)
+                    break;
+                const int64_t next = id == MATROSKA_ID_CLUSTER ? clusterEnd(b, len) : b + len;
                 if (id == MATROSKA_ID_CLUSTER)
-                    for (const auto& [cid, cb, clen] : elementsOf(b, len))
+                    for (const auto& [cid, cb, clen] : elementsOf(b, next - b))
                     {
                         if (cid != MATROSKA_ID_SIMPLEBLOCK && cid != MATROSKA_ID_BLOCKGROUP)
                             continue;
