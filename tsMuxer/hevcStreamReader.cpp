@@ -249,6 +249,7 @@ CheckStreamRez HEVCStreamReader::checkStream(uint8_t* buffer, const int len)
             r->m_totalFrameNum = r->m_frameNum = r->m_fullPicOrder = 0;
             r->m_curDts = r->m_curPts = 0;
             r->m_picOrderStarted = false;
+            r->m_maxFullPicOrder = -1;
         }
     } resetCounters{this};
     // A parameter set is read into a unit of its own and kept only when it is whole: a damaged one (see
@@ -1027,6 +1028,7 @@ void HEVCStreamReader::incTimings()
     const int delta = m_frameNum - m_fullPicOrder;
     m_curPts = m_curDts - delta * m_pcrIncPerFrame;
     m_frameNum++;
+    m_maxFullPicOrder = (std::max)(m_maxFullPicOrder, m_fullPicOrder);
     m_firstFrame = false;
 
     // How far a picture can be presented before it would be decoded, which is how far the decoding times are moved
@@ -1052,6 +1054,23 @@ int HEVCStreamReader::toFullPicOrder(const HevcSliceHeader* slice, const unsigne
         slice->nal_unit_type >= HevcUnit::NalType::BLA_W_LP && slice->nal_unit_type <= HevcUnit::NalType::BLA_N_LP;
     if (slice->isIDR() || bla || !m_picOrderStarted)
     {
+        // A Dolby Vision enhancement layer may lack a picture its base layer has (a disc's stream was measured with
+        // one missing). The pictures were placed by counting them, so from the next IDR on every picture of the
+        // enhancement layer sat one picture early: matched with the wrong base layer picture, all of the second file
+        // of a join. The next IDR now goes where the pictures before it end, one past the latest place given, and
+        // the decoding times skip the same gap. For a stream that lacks nothing that place is the count itself.
+        if (m_picOrderStarted && m_hdr->isDVRPU && m_maxFullPicOrder + 1 > m_frameNum)
+        {
+            const int gap = m_maxFullPicOrder + 1 - m_frameNum;
+            if (!m_dvGapReported)
+                LTRACE(LT_INFO, 2,
+                       "Dolby Vision: the stream lacks " << gap << (gap == 1 ? " picture" : " pictures")
+                                                         << " before picture " << m_totalFrameNum
+                                                         << "; the pictures after it keep their place in time.");
+            m_dvGapReported = true;
+            m_frameNum += gap;
+            m_curDts += static_cast<int64_t>(gap) * m_pcrIncPerFrame;
+        }
         m_picOrderStarted = true;
         m_picOrderBase = m_frameNum - static_cast<int>(slice->pic_order_cnt_lsb);
         m_picOrderMsb = 0;

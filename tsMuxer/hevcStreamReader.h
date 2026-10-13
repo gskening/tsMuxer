@@ -92,6 +92,8 @@ class HEVCStreamReader final : public MPEGStreamReader
     int m_frameNum;
     int m_fullPicOrder;
     int m_picOrderBase;
+    int m_maxFullPicOrder = -1;  // the latest place a picture was given, for a Dolby Vision gap (toFullPicOrder)
+    bool m_dvGapReported = false;
     int m_frameDepth;
 
     int m_picOrderMsb;
