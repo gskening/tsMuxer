@@ -16,6 +16,7 @@ using text_subtitles::CompositionMode;
 using text_subtitles::PIXEL_COMPOSITION_RATE;
 using text_subtitles::PIXEL_DECODING_RATE;
 using text_subtitles::TextToPGSConverter;
+using text_subtitles::YUVQuad;
 
 double nearestPgsFrameRate(const double fps)
 {
@@ -135,9 +136,20 @@ void BitmapToPgs::finish(std::vector<uint8_t>& out)
     m_heldEnd = -1;
 }
 
+void BitmapSubDecoder::setUp(const int width, const int height, const double videoFps, const double guessedFps)
+{
+    double fps = nearestPgsFrameRate(videoFps);
+    if (fps == 0)
+    {
+        fps = guessedFps;
+        m_rateGuessed = true;
+    }
+    m_pgs.setCanvas(static_cast<uint16_t>(width), static_cast<uint16_t>(height), fps);
+}
+
 // ------------ DVD subpictures ---------------
 
-VobSubDecoder::VobSubDecoder(const uint8_t* idx, const int idxSize, double fps)
+VobSubDecoder::VobSubDecoder(const uint8_t* idx, const int idxSize, const double videoFps)
 {
     // The .idx text: "size: 720x576" and "palette: rrggbb, rrggbb, ..." are the lines that matter here.
     int width = 720;
@@ -169,16 +181,9 @@ VobSubDecoder::VobSubDecoder(const uint8_t* idx, const int idxSize, double fps)
     }
     if (!haveSize)
         LTRACE(LT_WARN, 2, "Warning: the DVD subtitle track gives no picture size; 720x576 is used.");
-
-    // The display sets are marked with the video's frame rate. Without a video track in the file, the rate of the
-    // DVD standard for the picture height: 25 for 576 lines, 29.97 for 480.
-    fps = nearestPgsFrameRate(fps);
-    if (fps == 0)
-    {
-        fps = height == 576 ? 25.0 : 30000.0 / 1001;
-        m_rateGuessed = true;
-    }
-    m_pgs.setCanvas(static_cast<uint16_t>(width), static_cast<uint16_t>(height), fps);
+    // Without a video track in the file, the rate of the DVD standard for the picture height: 25 for 576 lines, 29.97
+    // for the others.
+    setUp(width, height, videoFps, height == 576 ? 25.0 : 30000.0 / 1001);
 }
 
 namespace
@@ -367,4 +372,518 @@ void VobSubDecoder::decode(const uint8_t* spu, const int size, const int64_t pts
         }
     }
     m_pgs.addPicture(showTime, endTime, forced, out);
+}
+
+// ------------ DVB subtitles ---------------
+
+namespace
+{
+// The bits of a pixel code string, first bit first, never past the end of its field.
+class FieldBits
+{
+   public:
+    FieldBits(const uint8_t* data, const int len, const int pos) : m_data(data), m_bitEnd(len * 8), m_bit(pos * 8) {}
+    [[nodiscard]] bool atEnd() const { return m_bit >= m_bitEnd; }
+    int bits(const int n)
+    {
+        int v = 0;
+        for (int i = 0; i < n; ++i, ++m_bit)
+            v = v << 1 | (m_bit < m_bitEnd ? m_data[m_bit >> 3] >> (7 - (m_bit & 7)) & 1 : 0);
+        return v;
+    }
+    [[nodiscard]] int bytePos() const { return (m_bit + 7) >> 3; }
+
+   private:
+    const uint8_t* m_data;
+    int m_bitEnd;
+    int m_bit;
+};
+
+uint32_t bgraFromYCrCbT(const int y, const int cr, const int cb, const int t)
+{
+    // Y = 0 is full transparency, and T counts from opaque (0) towards fully transparent.
+    if (y == 0 || t >= 255)
+        return 0;
+    YUVQuad yuv;
+    yuv.Y = static_cast<uint8_t>(y);
+    yuv.Cr = static_cast<uint8_t>(cr);
+    yuv.Cb = static_cast<uint8_t>(cb);
+    yuv.alpha = static_cast<uint8_t>(255 - t);
+    const RGBQUAD rgb = TextToPGSConverter::YUVAToRGBA(yuv);
+    return static_cast<uint32_t>(rgb.rgbReserved) << 24 | static_cast<uint32_t>(rgb.rgbRed) << 16 |
+           static_cast<uint32_t>(rgb.rgbGreen) << 8 | rgb.rgbBlue;
+}
+
+uint32_t bgra(const double r, const double g, const double b, const double transparency)
+{
+    if (transparency >= 1.0)
+        return 0;
+    const auto c = [](const double v) { return static_cast<uint32_t>(lround(v * 255)); };
+    return c(1.0 - transparency) << 24 | c(r) << 16 | c(g) << 8 | c(b);
+}
+}  // namespace
+
+DvbSubDecoder::DvbSubDecoder(const uint8_t* priv, const int privSize, const double videoFps) : m_videoFps(videoFps)
+{
+    // composition_page_id, ancillary_page_id, subtitling_type (Matroska codec mapping, S_DVBSUB)
+    if (priv && privSize >= 4)
+    {
+        m_compositionPage = AV_RB16(priv);
+        m_ancillaryPage = AV_RB16(priv + 2);
+    }
+}
+
+// The colour table family, at its default contents (EN 300 743, clause 10) until a CLUT definition changes them.
+DvbSubDecoder::Clut& DvbSubDecoder::clut(const uint8_t id)
+{
+    const auto found = m_cluts.find(id);
+    if (found != m_cluts.end())
+        return found->second;
+    Clut& c = m_cluts[id];
+    // 4 entries: transparent, white, black, grey
+    c.entries2[0] = 0;
+    c.entries2[1] = bgra(1, 1, 1, 0);
+    c.entries2[2] = bgra(0, 0, 0, 0);
+    c.entries2[3] = bgra(0.5, 0.5, 0.5, 0);
+    // 16 entries, bits b1..b4 from the most significant
+    for (int i = 0; i < 16; ++i)
+    {
+        const int b1 = i >> 3 & 1, b2 = i >> 2 & 1, b3 = i >> 1 & 1, b4 = i & 1;
+        if (b1 == 0)
+            c.entries4[i] = i == 0 ? 0 : bgra(b4, b3, b2, 0);
+        else
+            c.entries4[i] = bgra(0.5 * b4, 0.5 * b3, 0.5 * b2, 0);
+    }
+    // 256 entries, bits b1..b8 from the most significant
+    for (int i = 0; i < 256; ++i)
+    {
+        const int b1 = i >> 7 & 1, b2 = i >> 6 & 1, b3 = i >> 5 & 1, b4 = i >> 4 & 1;
+        const int b5 = i >> 3 & 1, b6 = i >> 2 & 1, b7 = i >> 1 & 1, b8 = i & 1;
+        uint32_t v;
+        if (b1 == 0 && b5 == 0)
+        {
+            if (b2 == 0 && b3 == 0 && b4 == 0)
+                v = b6 == 0 && b7 == 0 && b8 == 0 ? 0 : bgra(b8, b7, b6, 0.75);
+            else
+                v = bgra(b8 / 3.0 + b4 * 2 / 3.0, b7 / 3.0 + b3 * 2 / 3.0, b6 / 3.0 + b2 * 2 / 3.0, 0);
+        }
+        else if (b1 == 0)
+            v = bgra(b8 / 3.0 + b4 * 2 / 3.0, b7 / 3.0 + b3 * 2 / 3.0, b6 / 3.0 + b2 * 2 / 3.0, 0.5);
+        else if (b5 == 0)
+            v = bgra(b8 / 6.0 + b4 / 3.0 + 0.5, b7 / 6.0 + b3 / 3.0 + 0.5, b6 / 6.0 + b2 / 3.0 + 0.5, 0);
+        else
+            v = bgra(b8 / 6.0 + b4 / 3.0, b7 / 6.0 + b3 / 3.0, b6 / 6.0 + b2 / 3.0, 0);
+        c.entries8[i] = v;
+    }
+    return c;
+}
+
+void DvbSubDecoder::displayDefinition(const uint8_t* seg, const int len)
+{
+    if (len < 5)
+        return;
+    const bool window = seg[0] >> 3 & 1;
+    const int width = AV_RB16(seg + 1) + 1;
+    const int height = AV_RB16(seg + 3) + 1;
+    if (m_canvasSet && (width != m_displayWidth || height != m_displayHeight))
+    {
+        if (!m_warnedSize)
+            LTRACE(LT_WARN, 2,
+                   "Warning: the DVB subtitle display size changes to " << width << "x" << height
+                                                                        << "; the first size is kept.");
+        m_warnedSize = true;
+        return;
+    }
+    if (width > 1920 || height > 1080)
+        return;
+    m_displayWidth = width;
+    m_displayHeight = height;
+    m_windowX = m_windowY = 0;
+    if (window && len >= 13)
+    {
+        m_windowX = AV_RB16(seg + 5);
+        m_windowY = AV_RB16(seg + 9);
+    }
+}
+
+void DvbSubDecoder::pageComposition(const uint8_t* seg, const int len)
+{
+    if (len < 2)
+        return;
+    m_pageTimeOut = seg[0];
+    // A mode change starts a new epoch: what the regions and colour tables held before goes.
+    if ((seg[1] >> 2 & 3) == 2)
+    {
+        m_regions.clear();
+        m_cluts.clear();
+    }
+    m_page.clear();
+    for (int p = 2; p + 6 <= len; p += 6) m_page.push_back({seg[p], AV_RB16(seg + p + 2), AV_RB16(seg + p + 4)});
+}
+
+void DvbSubDecoder::regionComposition(const uint8_t* seg, const int len)
+{
+    if (len < 10)
+        return;
+    Region& region = m_regions[seg[0]];
+    const bool fill = seg[1] >> 3 & 1;
+    const int width = AV_RB16(seg + 2);
+    const int height = AV_RB16(seg + 4);
+    const int depthCode = seg[6] >> 2 & 7;
+    const int depth = depthCode == 1 ? 2 : depthCode == 2 ? 4 : depthCode == 3 ? 8 : 0;
+    region.clutId = seg[7];
+    const uint8_t background = depth == 8 ? seg[8] : depth == 4 ? seg[9] >> 4 : seg[9] >> 2 & 3;
+    if (width <= 0 || height <= 0 || width > 4096 || height > 4096 || depth == 0)
+    {
+        region.width = region.height = 0;
+        region.pixels.clear();
+        return;
+    }
+    if (width != region.width || height != region.height || depth != region.depth)
+    {
+        region.width = width;
+        region.height = height;
+        region.depth = depth;
+        region.pixels.assign(static_cast<size_t>(width) * height, fill ? background : 0);
+    }
+    else if (fill)
+        std::fill(region.pixels.begin(), region.pixels.end(), background);
+    region.objects.clear();
+    for (int p = 10; p + 6 <= len;)
+    {
+        const int type = seg[p + 2] >> 6;
+        const int provider = seg[p + 2] >> 4 & 3;
+        if (type == 0 && provider == 0)  // a bitmap carried in the stream
+            region.objects.push_back(
+                {AV_RB16(seg + p), (seg[p + 2] & 0x0F) << 8 | seg[p + 3], (seg[p + 4] & 0x0F) << 8 | seg[p + 5]});
+        p += type == 1 || type == 2 ? 8 : 6;
+    }
+}
+
+void DvbSubDecoder::clutDefinition(const uint8_t* seg, const int len)
+{
+    if (len < 2)
+        return;
+    Clut& c = clut(seg[0]);
+    for (int p = 2; p + 4 <= len;)
+    {
+        const int entry = seg[p];
+        const int flags = seg[p + 1];
+        int y, cr, cb, t;
+        if (flags & 1)  // full range
+        {
+            if (p + 6 > len)
+                break;
+            y = seg[p + 2];
+            cr = seg[p + 3];
+            cb = seg[p + 4];
+            t = seg[p + 5];
+            p += 6;
+        }
+        else  // the most significant bits only: 6 of Y, 4 of Cr and of Cb, 2 of T
+        {
+            y = seg[p + 2] >> 2 << 2;
+            cr = ((seg[p + 2] & 3) << 2 | seg[p + 3] >> 6) << 4;
+            cb = (seg[p + 3] >> 2 & 0x0F) << 4;
+            t = (seg[p + 3] & 3) << 6;
+            p += 4;
+        }
+        const uint32_t colour = bgraFromYCrCbT(y, cr, cb, t);
+        if (flags & 0x80 && entry < 4)
+            c.entries2[entry] = colour;
+        if (flags & 0x40 && entry < 16)
+            c.entries4[entry] = colour;
+        if (flags & 0x20)
+            c.entries8[entry] = colour;
+    }
+}
+
+// One field of an object, its pixel code strings, into the region from line y on, every second line.
+void DvbSubDecoder::drawField(Region& region, const uint8_t* data, const int len, const int x0, int y,
+                              const bool nonModifying) const
+{
+    uint8_t map2to4[4] = {0x0, 0x7, 0x8, 0xF};
+    uint8_t map2to8[4] = {0x00, 0x77, 0x88, 0xFF};
+    uint8_t map4to8[16];
+    for (int i = 0; i < 16; ++i) map4to8[i] = static_cast<uint8_t>(i * 0x11);
+    int x = x0;
+    // A pixel code of codeBits bits as an entry of the region's table: the map tables to more bits, the reductions of
+    // clause 9 to fewer.
+    const auto put = [&](const int run, const int code, const int codeBits)
+    {
+        int entry = code;
+        if (region.depth == 2)
+        {
+            if (codeBits == 4)
+                entry = (code >> 3) << 1 | ((code & 7) != 0);
+            else if (codeBits == 8)
+                entry = (code >> 7) << 1 | ((code & 0x70) != 0);
+        }
+        else if (region.depth == 4)
+        {
+            if (codeBits == 2)
+                entry = map2to4[code];
+            else if (codeBits == 8)
+                entry = code >> 4;
+        }
+        else if (codeBits == 2)
+            entry = map2to8[code];
+        else if (codeBits == 4)
+            entry = map4to8[code];
+        if (!(nonModifying && entry == 1) && y >= 0 && y < region.height)
+            for (int i = (std::max)(0, -x); i < run && x + i < region.width; ++i)
+                region.pixels[static_cast<size_t>(y) * region.width + x + i] = static_cast<uint8_t>(entry);
+        x += run;
+    };
+    int pos = 0;
+    while (pos < len)
+    {
+        const int type = data[pos++];
+        if (type == 0x10 || type == 0x11 || type == 0x12)
+        {
+            FieldBits b(data, len, pos);
+            if (type == 0x10)
+            {
+                while (!b.atEnd())
+                {
+                    if (const int c = b.bits(2))
+                        put(1, c, 2);
+                    else if (b.bits(1))
+                    {
+                        const int run = b.bits(3) + 3;
+                        put(run, b.bits(2), 2);
+                    }
+                    else if (b.bits(1))
+                        put(1, 0, 2);
+                    else
+                    {
+                        const int s = b.bits(2);
+                        if (s == 0)
+                            break;
+                        if (s == 1)
+                            put(2, 0, 2);
+                        else
+                        {
+                            const int run = s == 2 ? b.bits(4) + 12 : b.bits(8) + 29;
+                            put(run, b.bits(2), 2);
+                        }
+                    }
+                }
+            }
+            else if (type == 0x11)
+            {
+                while (!b.atEnd())
+                {
+                    if (const int c = b.bits(4))
+                        put(1, c, 4);
+                    else if (!b.bits(1))
+                    {
+                        const int n = b.bits(3);
+                        if (n == 0)
+                            break;
+                        put(n + 2, 0, 4);
+                    }
+                    else if (!b.bits(1))
+                    {
+                        const int run = b.bits(2) + 4;
+                        put(run, b.bits(4), 4);
+                    }
+                    else
+                    {
+                        const int s = b.bits(2);
+                        if (s < 2)
+                            put(s + 1, 0, 4);
+                        else
+                        {
+                            const int run = s == 2 ? b.bits(4) + 9 : b.bits(8) + 25;
+                            put(run, b.bits(4), 4);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                while (!b.atEnd())
+                {
+                    if (const int c = b.bits(8))
+                        put(1, c, 8);
+                    else if (!b.bits(1))
+                    {
+                        const int n = b.bits(7);
+                        if (n == 0)
+                            break;
+                        put(n, 0, 8);
+                    }
+                    else
+                    {
+                        const int run = b.bits(7);
+                        put(run, b.bits(8), 8);
+                    }
+                }
+            }
+            pos = b.bytePos();
+        }
+        else if (type == 0x20 && pos + 2 <= len)
+        {
+            for (int i = 0; i < 4; ++i) map2to4[i] = static_cast<uint8_t>(data[pos + i / 2] >> (i % 2 ? 0 : 4) & 0x0F);
+            pos += 2;
+        }
+        else if (type == 0x21 && pos + 4 <= len)
+        {
+            memcpy(map2to8, data + pos, 4);
+            pos += 4;
+        }
+        else if (type == 0x22 && pos + 16 <= len)
+        {
+            memcpy(map4to8, data + pos, 16);
+            pos += 16;
+        }
+        else if (type == 0xF0)  // the end of a line
+        {
+            x = x0;
+            y += 2;
+        }
+        else
+            break;  // unknown, or cut short
+    }
+}
+
+void DvbSubDecoder::objectData(const uint8_t* seg, const int len)
+{
+    if (len < 3)
+        return;
+    const uint16_t id = AV_RB16(seg);
+    const int method = seg[2] >> 2 & 3;
+    const bool nonModifying = seg[2] >> 1 & 1;
+    if (method != 0)
+    {
+        // 1: characters from a table the standard does not define; 2: zlib compressed progressive pictures
+        if (!m_warnedMethod)
+            LTRACE(LT_WARN, 2,
+                   "Warning: DVB subtitle objects coded " << (method == 1 ? "as characters" : "progressively")
+                                                          << " cannot be read and were left out.");
+        m_warnedMethod = true;
+        return;
+    }
+    if (len < 7)
+        return;
+    const int topLength = AV_RB16(seg + 3);
+    const int bottomLength = AV_RB16(seg + 5);
+    if (7 + topLength + bottomLength > len)
+    {
+        if (!m_warnedDamage)
+            LTRACE(LT_WARN, 2, "Warning: a damaged DVB subtitle object was left out.");
+        m_warnedDamage = true;
+        return;
+    }
+    const uint8_t* top = seg + 7;
+    // A bottom field without data of its own repeats the top field.
+    const uint8_t* bottom = bottomLength ? top + topLength : top;
+    const int bottomLen = bottomLength ? bottomLength : topLength;
+    for (auto& [regionId, region] : m_regions)
+        for (const RegionObject& object : region.objects)
+            if (object.id == id && !region.pixels.empty())
+            {
+                drawField(region, top, topLength, object.x, object.y, nonModifying);
+                drawField(region, bottom, bottomLen, object.x, object.y + 1, nonModifying);
+            }
+}
+
+// The page as it stands: its regions, each in the colours of its table, on the canvas.
+void DvbSubDecoder::render()
+{
+    m_pgs.clearCanvas();
+    uint32_t* canvas = m_pgs.pixels();
+    const int canvasWidth = m_pgs.width();
+    const int canvasHeight = m_pgs.height();
+    for (const PageRegion& placed : m_page)
+    {
+        const auto found = m_regions.find(placed.id);
+        if (found == m_regions.end() || found->second.pixels.empty())
+            continue;
+        const Region& region = found->second;
+        const Clut& c = clut(region.clutId);
+        const uint32_t* table = region.depth == 2 ? c.entries2 : region.depth == 4 ? c.entries4 : c.entries8;
+        for (int y = 0; y < region.height; ++y)
+        {
+            const int cy = m_windowY + placed.y + y;
+            if (cy < 0 || cy >= canvasHeight)
+                continue;
+            for (int x = 0; x < region.width; ++x)
+            {
+                const int cx = m_windowX + placed.x + x;
+                if (cx >= 0 && cx < canvasWidth)
+                    canvas[static_cast<size_t>(cy) * canvasWidth + cx] =
+                        table[region.pixels[static_cast<size_t>(y) * region.width + x]];
+            }
+        }
+    }
+}
+
+void DvbSubDecoder::decode(const uint8_t* data, const int size, const int64_t pts, const int64_t duration,
+                           std::vector<uint8_t>& out)
+{
+    const uint8_t* p = data;
+    const uint8_t* end = data + size;
+    // The PES framing, the data identifier and the stream id, where a writer left them in.
+    if (size >= 3 && p[0] == 0x20 && p[1] == 0x00 && p[2] == 0x0F)
+        p += 2;
+    bool page = false;
+    while (end - p >= 6 && p[0] == 0x0F)
+    {
+        const int type = p[1];
+        const int pageId = AV_RB16(p + 2);
+        const int len = AV_RB16(p + 4);
+        const uint8_t* seg = p + 6;
+        if (len > end - seg)
+        {
+            if (!m_warnedDamage)
+                LTRACE(LT_WARN, 2, "Warning: a damaged DVB subtitle display set was cut short.");
+            m_warnedDamage = true;
+            break;
+        }
+        if (m_compositionPage < 0 || pageId == m_compositionPage || pageId == m_ancillaryPage)
+        {
+            switch (type)
+            {
+            case 0x14:
+                displayDefinition(seg, len);
+                break;
+            case 0x10:
+                pageComposition(seg, len);
+                page = true;
+                break;
+            case 0x11:
+                regionComposition(seg, len);
+                break;
+            case 0x12:
+                clutDefinition(seg, len);
+                break;
+            case 0x13:
+                objectData(seg, len);
+                break;
+            default:  // the end of the display set, and what this reader does not use
+                break;
+            }
+        }
+        p = seg + len;
+    }
+    if (!m_canvasSet)
+    {
+        // Without a display definition, 720x576 (EN 300 743, 7.2.1). Without a video track in the file, 29.97 for
+        // 480 lines and 25 for any other size.
+        setUp(m_displayWidth, m_displayHeight, m_videoFps, m_displayHeight == 480 ? 30000.0 / 1001 : 25.0);
+        m_canvasSet = true;
+    }
+    // A new page instance is shown when the display set has a page composition. It ends after the block's duration,
+    // or, for a block without one, after the page's time-out.
+    if (!page)
+        return;
+    render();
+    int64_t endTime = -1;
+    if (duration > 0)
+        endTime = pts + duration;
+    else if (m_pageTimeOut > 0)
+        endTime = pts + m_pageTimeOut * INTERNAL_PTS_FREQ;
+    m_pgs.addPicture(pts, endTime, false, out);
 }

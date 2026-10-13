@@ -2,6 +2,7 @@
 #define BITMAP_SUBTITLES_H_
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -47,24 +48,92 @@ class BitmapToPgs
 // The frame rate a PGS stream can be marked with that is nearest to fps, or 0 when none is near.
 double nearestPgsFrameRate(double fps);
 
-// The subpictures of a DVD subtitle track, S_VOBSUB in Matroska: the CodecPrivate is the text of the .idx file, with
-// the picture size and the 16 colours, and every block is one subpicture unit.
-class VobSubDecoder
+// A bitmap subtitle track of another format, its blocks decoded into pictures and handed on as PGS.
+class BitmapSubDecoder
 {
    public:
-    // fps: the frame rate of the file's video, 0 when the file has none.
-    VobSubDecoder(const uint8_t* idx, int idxSize, double fps);
-    // One subpicture unit, from a block at pts (internal clock) that lasts duration, or -1 when it does not say.
-    void decode(const uint8_t* spu, int size, int64_t pts, int64_t duration, std::vector<uint8_t>& out);
+    virtual ~BitmapSubDecoder() = default;
+    // One block, at pts (internal clock), that lasts duration, or -1 when it does not say.
+    virtual void decode(const uint8_t* data, int size, int64_t pts, int64_t duration, std::vector<uint8_t>& out) = 0;
     void finish(std::vector<uint8_t>& out) { m_pgs.finish(out); }
-    // The frame rate was not known from a video track and was taken from the picture height.
+    // The frame rate was not known from a video track and was taken from the picture size.
     [[nodiscard]] bool rateGuessed() const { return m_rateGuessed; }
 
-   private:
+   protected:
     BitmapToPgs m_pgs;
-    uint32_t m_palette[16]{};  // 0xRRGGBB
     bool m_rateGuessed = false;
+    // The canvas, marked with the video's frame rate (videoFps, 0 when the file has no video) or, without one, with
+    // guessedFps, the rate the format's television standard has for the picture height.
+    void setUp(int width, int height, double videoFps, double guessedFps);
+};
+
+// The subpictures of a DVD subtitle track, S_VOBSUB in Matroska: the CodecPrivate is the text of the .idx file, with
+// the picture size and the 16 colours, and every block is one subpicture unit.
+class VobSubDecoder final : public BitmapSubDecoder
+{
+   public:
+    VobSubDecoder(const uint8_t* idx, int idxSize, double videoFps);
+    void decode(const uint8_t* spu, int size, int64_t pts, int64_t duration, std::vector<uint8_t>& out) override;
+
+   private:
+    uint32_t m_palette[16]{};  // 0xRRGGBB
     bool m_warned = false;
+};
+
+// The display sets of a DVB subtitle track (ETSI EN 300 743), S_DVBSUB in Matroska: the CodecPrivate holds the
+// composition and ancillary page ids, and every block is one display set. Regions, colour tables and the page persist
+// from one display set to the next, as the standard's page updates need.
+class DvbSubDecoder final : public BitmapSubDecoder
+{
+   public:
+    DvbSubDecoder(const uint8_t* priv, int privSize, double videoFps);
+    void decode(const uint8_t* data, int size, int64_t pts, int64_t duration, std::vector<uint8_t>& out) override;
+
+   private:
+    struct Clut
+    {
+        uint32_t entries2[4];  // BGRA, 0 transparent
+        uint32_t entries4[16];
+        uint32_t entries8[256];
+    };
+    struct RegionObject
+    {
+        uint16_t id;
+        int x, y;
+    };
+    struct Region
+    {
+        int width = 0, height = 0;
+        int depth = 0;  // bits per pixel: 2, 4 or 8
+        uint8_t clutId = 0;
+        std::vector<uint8_t> pixels;  // CLUT entries
+        std::vector<RegionObject> objects;
+    };
+    struct PageRegion
+    {
+        uint8_t id;
+        int x, y;
+    };
+    double m_videoFps;
+    int m_compositionPage = -1;
+    int m_ancillaryPage = -1;
+    bool m_canvasSet = false;
+    int m_displayWidth = 720, m_displayHeight = 576;
+    int m_windowX = 0, m_windowY = 0;
+    int m_pageTimeOut = 0;  // seconds
+    std::vector<PageRegion> m_page;
+    std::map<uint8_t, Region> m_regions;
+    std::map<uint8_t, Clut> m_cluts;
+    bool m_warnedDamage = false, m_warnedMethod = false, m_warnedSize = false;
+
+    Clut& clut(uint8_t id);
+    void displayDefinition(const uint8_t* seg, int len);
+    void pageComposition(const uint8_t* seg, int len);
+    void regionComposition(const uint8_t* seg, int len);
+    void clutDefinition(const uint8_t* seg, int len);
+    void objectData(const uint8_t* seg, int len);
+    void drawField(Region& region, const uint8_t* data, int len, int x0, int y, bool nonModifying) const;
+    void render();
 };
 
 #endif

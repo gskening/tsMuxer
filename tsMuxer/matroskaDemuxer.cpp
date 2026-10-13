@@ -1599,16 +1599,21 @@ int MatroskaDemuxer::matroska_read_header()
             {
                 track->parsed_priv_data = new ParsedPGTrackData();
             }
-            else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_VOBSUB))
+            else if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_VOBSUB) ||
+                     !strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_DVB))
             {
-                // DVD subtitles were not read at all. Their pictures become PGS, timed to the frame rate of the
-                // file's first video track.
+                // DVD and DVB subtitles were not read at all. Their pictures become PGS, timed to the frame rate of
+                // the file's first video track.
                 double videoFps = 0;
                 for (int j = 0; j < num_tracks && videoFps == 0; j++)
                     if (tracks[j]->type == IOContextTrackType::VIDEO && tracks[j]->default_duration > 0)
                         videoFps = 1e9 / static_cast<double>(tracks[j]->default_duration);
-                track->parsed_priv_data =
-                    new ParsedVobSubTrackData(track->codec_priv, track->codec_priv_size, videoFps);
+                if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_VOBSUB))
+                    track->parsed_priv_data = new ParsedBitmapSubTrackData(
+                        new VobSubDecoder(track->codec_priv, track->codec_priv_size, videoFps));
+                else
+                    track->parsed_priv_data = new ParsedBitmapSubTrackData(
+                        new DvbSubDecoder(track->codec_priv, track->codec_priv_size, videoFps));
             }
         }
         res = 0;
@@ -3842,10 +3847,10 @@ void MatroskaDemuxer::getTrackList(std::map<int32_t, TrackInfo>& trackList)
             trackList[i + 1].m_srcParams = extras->second;
         if (tracks[i]->name && tracks[i]->name[0])
             trackList[i + 1].m_srcParams["srcname"] = tracks[i]->name;
-        // DVD subtitles in a file without video: the frame rate their display sets carry is a guess, which fps=
-        // replaces rather than converts from.
-        if (const auto* vobSub = dynamic_cast<ParsedVobSubTrackData*>(tracks[i]->parsed_priv_data);
-            vobSub && vobSub->rateGuessed())
+        // DVD or DVB subtitles in a file without video: the frame rate their display sets carry is a guess, which
+        // fps= replaces rather than converts from.
+        if (const auto* bitmapSub = dynamic_cast<ParsedBitmapSubTrackData*>(tracks[i]->parsed_priv_data);
+            bitmapSub && bitmapSub->rateGuessed())
             trackList[i + 1].m_srcParams["srcpgsrate"] = "guessed";
     }
 }
@@ -3890,7 +3895,8 @@ int MatroskaDemuxer::getTrackType(const MatroskaTrack* track)
     if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_AUDIO_ACM))
         return TRACKTYPE_WAV;
     if (!strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_PGS) ||
-        !strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_VOBSUB))
+        !strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_VOBSUB) ||
+        !strcmp(track->codec_id, MATROSKA_CODEC_ID_SUBTITLE_DVB))
         return TRACKTYPE_PGS;
 
     // The video codecs are named as well, so that detection asks that reader first: MPEG-2 video from a DVD was taken
