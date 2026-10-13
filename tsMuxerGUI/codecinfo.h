@@ -56,6 +56,13 @@ struct QtvCodecInfo
     QStringList mplsFiles;
     QString arText;
     bool enabledByDefault = true;
+    // For a Matroska output: the track's name (track-name=) and its six flags (forced, hearing-impaired,
+    // visual-impaired, text-descriptions, original, commentary, in that order). The src values are what the source
+    // said, which tsMuxeR keeps by itself, so the meta carries only what was changed.
+    QString trackName;
+    QString srcTrackName;
+    bool mkvFlags[6] = {};
+    bool srcMkvFlags[6] = {};
 };
 
 #endif

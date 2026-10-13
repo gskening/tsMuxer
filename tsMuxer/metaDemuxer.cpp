@@ -2044,6 +2044,13 @@ DetectStreamRez METADemuxer::DetectStreamReader(const BufferedReaderManager& rea
             }
             trackRez.trackID = itr.first;
             trackRez.lang = acceptedPidMap[trackRez.trackID].m_lang;
+            {
+                const auto& srcParams = acceptedPidMap[trackRez.trackID].m_srcParams;
+                if (const auto name = srcParams.find("srcname"); name != srcParams.end())
+                    trackRez.name = name->second;
+                if (const auto flags = srcParams.find("srcflags"); flags != srcParams.end())
+                    trackRez.flags = flags->second;
+            }
             if (clpiParsed)
             {
                 map<int, CLPIStreamInfo>::const_iterator clpiStream = clpi.m_streamInfo.find(itr.first);

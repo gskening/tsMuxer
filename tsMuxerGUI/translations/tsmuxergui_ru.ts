@@ -4288,6 +4288,52 @@ Build the ISO anyway?</source>
         <source>Copy each SRT subtitle as text, with its tags and times, instead of drawing it into pictures. Matroska keeps it as a text track and Demux writes an SRT file. The other outputs cannot carry text subtitles and always draw them. The font and position settings below do not apply to text.</source>
         <translation>Копировать каждый субтитр SRT как текст, с его тегами и временем, вместо отрисовки в изображения. Matroska сохраняет его как текстовую дорожку, а Демукс записывает файл SRT. Остальные выходные форматы не могут содержать текстовые субтитры и всегда отрисовывают их. Настройки шрифта и положения ниже к тексту не применяются.</translation>
     </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="914"/>
+        <location filename="../tsmuxerwindow.cpp" line="218"/>
+        <source>Matroska options</source>
+        <translation>Параметры Matroska</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="922"/>
+        <source>Track name:</source>
+        <translation>Имя дорожки:</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="936"/>
+        <source>Forced</source>
+        <translation>Принудительная</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="943"/>
+        <source>Hearing impaired</source>
+        <translation>Для людей с нарушением слуха</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="950"/>
+        <source>Visually impaired</source>
+        <translation>Для людей с нарушением зрения</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="957"/>
+        <source>Text descriptions</source>
+        <translation>Текстовые описания</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="964"/>
+        <source>Original language</source>
+        <translation>Язык оригинала</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="971"/>
+        <source>Commentary</source>
+        <translation>Комментарий</translation>
+    </message>
+    <message>
+        <location filename="../tsmuxerwindow.ui" line="980"/>
+        <source>The name and the flags are written to a Matroska output only.</source>
+        <translation>Имя и флаги записываются только в вывод Matroska.</translation>
+    </message>
 </context>
 <context>
     <name>muxForm</name>

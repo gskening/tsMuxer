@@ -386,6 +386,30 @@ void detectStreamReader(const char* fileName, MPLSParser* mplsParser, bool isSub
                                         : "   3D: dependent view only, both views are in " + ssifPartner;
             LTRACE(LT_INFO, 2, "Stream info: " << descr);
             LTRACE(LT_INFO, 2, "Stream lang: " << streams[i].lang);
+            // A Matroska track's name and the flags it has set, under the names the meta takes, so the window can
+            // start from them. The name is the file's own text, on one line.
+            if (!streams[i].name.empty())
+            {
+                std::string name = streams[i].name;
+                for (char& c : name)
+                    if (c == '\r' || c == '\n')
+                        c = ' ';
+                LTRACE(LT_INFO, 2, "Stream name: " << name);
+            }
+            if (!streams[i].flags.empty())
+            {
+                static const std::pair<const char*, const char*> NAMES[] = {
+                    {"forced=1", "forced"},          {"hearing=1", "hearing-impaired"},
+                    {"visual=1", "visual-impaired"}, {"descriptions=1", "text-descriptions"},
+                    {"original=1", "original"},      {"commentary=1", "commentary"}};
+                std::string set;
+                for (const std::string& item : splitStr(streams[i].flags.c_str(), ','))
+                    for (const auto& [src, option] : NAMES)
+                        if (item == src)
+                            set += std::string(set.empty() ? "" : ", ") + option;
+                if (!set.empty())
+                    LTRACE(LT_INFO, 2, "Stream flags: " << set);
+            }
             if (streams[i].delay)
                 LTRACE(LT_INFO, 2, "Stream delay: " << streams[i].delay);
             if (streams[i].multiSubStream)

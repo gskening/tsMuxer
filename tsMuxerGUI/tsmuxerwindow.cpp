@@ -215,6 +215,12 @@ QString TI_DEFAULT_TAB_NAME() { return TsMuxerWindow::tr("General track options"
 
 QString TI_DEMUX_TAB_NAME() { return TsMuxerWindow::tr("Demux options"); }
 
+QString TI_MKV_TAB_NAME() { return TsMuxerWindow::tr("Matroska options"); }
+
+// The meta keys of the six Matroska track flags, in the order of QtvCodecInfo::mkvFlags.
+const char* const MKV_FLAG_KEYS[6] = {"forced",   "hearing-impaired", "visual-impaired", "text-descriptions",
+                                      "original", "commentary"};
+
 QString TS_SAVE_DIALOG_FILTER() { return makeFileFilter({{TsMuxerWindow::tr("Transport Stream"), {"ts"}}}); }
 
 QString M2TS_SAVE_DIALOG_FILTER()
@@ -783,6 +789,13 @@ TsMuxerWindow::TsMuxerWindow()
     connect(ui->mergeAc3FileLineEdit, &QLineEdit::textChanged, this, &TsMuxerWindow::onAudioSubtitlesParamsChanged);
     connect(ui->mergeAc3FileBrowseButton, &QPushButton::clicked, this, &TsMuxerWindow::onMergeAc3FileBrowseClicked);
     connect(ui->langComboBox, comboBoxIndexChanged, this, &TsMuxerWindow::onAudioSubtitlesParamsChanged);
+    // A double quote would end the quoted name in the meta, so it cannot be typed.
+    ui->mkvTrackNameEdit->setValidator(
+        new QRegularExpressionValidator(QRegularExpression(QStringLiteral("[^\"]*")), ui->mkvTrackNameEdit));
+    connect(ui->mkvTrackNameEdit, &QLineEdit::textChanged, this, &TsMuxerWindow::onMkvTrackOptionsChanged);
+    for (QCheckBox* box : {ui->mkvFlagForced, ui->mkvFlagHearing, ui->mkvFlagVisual, ui->mkvFlagTextDesc,
+                           ui->mkvFlagOriginal, ui->mkvFlagCommentary})
+        connect(box, &QCheckBox::checkStateChanged, this, &TsMuxerWindow::onMkvTrackOptionsChanged);
     connect(ui->offsetsComboBox, comboBoxIndexChanged, this, &TsMuxerWindow::onAudioSubtitlesParamsChanged);
     connect(ui->langCodesComboBox, comboBoxIndexChanged, this, &TsMuxerWindow::onSavedParamChanged);
     // The language box listed every code in its terminological form, so with Bibliographic chosen a track tagged
@@ -2427,6 +2440,25 @@ void TsMuxerWindow::onTsMuxerCodecInfoReceived()
     videoStart = videoEnd = 0;
     for (int i = 0; i < procStdOutput.size(); ++i)
     {
+        // A Matroska track's name is the file's own text, so it can hold any of the prefixes looked for below. Its
+        // line is read first, and nothing else is looked for in it.
+        if (procStdOutput[i].startsWith("Stream name: "))
+        {
+            if (codecInfo)
+                codecInfo->trackName = codecInfo->srcTrackName =
+                    QtCompat::strMid(procStdOutput[i], QString("Stream name: ").length());
+            continue;
+        }
+        if (procStdOutput[i].startsWith("Stream flags: "))
+        {
+            if (codecInfo)
+                for (const QString& flag :
+                     QtCompat::strMid(procStdOutput[i], QString("Stream flags: ").length()).split(", "))
+                    for (int k = 0; k < 6; ++k)
+                        if (flag == QLatin1String(MKV_FLAG_KEYS[k]))
+                            codecInfo->mkvFlags[k] = codecInfo->srcMkvFlags[k] = true;
+            continue;
+        }
         p = procStdOutput[i].indexOf("Track ID:    ");
         if (p >= 0)
         {
@@ -3215,6 +3247,41 @@ void TsMuxerWindow::setComboBoxText(QComboBox* comboBox, const QString& text)
     comboBox->setCurrentIndex(comboBox->count() - 1);
 }
 
+// The Matroska page of the selected track: its name and flags, usable when the output is Matroska.
+void TsMuxerWindow::showMkvTrackOptions(const QtvCodecInfo* codecInfo)
+{
+    ui->tabWidgetTracks->addTab(ui->tabSheetMkv, TI_MKV_TAB_NAME());
+    ui->mkvTrackNameEdit->setText(codecInfo->trackName);
+    QCheckBox* const boxes[6] = {ui->mkvFlagForced,   ui->mkvFlagHearing,  ui->mkvFlagVisual,
+                                 ui->mkvFlagTextDesc, ui->mkvFlagOriginal, ui->mkvFlagCommentary};
+    for (int k = 0; k < 6; ++k) boxes[k]->setChecked(codecInfo->mkvFlags[k]);
+    updateMkvTrackOptionsEnabled();
+}
+
+void TsMuxerWindow::updateMkvTrackOptionsEnabled()
+{
+    const bool mkv = ui->radioButtonMKV->isChecked();
+    for (QWidget* w : {static_cast<QWidget*>(ui->mkvTrackNameLabel), static_cast<QWidget*>(ui->mkvTrackNameEdit),
+                       static_cast<QWidget*>(ui->mkvFlagForced), static_cast<QWidget*>(ui->mkvFlagHearing),
+                       static_cast<QWidget*>(ui->mkvFlagVisual), static_cast<QWidget*>(ui->mkvFlagTextDesc),
+                       static_cast<QWidget*>(ui->mkvFlagOriginal), static_cast<QWidget*>(ui->mkvFlagCommentary)})
+        w->setEnabled(mkv);
+}
+
+void TsMuxerWindow::onMkvTrackOptionsChanged()
+{
+    if (disableUpdatesCnt)
+        return;
+    QtvCodecInfo* codecInfo = getCurrentCodec();
+    if (!codecInfo)
+        return;
+    codecInfo->trackName = ui->mkvTrackNameEdit->text();
+    const QCheckBox* const boxes[6] = {ui->mkvFlagForced,   ui->mkvFlagHearing,  ui->mkvFlagVisual,
+                                       ui->mkvFlagTextDesc, ui->mkvFlagOriginal, ui->mkvFlagCommentary};
+    for (int k = 0; k < 6; ++k) codecInfo->mkvFlags[k] = boxes[k]->isChecked();
+    updateMetaLines();
+}
+
 void TsMuxerWindow::trackLVItemSelectionChanged()
 {
     if (disableUpdatesCnt)
@@ -3237,6 +3304,7 @@ void TsMuxerWindow::trackLVItemSelectionChanged()
             codecInfo->addSPS = ui->checkBoxSPS->isChecked();
 
             ui->tabWidgetTracks->addTab(ui->tabSheetVideo, TI_DEFAULT_TAB_NAME());
+            showMkvTrackOptions(codecInfo);
 
             ui->checkFPS->setChecked(codecInfo->checkFPS);
             ui->checkBoxLevel->setChecked(codecInfo->checkLevel);
@@ -3280,6 +3348,7 @@ void TsMuxerWindow::trackLVItemSelectionChanged()
             ui->tabWidgetTracks->addTab(ui->tabSheetAudio, TI_DEFAULT_TAB_NAME());
             if (codecInfo->displayName == "LPCM")
                 ui->tabWidgetTracks->addTab(ui->demuxLpcmOptions, TI_DEMUX_TAB_NAME());
+            showMkvTrackOptions(codecInfo);
 
             // ** IT DOES NOT CONVERT ANYTHING. ** These tracks carry a plain core inside the HD
             // stream, and all this does is keep the core and drop the HD part. Nothing is decoded
@@ -4686,6 +4755,20 @@ void TsMuxerWindow::updateMetaLines()
             postfix += QString(", lang=") + codecInfo->lang;
         if (codecInfo->subTrack != 0)
             postfix += QString(", subTrack=") + QString::number(codecInfo->subTrack);
+        // The Matroska page: only what differs from the source, which tsMuxeR keeps by itself. An emptied name
+        // leaves the track without one, an unticked flag the source had set is cleared with =0.
+        if (ui->radioButtonMKV->isChecked())
+        {
+            if (codecInfo->trackName != codecInfo->srcTrackName)
+            {
+                QString name = codecInfo->trackName;
+                name.remove(QLatin1Char('"'));
+                postfix += QString(", track-name=") + quoteStr(name);
+            }
+            for (int k = 0; k < 6; ++k)
+                if (codecInfo->mkvFlags[k] != codecInfo->srcMkvFlags[k])
+                    postfix += QString(", ") + MKV_FLAG_KEYS[k] + (codecInfo->mkvFlags[k] ? "" : "=0");
+        }
         if (isVideoCodec(codecInfo->displayName))
             metaContent.append(prefix + getVideoMetaInfo(codecInfo) + postfix + '\n');
         else
@@ -5401,6 +5484,7 @@ void TsMuxerWindow::RadioButtonMuxClick()
     ui->DiskLabel->setVisible(ui->radioButtonBluRayISO->isChecked());
     ui->DiskLabelEdit->setVisible(ui->radioButtonBluRayISO->isChecked());
     ui->editDelay->setEnabled(!ui->radioButtonDemux->isChecked());
+    updateMkvTrackOptionsEnabled();
     colorizeAllRows();
     updateMetaLines();
     outFileNameDisableChange = false;

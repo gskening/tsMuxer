@@ -909,6 +909,90 @@
             </item>
            </layout>
           </widget>
+          <widget class="QWidget" name="tabSheetMkv">
+           <attribute name="title">
+            <string>Matroska options</string>
+           </attribute>
+           <layout class="QVBoxLayout" name="verticalLayoutMkv">
+            <item>
+             <layout class="QHBoxLayout" name="horizontalLayoutMkvName">
+              <item>
+               <widget class="QLabel" name="mkvTrackNameLabel">
+                <property name="text">
+                 <string>Track name:</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QLineEdit" name="mkvTrackNameEdit"/>
+              </item>
+             </layout>
+            </item>
+            <item>
+             <layout class="QGridLayout" name="gridLayoutMkvFlags">
+              <item row="0" column="0">
+               <widget class="QCheckBox" name="mkvFlagForced">
+                <property name="text">
+                 <string>Forced</string>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="1">
+               <widget class="QCheckBox" name="mkvFlagHearing">
+                <property name="text">
+                 <string>Hearing impaired</string>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="0">
+               <widget class="QCheckBox" name="mkvFlagVisual">
+                <property name="text">
+                 <string>Visually impaired</string>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="1">
+               <widget class="QCheckBox" name="mkvFlagTextDesc">
+                <property name="text">
+                 <string>Text descriptions</string>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="0">
+               <widget class="QCheckBox" name="mkvFlagOriginal">
+                <property name="text">
+                 <string>Original language</string>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="1">
+               <widget class="QCheckBox" name="mkvFlagCommentary">
+                <property name="text">
+                 <string>Commentary</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </item>
+            <item>
+             <widget class="QLabel" name="mkvOptionsNote">
+              <property name="text">
+               <string>The name and the flags are written to a Matroska output only.</string>
+              </property>
+              <property name="wordWrap">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="verticalSpacerMkv">
+              <property name="orientation">
+               <enum>Qt::Vertical</enum>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </widget>
           <widget class="QWidget" name="tabSheetFake">
            <attribute name="title">
             <string>General track options</string>

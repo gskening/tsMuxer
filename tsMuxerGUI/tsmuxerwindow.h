@@ -78,6 +78,7 @@ class TsMuxerWindow : public QWidget
     void onPulldownCheckBoxChanged();
     void onVideoComboBoxChanged(int index);
     void onAudioSubtitlesParamsChanged();
+    void onMkvTrackOptionsChanged();
     void onMergeAc3FileBrowseClicked();
     void onEditDelayChanged(int i);
     void onFontBtnClicked();
@@ -163,6 +164,8 @@ class TsMuxerWindow : public QWidget
     QString getSrtParams();
     int findLangByCode(const QString& code);
     bool isLangCodeForMeta(const QString& code);
+    void showMkvTrackOptions(const QtvCodecInfo* codecInfo);
+    void updateMkvTrackOptionsEnabled();
     QString langForTrack(const QComboBox* box, const QString& current);
     void setComboBoxText(QComboBox* comboBox, const QString& text);
     QtvCodecInfo* getCodecInfo(int idx);
