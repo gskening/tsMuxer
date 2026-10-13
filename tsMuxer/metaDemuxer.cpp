@@ -2647,6 +2647,12 @@ void METADemuxer::updateReport(const bool checkTime)
             progress = static_cast<double>(currentProcessedSize) / static_cast<double>(m_totalSize) * 100.0;
             if (progress > 100.0)
                 progress = 100.0;
+            // Never below what was shown already. A converted subtitle track hands on more bytes than it read, which
+            // the count makes up with bytes it takes as discarded before the codec has used the ones it was given:
+            // the line went below zero, to -145 percent for a DVB track alone. The count itself stays as it is,
+            // because the check that a mux read all of its sources compares the same total.
+            progress = (std::max)(progress, m_lastProgress);
+            m_lastProgress = progress;
         }
         lineBack();
         cout << doubleToStr(progress, 1) << "% complete" << std::endl;
