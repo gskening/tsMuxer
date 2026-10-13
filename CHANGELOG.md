@@ -1,3 +1,15 @@
+## tsMuxeR 2.19.3
+
+One fix, for TrueHD merged with its AC-3 core and moved by a timeshift: the audio could reach the player seconds after it was due.
+
+**The Intel macOS build has been back since 2.19.0, and Mac users are still asked to test.** It has been built and checked, but it has not been run on an Intel Mac, because no Mac is available here. If you have an Intel Mac, please try it and report whether it works. On any Mac, please also try changing the subtitle font and colour in the window, and report what happens.
+
+**If something goes wrong, please report it** with the bug report form on GitHub, and include as much as you can: the version line and the full log, the meta file (the text in the Meta file box of the window), what you expected and what happened instead, and the player you used. A short sample of the source helps most.
+
+### Worth acting on
+
+* **A merged TrueHD track with a timeshift could be sent late, and the sound dropped out.** With merge-ac3-track or merge-ac3-file, whenever the merge waited for more AC-3 data, the muxer took a time for the track that was ahead by up to the size of the timeshift. The audio was then sent up to the size of the timeshift after it was due, and a player ran out of audio for moments. A merge from a Matroska file waits like this often. In a measured mux with a 7 s timeshift, 24,550 audio packets were up to 6.6 s late, and now none are. Without a timeshift the audio stream is unchanged; only its interleave with the video moves. Mux files made with a merge and a timeshift again.
+
 ## tsMuxeR 2.19.2
 
 Fixes for a crash in the Matroska output, for the continuity counter of transport streams made from the command line, and for the window, whose settings a tsMuxerGUI.ini beside the program now holds in full.
