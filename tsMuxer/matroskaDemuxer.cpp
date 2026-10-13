@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <functional>
 #include <set>
 
 #include <fs/systemlog.h>
@@ -1113,6 +1114,7 @@ void MatroskaDemuxer::openFile(const std::string& streamName)
     matroska_read_header();
     // Separately, on its own handle, so nothing about the streaming read is disturbed.
     loadAttachments(streamName);
+    loadChapters(streamName);
     applyStartCodeRule();
 }
 
@@ -1401,9 +1403,8 @@ int MatroskaDemuxer::matroska_read_header()
         }
 
         case MATROSKA_ID_CHAPTERS:
-            if ((res = ebml_read_master(&id)) < 0)
-                break;
-            res = matroska_parse_chapters();
+            // Read by loadChapters, which finds them wherever they are, also after the clusters.
+            res = ebml_read_skip();
             break;
 
         /* stream index */
@@ -1988,6 +1989,284 @@ void walkTrackBlocks(EbmlScan& scan, const int64_t from, const int64_t segmentEn
 // If a SeekHead exists and does not mention attachments, the file has none: an index that lists
 // Info, Tracks and Cues but no Attachments is not silent about them, it is saying there are none.
 // Only a file with no SeekHead at all falls back to the old walk.
+// Where a top-level element of the segment starts: in the head of the segment, before the first cluster, or where a
+// SeekHead there says it is, following one SeekHead that points to another. False when the file does not say. RFC 9559
+// (6.1) lets the Chapters, Tags and Tracks follow the clusters as long as a SeekHead before them says so; a chapter
+// editor puts the Chapters there when the head has no room for them.
+static bool findTopLevelElement(EbmlScan& scan, const int64_t fileSize, const uint32_t wanted, int64_t& bodyPos,
+                                int64_t& size)
+{
+    const auto readUInt = [&](const int64_t at, const int64_t width, uint64_t& out) -> bool
+    {
+        if (width <= 0 || width > 8)
+            return false;
+        uint8_t buf[8] = {0};
+        scan.f.seek(at);
+        if (scan.f.read(buf, static_cast<uint32_t>(width)) != static_cast<int>(width))
+            return false;
+        out = 0;
+        for (int i = 0; i < static_cast<int>(width); ++i) out = (out << 8) | buf[i];
+        return true;
+    };
+    // The positions one SeekHead gives for the wanted element and for a further SeekHead, 0 where it names neither.
+    const auto readSeekHead = [&](const int64_t body, const int64_t len, int64_t& wantedAt, int64_t& nextSeekHead)
+    {
+        const int64_t end = body + len;
+        scan.pos = body;
+        while (scan.pos < end)
+        {
+            uint32_t id = 0;
+            int64_t sz = 0, b = 0;
+            if (!scan.readElement(id, sz, b))
+                break;
+            if (id == MATROSKA_ID_SEEKENTRY)
+            {
+                uint64_t seekId = 0, seekPos = 0;
+                bool haveId = false, havePos = false;
+                scan.pos = b;
+                while (scan.pos < b + sz)
+                {
+                    uint32_t eid = 0;
+                    int64_t esz = 0, eb = 0;
+                    if (!scan.readElement(eid, esz, eb))
+                        break;
+                    if (eid == MATROSKA_ID_SEEKID)
+                        haveId = readUInt(eb, esz, seekId);
+                    else if (eid == MATROSKA_ID_SEEKPOSITION)
+                        havePos = readUInt(eb, esz, seekPos);
+                    scan.pos = eb + esz;
+                }
+                if (haveId && havePos && seekId == wanted && wantedAt == 0)
+                    wantedAt = static_cast<int64_t>(seekPos);
+                else if (haveId && havePos && seekId == MATROSKA_ID_SEEKHEAD)
+                    nextSeekHead = static_cast<int64_t>(seekPos);
+            }
+            scan.pos = b + sz;
+        }
+    };
+
+    int64_t segmentData = -1;
+    int64_t segmentEnd = fileSize;
+    scan.pos = 0;
+    while (scan.pos < fileSize)
+    {
+        uint32_t id = 0;
+        int64_t len = 0, body = 0;
+        if (!scan.readElement(id, len, body))
+            return false;
+        if (id == MATROSKA_ID_SEGMENT)
+        {
+            segmentData = body;
+            segmentEnd = (len > 0 && body + len <= fileSize) ? body + len : fileSize;
+            break;
+        }
+        scan.pos = body + len;
+    }
+    if (segmentData < 0)
+        return false;
+
+    int64_t wantedAt = 0;
+    int64_t nextSeekHead = 0;
+    scan.pos = segmentData;
+    while (scan.pos < segmentEnd)
+    {
+        uint32_t id = 0;
+        int64_t len = 0, body = 0;
+        if (!scan.readElement(id, len, body) || id == MATROSKA_ID_CLUSTER)
+            break;
+        if (id == wanted)
+        {
+            bodyPos = body;
+            size = len;
+            return true;
+        }
+        if (id == MATROSKA_ID_SEEKHEAD)
+        {
+            const int64_t resume = body + len;
+            readSeekHead(body, len, wantedAt, nextSeekHead);
+            scan.pos = resume;
+            continue;
+        }
+        scan.pos = body + len;
+    }
+    if (wantedAt == 0 && nextSeekHead > 0)
+    {
+        scan.pos = segmentData + nextSeekHead;
+        uint32_t id = 0;
+        int64_t len = 0, body = 0;
+        if (scan.readElement(id, len, body) && id == MATROSKA_ID_SEEKHEAD)
+        {
+            int64_t ignored = 0;
+            readSeekHead(body, len, wantedAt, ignored);
+        }
+    }
+    if (wantedAt == 0)
+        return false;
+    scan.pos = segmentData + wantedAt;
+    uint32_t id = 0;
+    return scan.readElement(id, size, bodyPos) && id == wanted && bodyPos + size <= fileSize;
+}
+
+// The chapters of a Matroska file, read wherever the Chapters element is. They used to be read only while the header
+// was walked, which stops at the first cluster, so chapters after the clusters were lost. And of what was read:
+//   - the FIRST edition was taken, where RFC 9559 (20.1.2) makes the first one marked EditionFlagDefault the one to use
+//   - a hidden chapter was taken as a visible one (20.2.5: each chapter's own flag says, nested ones included)
+//   - a nested chapter was dropped (20.2.3)
+//   - of a chapter's names in several languages the LAST was kept. Now the first is the title, and all are kept
+void MatroskaDemuxer::loadChapters(const std::string& fileName)
+{
+    File f;
+    if (!f.open(fileName.c_str(), File::ofRead))
+        return;
+    const int64_t fileSize = f.size();
+    EbmlScan scan(f);
+    int64_t body = 0, size = 0;
+    if (!findTopLevelElement(scan, fileSize, MATROSKA_ID_CHAPTERS, body, size))
+        return;
+
+    const auto readUInt = [&](const int64_t at, const int64_t width) -> uint64_t
+    {
+        uint64_t out = 0;
+        if (width <= 0 || width > 8)
+            return 0;
+        uint8_t buf[8] = {0};
+        scan.f.seek(at);
+        if (scan.f.read(buf, static_cast<uint32_t>(width)) != static_cast<int>(width))
+            return 0;
+        for (int i = 0; i < static_cast<int>(width); ++i) out = (out << 8) | buf[i];
+        return out;
+    };
+    const auto readString = [&](const int64_t at, const int64_t width) -> std::string
+    {
+        if (width <= 0 || width > 64 * 1024)
+            return {};
+        std::vector<char> buf(static_cast<size_t>(width) + 1, 0);
+        scan.f.seek(at);
+        if (scan.f.read(buf.data(), static_cast<uint32_t>(width)) != static_cast<int>(width))
+            return {};
+        return std::string(buf.data());  // a string element may end in zero bytes
+    };
+
+    // The editions, and the one to use.
+    int64_t chosenBody = -1, chosenSize = 0;
+    int64_t firstBody = -1, firstSize = 0;
+    scan.pos = body;
+    while (scan.pos < body + size)
+    {
+        uint32_t id = 0;
+        int64_t len = 0, b = 0;
+        if (!scan.readElement(id, len, b))
+            break;
+        if (id == MATROSKA_ID_EDITIONENTRY)
+        {
+            if (firstBody < 0)
+            {
+                firstBody = b;
+                firstSize = len;
+            }
+            bool isDefault = false;
+            scan.pos = b;
+            while (scan.pos < b + len)
+            {
+                uint32_t eid = 0;
+                int64_t esz = 0, eb = 0;
+                if (!scan.readElement(eid, esz, eb))
+                    break;
+                if (eid == MATROSKA_ID_EDITIONFLAGDEFAULT)
+                    isDefault = readUInt(eb, esz) != 0;
+                scan.pos = eb + esz;
+            }
+            if (isDefault && chosenBody < 0)
+            {
+                chosenBody = b;
+                chosenSize = len;
+            }
+        }
+        scan.pos = b + len;
+    }
+    if (chosenBody < 0)
+    {
+        chosenBody = firstBody;
+        chosenSize = firstSize;
+    }
+    if (chosenBody < 0)
+        return;
+
+    std::map<uint64_t, AVChapter> found;
+    uint64_t noUid = 1ULL << 63;  // a key for a chapter without a ChapterUID, or with one already used
+    // One ChapterAtom, and the ones nested in it.
+    std::function<void(int64_t, int64_t)> readAtom = [&](const int64_t atomBody, const int64_t atomSize)
+    {
+        uint64_t uid = 0;
+        int64_t start = -1;
+        bool hidden = false;
+        std::vector<AVChapter::Name> names;
+        std::vector<std::pair<int64_t, int64_t>> nested;
+        scan.pos = atomBody;
+        while (scan.pos < atomBody + atomSize)
+        {
+            uint32_t id = 0;
+            int64_t len = 0, b = 0;
+            if (!scan.readElement(id, len, b))
+                break;
+            if (id == MATROSKA_ID_CHAPTERUID)
+                uid = readUInt(b, len);
+            else if (id == MATROSKA_ID_CHAPTERTIMESTART)
+                start = static_cast<int64_t>(readUInt(b, len));
+            else if (id == MATROSKA_ID_CHAPTERFLAGHIDDEN)
+                hidden = readUInt(b, len) != 0;
+            else if (id == MATROSKA_ID_CHAPTERATOM)
+                nested.emplace_back(b, len);
+            else if (id == MATROSKA_ID_CHAPTERDISPLAY)
+            {
+                AVChapter::Name name;
+                scan.pos = b;
+                while (scan.pos < b + len)
+                {
+                    uint32_t did = 0;
+                    int64_t dlen = 0, db = 0;
+                    if (!scan.readElement(did, dlen, db))
+                        break;
+                    if (did == MATROSKA_ID_CHAPSTRING)
+                        name.title = readString(db, dlen);
+                    else if (did == MATROSKA_ID_CHAPTERLANGUAGE && name.language.empty())
+                        name.language = readString(db, dlen);  // the first of several: a title has one language
+                    else if (did == MATROSKA_ID_CHAPLANGUAGEBCP47 && name.languageBCP47.empty())
+                        name.languageBCP47 = readString(db, dlen);
+                    scan.pos = db + dlen;
+                }
+                // As for a track, LanguageBCP47 rules where it is there (RFC 9559, 5.1.7.1.4.12).
+                if (!name.languageBCP47.empty())
+                    if (const std::string code = iso639FromBcp47(name.languageBCP47); !code.empty())
+                        name.language = code;
+                names.push_back(name);
+            }
+            scan.pos = b + len;
+        }
+        if (start >= 0 && !hidden)
+        {
+            AVChapter chapter(start, names.empty() ? "" : names.front().title,
+                              names.empty() ? "" : names.front().language);
+            chapter.names = names;
+            found[uid != 0 && found.find(uid) == found.end() ? uid : noUid++] = chapter;
+        }
+        for (const auto& [b, len] : nested) readAtom(b, len);
+    };
+
+    scan.pos = chosenBody;
+    while (scan.pos < chosenBody + chosenSize)
+    {
+        uint32_t id = 0;
+        int64_t len = 0, b = 0;
+        if (!scan.readElement(id, len, b))
+            break;
+        if (id == MATROSKA_ID_CHAPTERATOM)
+            readAtom(b, len);
+        scan.pos = b + len;
+    }
+    chapters = std::move(found);
+}
+
 void MatroskaDemuxer::loadAttachments(const std::string& fileName)
 {
     File f;
@@ -2389,233 +2668,6 @@ int MatroskaDemuxer::ebml_read_seek(const int64_t offset)
     /* clear ID cache, if any */
     peek_id = 0;
     return (url_fseek(offset)) ? 0 : -1;
-}
-
-int MatroskaDemuxer::matroska_parse_chapters()
-{
-    int res = 0;
-    uint32_t id;
-
-    while (res == 0)
-    {
-        if ((id = ebml_peek_id(&level_up)) == 0)
-        {
-            res = -BufferedReader::DATA_EOF;
-            break;
-        }
-        if (level_up)
-        {
-            level_up--;
-            break;
-        }
-
-        switch (id)
-        {
-        case MATROSKA_ID_EDITIONENTRY:
-        {
-            int64_t end = AV_NOPTS_VALUE, start = AV_NOPTS_VALUE;
-            int64_t uid = 0;
-            bool uidFound = false;
-            char* title = nullptr;
-            char* chapLanguage = nullptr;
-            // if there is more than one chapter edition we take only the first one
-            if (!chapters.empty())
-            {
-                ebml_read_skip();
-                break;
-            }
-
-            if ((res = ebml_read_master(&id)) < 0)
-                break;
-
-            while (res == 0)
-            {
-                if ((id = ebml_peek_id(&level_up)) == 0)
-                {
-                    res = -BufferedReader::DATA_EOF;
-                    break;
-                }
-                if (level_up)
-                {
-                    level_up--;
-                    break;
-                }
-
-                switch (id)
-                {
-                case MATROSKA_ID_CHAPTERATOM:
-                    // Everything read below belongs to this chapter alone. Left over from the chapter before,
-                    // its values stood in for any this chapter lacks: a chapter without a name took the name
-                    // of the one before from memory already freed, then freed it a second time, which ended
-                    // the program; a chapter without a ChapterUID replaced the one before it.
-                    start = end = AV_NOPTS_VALUE;
-                    uid = 0;
-                    uidFound = false;
-                    title = nullptr;
-                    chapLanguage = nullptr;
-                    if ((res = ebml_read_master(&id)) < 0)
-                        break;
-
-                    while (res == 0)
-                    {
-                        if ((id = ebml_peek_id(&level_up)) == 0)
-                        {
-                            res = -BufferedReader::DATA_EOF;
-                            break;
-                        }
-                        if (level_up)
-                        {
-                            level_up--;
-                            break;
-                        }
-
-                        switch (id)
-                        {
-                        case MATROSKA_ID_CHAPTERTIMEEND:
-                            res = ebml_read_uint(&id, &end);
-                            break;
-
-                        case MATROSKA_ID_CHAPTERTIMESTART:
-                            res = ebml_read_uint(&id, &start);
-                            break;
-
-                        case MATROSKA_ID_CHAPTERDISPLAY:
-                        {
-                            if ((res = ebml_read_master(&id)) < 0)
-                                break;
-
-                            // One name and the language it is written in. A chapter can carry several, one
-                            // per language; the last one with a name is kept, always with its own language.
-                            char* displayTitle = nullptr;
-                            char* displayLanguage = nullptr;
-                            while (res == 0)
-                            {
-                                if ((id = ebml_peek_id(&level_up)) == 0)
-                                {
-                                    res = -BufferedReader::DATA_EOF;
-                                    break;
-                                }
-                                if (level_up)
-                                {
-                                    level_up--;
-                                    break;
-                                }
-
-                                switch (id)
-                                {
-                                case MATROSKA_ID_CHAPSTRING:
-                                    if (displayTitle == nullptr)
-                                        res = ebml_read_utf8(&id, &displayTitle);
-                                    else
-                                        res = ebml_read_skip();
-                                    break;
-                                case MATROSKA_ID_CHAPTERLANGUAGE:
-                                    // Kept so a remux can write the name back in the language the
-                                    // source gave it rather than marking everything undetermined.
-                                    // A name valid in several languages lists them all; the first is kept.
-                                    if (displayLanguage == nullptr)
-                                        res = ebml_read_ascii(&id, &displayLanguage);
-                                    else
-                                        res = ebml_read_skip();
-                                    break;
-                                case EBML_ID_VOID:
-                                case EBML_ID_CRC32:
-                                    res = ebml_read_skip();
-                                    break;
-
-                                default:
-                                    res = ebml_read_skip();
-                                    LTRACE(LT_INFO, 0, "Ignoring unknown Chapter display ID " << id);
-                                }
-
-                                if (level_up)
-                                {
-                                    level_up--;
-                                    break;
-                                }
-                            }
-                            if (displayTitle != nullptr)
-                            {
-                                delete[] title;
-                                delete[] chapLanguage;
-                                title = displayTitle;
-                                chapLanguage = displayLanguage;
-                            }
-                            else
-                                delete[] displayLanguage;
-                            break;
-                        }
-
-                        case MATROSKA_ID_CHAPTERUID:
-                            res = ebml_read_uint(&id, &uid);
-                            uidFound = true;
-                            break;
-
-                        case MATROSKA_ID_CHAPTERFLAGHIDDEN:
-                        case EBML_ID_VOID:
-                        case EBML_ID_CRC32:
-                            res = ebml_read_skip();
-                            break;
-
-                        default:
-                            res = ebml_read_skip();
-                            LTRACE(LT_INFO, 0, "Ignoring unknown Chapter atom ID " << id);
-                        }
-
-                        if (level_up)
-                        {
-                            level_up--;
-                            break;
-                        }
-                    }
-                    // A chapter without a name is still a chapter: Matroska makes the name optional, and a
-                    // file whose chapters have none showed no chapters at all. The writers name it.
-                    if (start != AV_NOPTS_VALUE && uidFound)
-                    {
-                        const AVChapter chapter(start, title != nullptr ? title : "",
-                                                chapLanguage != nullptr ? chapLanguage : "");
-                        chapters[uid] = chapter;
-                    }
-                    delete[] title;
-                    delete[] chapLanguage;
-                    break;
-                case MATROSKA_ID_EDITIONUID:
-                case MATROSKA_ID_EDITIONFLAGHIDDEN:
-                case MATROSKA_ID_EDITIONFLAGDEFAULT:
-                case EBML_ID_VOID:
-                case EBML_ID_CRC32:
-                    res = ebml_read_skip();
-                    break;
-                default:
-                    res = ebml_read_skip();
-                    LTRACE(LT_INFO, 0, "Ignoring unknown Edition entry ID " << id);
-                }
-
-                if (level_up)
-                {
-                    level_up--;
-                    break;
-                }
-            }
-            break;
-        }
-        case EBML_ID_VOID:
-        case EBML_ID_CRC32:
-            res = ebml_read_skip();
-            break;
-        default:
-            res = ebml_read_skip();
-            LTRACE(LT_INFO, 0, "Expected an Edition entry (" << MATROSKA_ID_EDITIONENTRY << "), but found " << id);
-        }
-
-        if (level_up)
-        {
-            level_up--;
-            break;
-        }
-    }
-
-    return res;
 }
 
 int MatroskaDemuxer::matroska_parse_tracks()

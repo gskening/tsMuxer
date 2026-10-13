@@ -28,6 +28,15 @@ struct AVChapter
     // The language the title is written in, as the source spelled it. Empty where the source did
     // not say, which Matroska allows: ChapterLanguage has a default rather than being required.
     std::string language;
+    // Every name a Matroska chapter has, one per ChapterDisplay, in the order of the source: the title in each
+    // language, its ISO 639-2 code and its BCP 47 tag where there was one. Empty for every other source.
+    struct Name
+    {
+        std::string title;
+        std::string language;
+        std::string languageBCP47;
+    };
+    std::vector<Name> names;
 };
 typedef std::vector<AVChapter> AVChapters;
 
