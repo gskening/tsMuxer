@@ -329,8 +329,9 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
         if (const auto tag = params.find("srclangbcp47"); tag != params.end())
             track.languageBCP47 = tag->second;
 
+    // A name with a comma in it has to be quoted in the meta, and the quotes stayed in the name.
     if (const auto nm = params.find("track-name"); nm != params.end())
-        track.name = nm->second;
+        track.name = unquoteStr(nm->second);
     else if (const auto src = params.find("srcname"); src != params.end())
         track.name = src->second;  // the source's own name, which a remux used to drop
 
@@ -348,6 +349,19 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
                 if (eq != std::string::npos && item.compare(0, eq, flagName) == 0)
                     track.flags[flagId] = item.substr(eq + 1) == "1" ? 1 : 0;
         }
+    }
+    // The same flags from the meta, which win over the source's: the name alone or =1 sets one, =0 clears it.
+    {
+        static const std::pair<const char*, uint32_t> OPTIONS[] = {
+            {"forced", MATROSKA_ID_TRACKFLAGFORCED},
+            {"hearing-impaired", MATROSKA_ID_TRACKFLAGHEARINGIMPAIRED},
+            {"visual-impaired", MATROSKA_ID_TRACKFLAGVISUALIMPAIRED},
+            {"text-descriptions", MATROSKA_ID_TRACKFLAGTEXTDESCRIPTIONS},
+            {"original", MATROSKA_ID_TRACKFLAGORIGINAL},
+            {"commentary", MATROSKA_ID_TRACKFLAGCOMMENTARY}};
+        for (const auto& [option, flagId] : OPTIONS)
+            if (const auto it = params.find(option); it != params.end())
+                track.flags[flagId] = it->second.empty() || !defaultParamMeansNo(it->second) ? 1 : 0;
     }
     // Container colour and mastering metadata (srccolour: m=9;t=16;...), for when the stream carries none.
     if (const auto src = params.find("srccolour"); src != params.end())

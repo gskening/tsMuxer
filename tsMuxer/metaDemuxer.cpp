@@ -512,9 +512,10 @@ void METADemuxer::openFile(const string& streamName)
         for (unsigned i = 2; i < params.size(); i++)
         {
             // params[i] = strToLowerCase ( params[i] );
-            vector<string> tmp = splitStr(params[i].c_str(), '=');
-            const string paramName = trimStr(tmp[0]);
-            addParams[paramName] = trimStr(tmp.size() > 1 ? tmp[1] : "");
+            // The value is everything after the first '=': a track-name with an '=' in it was cut there.
+            const size_t eq = params[i].find('=');
+            const string paramName = trimStr(params[i].substr(0, eq));
+            addParams[paramName] = trimStr(eq == string::npos ? "" : params[i].substr(eq + 1));
             if (!isKnownTrackParam(paramName))
             {
                 // A misspelled parameter used to be accepted in silence and simply do nothing,
@@ -1183,7 +1184,8 @@ static bool isKnownTrackParam(const std::string& name)
         "font-border", "font-charset", "line-spacing", "bottom-offset", "fadein-time", "fadeout-time", "keep-text",
         // set internally, never written by a user, but accepted so a round tripped meta does
         // not warn. srcdefault is the source container's own default track flag.
-        "srclang", "srclangbcp47", "srcdefault", "srcname", "srcflags", "srccolour", "srcdisplay"};
+        "forced", "hearing-impaired", "visual-impaired", "text-descriptions", "original", "commentary", "srclang",
+        "srclangbcp47", "srcdefault", "srcname", "srcflags", "srccolour", "srcdisplay"};
     return known.find(name) != known.end();
 }
 

@@ -699,6 +699,12 @@ Additional parameters for audio tracks:
                     Matroska default flag when the output is MKV. Without it the first track
                     of each type is the default.
 - track-name        Track name, MKV output only. Shown by players in the track list.
+                    Put it in quotes when it has a comma: track-name="Director, commentary".
+- forced, hearing-impaired, visual-impaired, text-descriptions, original, commentary
+                    Matroska track flags, MKV output only: forced subtitles, made for the
+                    hearing or the visually impaired, text descriptions of the picture,
+                    the original language, commentary. =1 (or the name alone) sets the
+                    flag, =0 clears it. A Matroska source's own flags are kept otherwise.
 - stretch           Stretch audio by a given factor. Can be a decimal value or a
                     fraction (e.g. 25/24). Useful for fixing A/V sync issues
                     caused by frame rate discrepancies.
@@ -775,7 +781,6 @@ Additional parameters for PG and SRT tracks:
 - default           Mark this track as the default. Used for Blu-ray, and written as the
                     Matroska default flag when the output is MKV. Without it the first track
                     of each type is the default.
-- track-name        Track name, MKV output only. Shown by players in the track list.
                     Allowed values are "all" which causes all subtitles to be
                     shown, and "forced" which shows only elements marked as
                     "forced" in the subtitle stream.
@@ -783,6 +788,13 @@ Additional parameters for PG and SRT tracks:
                     the default. Put it on every track of a type to say that the
                     type has no default at all: with nothing said either way, the
                     first track of each type becomes the default.
+- track-name        Track name, MKV output only. Shown by players in the track list.
+                    Put it in quotes when it has a comma: track-name="Director, commentary".
+- forced, hearing-impaired, visual-impaired, text-descriptions, original, commentary
+                    Matroska track flags, MKV output only: forced subtitles, made for the
+                    hearing or the visually impaired, text descriptions of the picture,
+                    the original language, commentary. =1 (or the name alone) sets the
+                    flag, =0 clears it. A Matroska source's own flags are kept otherwise.
 - fps               Video fps. It is recommended to define this parameter in
                     order to enable more careful timing processing.
 - 3d-plane          Defines the number of the '3D offset track' which is placed
