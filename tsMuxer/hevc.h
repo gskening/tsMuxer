@@ -55,6 +55,8 @@ struct HevcUnit
     int serializeBuffer(uint8_t* dstBuffer, const uint8_t* dstEnd) const;
 
     [[nodiscard]] int nalBufferLen() const { return m_nalBufferLen; }
+    // The unit with its emulation prevention bytes taken out, the two byte NAL header first.
+    [[nodiscard]] const uint8_t* nalBuffer() const { return m_nalBuffer; }
 
     NalType nal_unit_type;
     uint8_t nuh_layer_id;

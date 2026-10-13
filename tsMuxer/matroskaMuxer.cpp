@@ -579,14 +579,25 @@ std::vector<uint8_t> MatroskaMuxer::buildHEVCDecoderConfigRecord(AbstractStreamR
     std::vector<uint8_t> record;
     record.push_back(1);  // configurationVersion
 
-    // general_profile_space(2) | general_tier_flag(1) | general_profile_idc(5)
-    record.push_back(static_cast<uint8_t>(sps->profile_idc & 0x1F));
-    // general_profile_compatibility_flags (4 bytes)
-    for (int i = 0; i < 4; i++) record.push_back(0);
-    // general_constraint_indicator_flags (6 bytes)
-    for (int i = 0; i < 6; i++) record.push_back(0);
-    // general_level_idc
-    record.push_back(static_cast<uint8_t>(sps->level_idc));
+    // general_profile_space, general_tier_flag, general_profile_idc, general_profile_compatibility_flags,
+    // general_constraint_indicator_flags and general_level_idc: the first 12 bytes of the SPS's profile_tier_level,
+    // which starts on a byte boundary right after its first byte. They were written as the profile and level alone,
+    // with the tier, every compatibility flag and every constraint flag 0, so a High tier Main 10 stream, compatible
+    // with Main 10 and progressive, was described as Main tier and compatible with nothing.
+    const uint8_t* rbsp = sps->nalBuffer();
+    uint8_t temporal = 0x0F;  // numTemporalLayers 1, temporalIdNested 1, lengthSizeMinusOne 3
+    if (rbsp && sps->nalBufferLen() >= 15)
+    {
+        record.insert(record.end(), rbsp + 3, rbsp + 15);
+        // sps_max_sub_layers_minus1 and sps_temporal_id_nesting_flag, from the byte before them
+        temporal = static_cast<uint8_t>((((rbsp[2] >> 1) & 7) + 1) << 3 | (rbsp[2] & 1) << 2 | 3);
+    }
+    else
+    {
+        record.push_back(static_cast<uint8_t>(sps->profile_idc & 0x1F));
+        for (int i = 0; i < 10; i++) record.push_back(0);
+        record.push_back(static_cast<uint8_t>(sps->level_idc));
+    }
     // min_spatial_segmentation_idc
     record.push_back(0xF0);
     record.push_back(0x00);
@@ -601,8 +612,8 @@ std::vector<uint8_t> MatroskaMuxer::buildHEVCDecoderConfigRecord(AbstractStreamR
     // avgFrameRate
     record.push_back(0);
     record.push_back(0);
-    // constantFrameRate(2) | numTemporalLayers(3) | temporalIdNested(1) | lengthSizeMinusOne(2)
-    record.push_back(0x0F);  // lengthSizeMinusOne=3
+    // constantFrameRate(2) 0 | numTemporalLayers(3) | temporalIdNested(1) | lengthSizeMinusOne(2) 3
+    record.push_back(temporal);
 
     int numArrays = 0;
     if (!vpsData.empty())
