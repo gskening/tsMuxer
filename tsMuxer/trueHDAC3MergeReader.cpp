@@ -214,6 +214,21 @@ int TrueHDAC3MergeReader::readPacket(AVPacket& avPacket)
                 memmove(m_tmpBuffer.data(), m_curPos, m_tmpBufferLen);
                 m_curPos = m_bufEnd;
             }
+            // Say where the stream stands, as SimplePacketizerReader does before asking for more data. The muxer
+            // takes the time of the packet it gets back as this stream's position and adds the stream's timeshift
+            // to it, also when no packet came. Left untouched, the packet still held the time of the one before,
+            // to which the timeshift had already been added, or the time of a video packet, so a timeshift= of
+            // 7 s made the position jump 7 s ahead and the audio was sent up to 7 s after it was due: dropouts on
+            // playback. A merge from a Matroska file waits here often, because the AC-3 arrives in small pieces.
+            avPacket.flags = m_flags + AVPacket::IS_COMPLETE_FRAME | AVPacket::FORCE_NEW_FRAME;
+            avPacket.stream_index = m_streamIndex;
+            avPacket.codecID = getCodecInfo().codecID;
+            avPacket.codec = static_cast<BaseAbstractStreamReader*>(this);
+            avPacket.data = nullptr;
+            avPacket.size = 0;
+            avPacket.duration = 0;
+            avPacket.dts = avPacket.pts = m_samplerate ? samplesToInternal(m_totalTHDSamples, m_samplerate)
+                                                       : static_cast<int64_t>(m_curPts * m_stretch) + m_timeOffset;
             return AbstractStreamReader::NEED_MORE_DATA;
         }
 
