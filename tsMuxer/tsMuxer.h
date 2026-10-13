@@ -115,6 +115,7 @@ class TSMuxer final : public AbstractMuxer
     void writeNullPackets(int cnt);
     void writeOutBuffer();
     void writeEmptyPacketWithPCR(int64_t pcrVal);
+    int pcrOnlyPacketCounter();
     void buildNULL();
     void buildPAT();
     void buildPMT();
