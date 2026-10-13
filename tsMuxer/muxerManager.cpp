@@ -827,8 +827,8 @@ void MuxerManager::parseMuxOpt(const string& opts)
         {
             if (m_extraIsoBlocks == 0)
                 m_extraIsoBlocks = 4;
-            // Kept for getExtraISOBlocks. A missing value is refused where the split is made, and only there: Matroska
-            // output and demux ignore a split with a warning.
+            // Kept for getExtraISOBlocks. A missing value is refused where the split is made, and only there: a demux
+            // ignores a split with a warning.
             if (paramPair.size() >= 2 && paramPair[0] == "--split-size")
                 m_isoSplitBytes = checkedSplitSize(paramPair[1]);
             else if (paramPair.size() >= 2)

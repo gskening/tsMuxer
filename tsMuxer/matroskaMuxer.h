@@ -392,6 +392,23 @@ class MatroskaMuxer final : public AbstractMuxer
     int64_t m_attachmentsPos = 0;
     int64_t m_chaptersPos = 0;
     int64_t m_tagsPos = 0;
+    // Splitting (--split-size, --split-duration, --split-chapters), as for a transport stream.
+    int64_t m_splitSize = 0;      // bytes
+    int64_t m_splitDuration = 0;  // internal clock
+    bool m_splitByChapters = false;
+    int m_partNum = 0;  // the part being written, from 1; 0 when the output is not split
+    int64_t m_muxStartPts = 0;
+    bool m_muxStartSet = false;
+    std::vector<int64_t> m_chapterSplitPts;  // --split-chapters: the marks, internal clock from the start
+    size_t m_nextChapterSplit = 0;
+    std::vector<double> m_allChapters;  // a split output's chapters, seconds from the start of the mux
+    std::vector<AVChapter> m_allChapterInfo;
+    uint64_t m_mainTrackNumber = 0;  // the track whose key frames a split may start at
+    [[nodiscard]] bool isSplitting() const { return m_splitSize > 0 || m_splitDuration > 0 || m_splitByChapters; }
+    [[nodiscard]] std::string partFileName(int part) const;
+    bool splitDue(int64_t pts);
+    void finishPart(int64_t partEndPts);
+    void writePartChapters(int64_t partEndPts);
     std::string m_title;  // --title=, or the first source's title
     bool m_titleFromMuxOpt = false;
     std::vector<std::vector<uint8_t>> m_sourceAttachments;  // whole AttachedFile elements
@@ -461,6 +478,7 @@ class MatroskaMuxer final : public AbstractMuxer
 
     // Flush any pending accumulated frame data for a track as a single SimpleBlock.
     void flushPendingFrame(MkvTrackInfo& track);
+    void startNextPart(MkvTrackInfo& current, int64_t origin);
     // Emit one completed frame. Shared by the ordinary path and by the dual layer Dolby Vision
     // path, which writes its frames later than it finishes them.
     void writeBlock(MkvTrackInfo& track, const uint8_t* frameData, int frameSize, int64_t pts, uint8_t pendingFlags);

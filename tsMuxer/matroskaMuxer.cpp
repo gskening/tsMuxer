@@ -921,11 +921,24 @@ void MatroskaMuxer::parseMuxOpt(const std::string& opts)
     // on Matroska output used to produce ONE file and "Mux successful complete" with nothing said,
     // so a 421 MB source asked to split at 50 MB came back whole while the same meta aimed at .ts
     // gave nine parts. Say so, the way the demux path already does for the same reason.
-    for (const char* splitOpt : {"--split-size", "--split-duration", "--split-chapters"})
-        if (opts.find(splitOpt) != std::string::npos)
-            LTRACE(LT_WARN, 2,
-                   "Warning: splitting is not implemented for Matroska output. "
-                       << splitOpt << " was ignored and the whole mux went into one file.");
+    for (const std::string& token : splitQuotedStr(opts.c_str(), ' '))
+    {
+        const size_t eq = token.find('=');
+        const std::string key = token.substr(0, eq);
+        const std::string value = eq == std::string::npos ? std::string() : token.substr(eq + 1);
+        if ((key == "--split-size" || key == "--split-duration") && value.empty())
+            THROW(ERR_COMMON, "Missing value for " << key)
+        if (key == "--split-size")
+            m_splitSize = checkedSplitSize(value);
+        else if (key == "--split-duration")
+        {
+            m_splitDuration = strToInt64(value.c_str()) * INTERNAL_PTS_FREQ;
+            if (m_splitDuration <= 0)
+                THROW(ERR_COMMON, "Invalid --split-duration value \"" << value << "\": it must be above zero.")
+        }
+        else if (key == "--split-chapters")
+            m_splitByChapters = true;
+    }
 
     // --title="..." names the file (the segment's Title), over any title a Matroska source has.
     for (const std::string& token : splitQuotedStr(opts.c_str(), ' '))
@@ -1487,6 +1500,11 @@ bool MatroskaMuxer::couldFoldDualLayer() const
 void MatroskaMuxer::openDstFile()
 {
     m_fileName = m_origFileName;
+    if (isSplitting())
+    {
+        m_partNum = 1;
+        m_fileName = partFileName(1);
+    }
 
     // Refuse BEFORE the destination is touched. This check used to live in refreshTrackProperties,
     // which runs on the first packet, by which time the file has been created and truncated: a mux
@@ -1930,6 +1948,16 @@ void MatroskaMuxer::writeDeferredHeader()
     // the exact Dolby Vision test lives and where it throws, so nothing below it may run before it.
     refreshTrackProperties();
 
+    // A merged Dolby Vision or 3D track holds frames back for the other layer, and a part cannot be closed with frames
+    // still held. Splitting is refused for it, rather than parts that lose pictures at every cut, and here, before the
+    // destination exists, so that the refusal leaves no file behind.
+    if (isSplitting())
+        for (const auto& [streamIdx, track] : m_tracks)
+            if (track.foldElStreamIndex >= 0)
+                THROW(ERR_COMMON,
+                      "Splitting a Matroska output is not supported with a merged dual layer Dolby Vision "
+                      "or 3D track. Make one file, or mux the layers to a transport stream.")
+
     // Only now is the mux known to be going ahead, so only now is the destination created. Before
     // this line the file at that path is whatever the user had there.
     openDestination();
@@ -1984,7 +2012,22 @@ void MatroskaMuxer::writeDeferredHeader()
 
     // Chapters must precede the first Cluster, because a player reads the header once and does
     // not go looking for them later.
-    writeChapters();
+    if (isSplitting())
+    {
+        m_allChapters = m_chapters;
+        m_allChapterInfo = m_chapterInfo;
+        for (const double seconds : m_chapters)
+            if (seconds > 0.0)
+                m_chapterSplitPts.push_back(static_cast<int64_t>(seconds * INTERNAL_PTS_FREQ));
+        std::sort(m_chapterSplitPts.begin(), m_chapterSplitPts.end());
+        // The lowest numbered video track, or the lowest numbered track when there is no video.
+        for (const bool videoOnly : {true, false})
+            for (const auto& [streamIdx, track] : m_tracks)
+                if (m_mainTrackNumber == 0 && (!videoOnly || track.trackType == MKV_TRACK_TYPE_VIDEO))
+                    m_mainTrackNumber = track.trackNumber;
+    }
+    else
+        writeChapters();
     writeTags();
 
     m_headerWritten = true;
@@ -2723,6 +2766,17 @@ void MatroskaMuxer::writeTextBlock(MkvTrackInfo& track, const uint8_t* data, con
 void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, int frameSize, int64_t pts,
                                uint8_t pendingFlags)
 {
+    if (m_partNum > 0 && m_headerWritten)
+    {
+        if (!m_muxStartSet)
+        {
+            m_muxStartPts = m_firstTimecode;
+            m_muxStartSet = true;
+        }
+        if (track.trackNumber == m_mainTrackNumber && (pendingFlags & AVPacket::IS_IFRAME) && m_clusterOpen &&
+            splitDue(pts))
+            startNextPart(track, (std::min)(pts, track.hasPendingFrame ? track.pendingDts : pts));
+    }
     if (track.trackType != MKV_TRACK_TYPE_SUBTITLE && !m_heldText.empty())
         flushHeldText(pts);
     // Compute PTS relative to stream start (convert internal PTS units to milliseconds)
@@ -3756,6 +3810,195 @@ void MatroskaMuxer::writeTags()
     for (const auto& raw : m_sourceTags) writeToFile(raw);
 }
 
+// Everything that closes one output file, once its last block is written: its chapters when the output is split, the
+// Cues, the attachments, the SeekHead, and the sizes and the Duration patched in. partEndPts is where the next part
+// starts, INT64_MAX for the last or only file.
+void MatroskaMuxer::finishPart(const int64_t partEndPts)
+{
+    flushCluster();
+    if (m_partNum > 0)
+        writePartChapters(partEndPts);
+
+    // Write Cues
+    writeCues();
+
+    // Write the preserved original RPUs and the manifest, in profile 8.1 mode
+    writeAttachments();
+
+    // The SeekHead goes into the space reserved at the front, where RFC 9559 (6.3) puts the first one. A copy of it
+    // was also written at the end, a second SeekHead the first did not point to and that listed more than clusters,
+    // both of which 6.3 rules out. The end now gets it only when it does not fit at the front.
+    if (!writeFrontSeekHead())
+        writeSeekHead();
+
+    // Patch the Segment size now that we know the total length
+    const int64_t segmentEnd = m_file.pos();
+    const uint64_t segmentSize = static_cast<uint64_t>(segmentEnd - m_segmentStartPos);
+    m_file.seek(m_segmentSizePos);
+    uint8_t sizeBuf[8];
+    ebml_write_size_fixed(sizeBuf, segmentSize, 8);
+    m_file.write(sizeBuf, 8);
+
+    // Patch the Duration element with the end of the track that ends LAST, each track measured by
+    // its OWN frames.
+    //
+    // It used to be the largest block start over all tracks, cut to whole milliseconds, plus one
+    // VIDEO frame, whichever track that block belonged to. The last block to start is usually
+    // audio, so a 0.833 ms TrueHD access unit was given a 41.7 ms video frame and the file came out
+    // 40 ms longer than its tracks really are. An audio only file had nothing added and came out
+    // one frame short.
+    //
+    //   video     its largest timestamp plus one frame: the step its reader advances by and the
+    //             DefaultDuration written for it. The largest, not the last written, because video
+    //             goes out in decode order
+    //   audio     its largest timestamp plus the distance to the one before it. NOT the packet's own
+    //             duration: a braided TrueHD reader takes its timestamps from the sample count but
+    //             its durations from the AC-3 side, so an access unit there can claim a whole AC-3
+    //             frame
+    //   subtitle  its largest timestamp. A display set has no length of its own
+    //
+    // In double and relative to the first timestamp, so nothing is truncated before the end is
+    // known and no timeline, however long, can overflow the sum.
+    //
+    // A file with nothing to measure, such as a single audio frame, gets no Duration at all. The
+    // placeholder is 0.0, which is outside the element's range, and the element is optional, so it
+    // becomes a Void of the same size rather than staying as a value that is not allowed.
+    double durationMs = 0.0;
+    for (const auto& [idx, track] : m_tracks)
+    {
+        if (!track.hasMaxBlockPts)
+            continue;
+        double endMs = static_cast<double>(track.maxBlockPts - m_firstTimecode) / INTERNAL_PTS_PER_MS;
+        if (track.trackType == 1 && track.fps > 0)
+            endMs += 1000.0 / track.fps;
+        else if (track.trackType != MKV_TRACK_TYPE_SUBTITLE && track.hasNextMaxBlockPts)
+            endMs += static_cast<double>(track.maxBlockPts - track.nextMaxBlockPts) / INTERNAL_PTS_PER_MS;
+        if (track.hasTextEnd)
+            endMs = (std::max)(endMs, static_cast<double>(track.maxTextEnd - m_firstTimecode) / INTERNAL_PTS_PER_MS);
+        durationMs = std::max(durationMs, endMs);
+    }
+
+    // A DD+ 7.1 track carries channels 7 and 8 in a dependent substream, which the reader may meet only after the track
+    // header has been written: the header said 6 while the audio decodes as 7.1. The count is corrected here, in
+    // place, with the same one byte size, once the whole track has been read.
+    for (const auto& [streamIdx, track] : m_tracks)
+    {
+        const auto at = m_channelsValueFilePos.find(streamIdx);
+        const auto ac3 = dynamic_cast<AC3StreamReader*>(track.codecReader);
+        if (at == m_channelsValueFilePos.end() || !ac3 || track.matroskaCodecID != MATROSKA_CODEC_ID_AUDIO_EAC3 ||
+            !ac3->hasExtChannels() || track.channels != ac3->getChannels())
+            continue;
+        const auto full = static_cast<uint8_t>(ac3->getChannels() + 2);
+        m_file.seek(at->second);
+        m_file.write(&full, 1);
+    }
+
+    if (m_durationValueFilePos > 0 && !(std::isfinite(durationMs) && durationMs > 0))
+    {
+        m_file.seek(m_durationValueFilePos - 3);  // back over the 2 byte ID and 1 byte size
+        writeVoid(3 + 8);
+    }
+    else if (m_durationValueFilePos > 0)
+    {
+        // Write as big-endian IEEE 754 float64
+        uint64_t bits;
+        memcpy(&bits, &durationMs, 8);
+        uint8_t durationBuf[8];
+        for (int i = 7; i >= 0; i--)
+        {
+            durationBuf[i] = static_cast<uint8_t>(bits & 0xFF);
+            bits >>= 8;
+        }
+        m_file.seek(m_durationValueFilePos);
+        m_file.write(durationBuf, 8);
+    }
+
+    m_file.close();
+}
+
+// The name of part n of a split output, as a transport stream's parts are named: name.split.n.mkv.
+std::string MatroskaMuxer::partFileName(const int part) const
+{
+    const std::string ext = extractFileExt(m_origFileName);
+    return m_origFileName.substr(0, m_origFileName.size() - ext.size() - 1) + ".split." + int32ToStr(part) + "." + ext;
+}
+
+// Whether the block about to be written starts a new part: a key frame of the main track once the part is as large or
+// as long as asked, or has reached the next chapter.
+bool MatroskaMuxer::splitDue(const int64_t pts)
+{
+    if (m_splitSize > 0)
+        return m_file.pos() + static_cast<int64_t>(m_clusterBuf.size()) > m_splitSize;
+    if (m_splitDuration > 0)
+        return pts - m_firstTimecode > m_splitDuration;
+    bool due = false;
+    // Step past every chapter already reached: two marks closer together than the next key frame give one split.
+    while (m_nextChapterSplit < m_chapterSplitPts.size() &&
+           pts - m_muxStartPts >= m_chapterSplitPts[m_nextChapterSplit])
+    {
+        due = true;
+        m_nextChapterSplit++;
+    }
+    return due;
+}
+
+// Close the part being written and open the next, at origin, which becomes its time zero.
+void MatroskaMuxer::startNextPart(MkvTrackInfo& current, const int64_t origin)
+{
+    // What came before the cut belongs to the part that ends here.
+    for (auto& [streamIdx, track] : m_tracks)
+        if (&track != &current)
+            flushPendingFrame(track);
+    flushHeldText(origin);
+    finishPart(origin);
+
+    m_partNum++;
+    m_fileName = partFileName(m_partNum);
+    m_destinationOpen = false;
+    m_cueEntries.clear();
+    m_clusterOpen = false;
+    m_clusterBuf.clear();
+    m_clusterDataSize = 0;
+    m_clusterBlocks = 0;
+    m_cuesPos = 0;
+    m_attachmentsPos = 0;
+    m_chaptersPos = 0;
+    m_tagsPos = 0;
+    m_lastAudioCueMs.clear();
+    m_channelsValueFilePos.clear();
+    for (auto& [streamIdx, track] : m_tracks)
+    {
+        track.hasMaxBlockPts = false;
+        track.hasNextMaxBlockPts = false;
+        track.hasTextEnd = false;
+    }
+    m_firstTimecode = origin;
+
+    openDestination();
+    writeSegmentInfo();
+    writeTracks();
+    writeTags();
+}
+
+// A split output's chapters go to the part they fall into, counted from that part's start, written once the part is
+// complete and so after its clusters, where the SeekHead points to them.
+void MatroskaMuxer::writePartChapters(const int64_t partEndPts)
+{
+    const double partStart = static_cast<double>(m_firstTimecode - m_muxStartPts) / INTERNAL_PTS_FREQ;
+    const double partEnd =
+        partEndPts == INT64_MAX ? 1e300 : static_cast<double>(partEndPts - m_muxStartPts) / INTERNAL_PTS_FREQ;
+    m_chapters.clear();
+    m_chapterInfo.clear();
+    for (size_t i = 0; i < m_allChapters.size(); ++i)
+    {
+        if (m_allChapters[i] < partStart - 0.0005 || m_allChapters[i] >= partEnd - 0.0005)
+            continue;
+        m_chapters.push_back((std::max)(0.0, m_allChapters[i] - partStart));
+        m_chapterInfo.push_back(i < m_allChapterInfo.size() ? m_allChapterInfo[i] : AVChapter());
+    }
+    writeChapters();
+}
+
 // ──────────────── SeekHead ───────────────────────────────────────────────────
 
 // Build the complete SeekHead element, header included, so it can be written both at the front of
@@ -3878,100 +4121,6 @@ bool MatroskaMuxer::close()
     // Flush any remaining cluster data
     flushCluster();
 
-    // Write Cues
-    writeCues();
-
-    // Write the preserved original RPUs and the manifest, in profile 8.1 mode
-    writeAttachments();
-
-    // The SeekHead goes into the space reserved at the front, where RFC 9559 (6.3) puts the first one. A copy of it
-    // was also written at the end, a second SeekHead the first did not point to and that listed more than clusters,
-    // both of which 6.3 rules out. The end now gets it only when it does not fit at the front.
-    if (!writeFrontSeekHead())
-        writeSeekHead();
-
-    // Patch the Segment size now that we know the total length
-    const int64_t segmentEnd = m_file.pos();
-    const uint64_t segmentSize = static_cast<uint64_t>(segmentEnd - m_segmentStartPos);
-    m_file.seek(m_segmentSizePos);
-    uint8_t sizeBuf[8];
-    ebml_write_size_fixed(sizeBuf, segmentSize, 8);
-    m_file.write(sizeBuf, 8);
-
-    // Patch the Duration element with the end of the track that ends LAST, each track measured by
-    // its OWN frames.
-    //
-    // It used to be the largest block start over all tracks, cut to whole milliseconds, plus one
-    // VIDEO frame, whichever track that block belonged to. The last block to start is usually
-    // audio, so a 0.833 ms TrueHD access unit was given a 41.7 ms video frame and the file came out
-    // 40 ms longer than its tracks really are. An audio only file had nothing added and came out
-    // one frame short.
-    //
-    //   video     its largest timestamp plus one frame: the step its reader advances by and the
-    //             DefaultDuration written for it. The largest, not the last written, because video
-    //             goes out in decode order
-    //   audio     its largest timestamp plus the distance to the one before it. NOT the packet's own
-    //             duration: a braided TrueHD reader takes its timestamps from the sample count but
-    //             its durations from the AC-3 side, so an access unit there can claim a whole AC-3
-    //             frame
-    //   subtitle  its largest timestamp. A display set has no length of its own
-    //
-    // In double and relative to the first timestamp, so nothing is truncated before the end is
-    // known and no timeline, however long, can overflow the sum.
-    //
-    // A file with nothing to measure, such as a single audio frame, gets no Duration at all. The
-    // placeholder is 0.0, which is outside the element's range, and the element is optional, so it
-    // becomes a Void of the same size rather than staying as a value that is not allowed.
-    double durationMs = 0.0;
-    for (const auto& [idx, track] : m_tracks)
-    {
-        if (!track.hasMaxBlockPts)
-            continue;
-        double endMs = static_cast<double>(track.maxBlockPts - m_firstTimecode) / INTERNAL_PTS_PER_MS;
-        if (track.trackType == 1 && track.fps > 0)
-            endMs += 1000.0 / track.fps;
-        else if (track.trackType != MKV_TRACK_TYPE_SUBTITLE && track.hasNextMaxBlockPts)
-            endMs += static_cast<double>(track.maxBlockPts - track.nextMaxBlockPts) / INTERNAL_PTS_PER_MS;
-        if (track.hasTextEnd)
-            endMs = (std::max)(endMs, static_cast<double>(track.maxTextEnd - m_firstTimecode) / INTERNAL_PTS_PER_MS);
-        durationMs = std::max(durationMs, endMs);
-    }
-
-    // A DD+ 7.1 track carries channels 7 and 8 in a dependent substream, which the reader may meet only after the track
-    // header has been written: the header said 6 while the audio decodes as 7.1. The count is corrected here, in
-    // place, with the same one byte size, once the whole track has been read.
-    for (const auto& [streamIdx, track] : m_tracks)
-    {
-        const auto at = m_channelsValueFilePos.find(streamIdx);
-        const auto ac3 = dynamic_cast<AC3StreamReader*>(track.codecReader);
-        if (at == m_channelsValueFilePos.end() || !ac3 || track.matroskaCodecID != MATROSKA_CODEC_ID_AUDIO_EAC3 ||
-            !ac3->hasExtChannels() || track.channels != ac3->getChannels())
-            continue;
-        const auto full = static_cast<uint8_t>(ac3->getChannels() + 2);
-        m_file.seek(at->second);
-        m_file.write(&full, 1);
-    }
-
-    if (m_durationValueFilePos > 0 && !(std::isfinite(durationMs) && durationMs > 0))
-    {
-        m_file.seek(m_durationValueFilePos - 3);  // back over the 2 byte ID and 1 byte size
-        writeVoid(3 + 8);
-    }
-    else if (m_durationValueFilePos > 0)
-    {
-        // Write as big-endian IEEE 754 float64
-        uint64_t bits;
-        memcpy(&bits, &durationMs, 8);
-        uint8_t durationBuf[8];
-        for (int i = 7; i >= 0; i--)
-        {
-            durationBuf[i] = static_cast<uint8_t>(bits & 0xFF);
-            bits >>= 8;
-        }
-        m_file.seek(m_durationValueFilePos);
-        m_file.write(durationBuf, 8);
-    }
-
-    m_file.close();
+    finishPart(INT64_MAX);
     return true;
 }

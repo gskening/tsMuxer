@@ -930,6 +930,10 @@ All parameters in this group start with two dashes:
 --split-size          Split the output into several files, with each of them
                       having a given maximum size. KB, KiB, MB, MiB, GB and GiB
                       are accepted as size units.
+                      Matroska output is split by all three the same way, into
+                      name.split.1.mkv, name.split.2.mkv and on. Each part starts
+                      at time zero and carries the chapters that fall into it.
+                      Not with a merged dual layer Dolby Vision or 3D track.
 --right-eye           Use base video stream for right eye. Used for 3DBD only.
 --dv-profile          Matroska output only, and only for a dual layer Dolby Vision
                       source. 7 (the default) carries the disc as it is: profile 7,
