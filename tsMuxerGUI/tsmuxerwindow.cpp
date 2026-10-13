@@ -5633,7 +5633,10 @@ void TsMuxerWindow::openMetaFileBtnClick()
     if (m_fileDialogOpen)
         return;
 
-    auto* dialog = new QFileDialog(this, tr("Open project file"), getExistingDialogDir(QString()),
+    // The folder files are added from, the same as the Browse button. With no folder given the dialog opened in the
+    // home folder, and Windows shows each folder in the view kept for that folder, so it showed the home folder's view,
+    // such as Medium Icons, where Browse showed the user's own folder in Details.
+    auto* dialog = new QFileDialog(this, tr("Open project file"), getExistingDialogDir(lastInputDir),
                                    tr("tsMuxeR project file (*.meta);;All files (*)"));
     dialog->setAcceptMode(QFileDialog::AcceptOpen);
     dialog->setFileMode(QFileDialog::ExistingFile);
@@ -6240,7 +6243,7 @@ bool TsMuxerWindow::readGeneralSettings(const QString& prefix)
         return false;
     }
 
-    lastInputDir = settings->value("inputDir").toString();
+    lastInputDir = settings->value("inputDir", lastInputDir).toString();
     lastOutputDir = settings->value("outputDir").toString();
 
     // A key that is missing keeps what the control already shows, its default: read as 0 or off, a hand-made or older
