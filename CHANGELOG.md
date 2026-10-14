@@ -18,7 +18,7 @@ This release is about Matroska. tsMuxeR now reads and writes it much more comple
 
 ### Matroska input
 
-* **ASS, SSA and WebVTT subtitles** are read as text: kept as text in a Matroska output, or drawn into PGS for a disc. Italic, bold and underline are kept.
+* **ASS, SSA and WebVTT subtitles** are read as text: kept as text in a Matroska output, or drawn into PGS for a disc. Italic, bold and underline are kept. The colours, positions, fonts and styles of ASS and SSA are left out, and a Matroska output carries the text as SRT.
 
 * **DVD subtitles (VobSub) and DVB subtitles** are read and turned into PGS, with their colours, positions and timing. A forced DVD subtitle stays forced.
 
