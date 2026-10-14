@@ -62,6 +62,11 @@ class MatroskaMuxer final : public AbstractMuxer
     void setSourceExtras(const std::string& title, const std::vector<std::vector<uint8_t>>& attachments,
                          const std::vector<std::vector<uint8_t>>& tags) override;
     void setSourceTrackTags(const std::map<int, std::vector<AbstractDemuxer::SourceTrackTag>>& tags) override;
+    void setSourceBlockAdditions(
+        const std::map<int, std::pair<uint64_t, std::vector<std::vector<uint8_t>>>>& info) override
+    {
+        m_srcBlockAdd = info;
+    }
 
    private:
     std::vector<double> m_chapters;        // start times in seconds
@@ -95,6 +100,8 @@ class MatroskaMuxer final : public AbstractMuxer
         // A track copied as it is (CODEC_S_MKVCOPY): the source's BlockAdditionMapping bodies and MaxBlockAdditionID
         std::vector<std::vector<uint8_t>> copyAddMappings;
         uint64_t copyMaxBlockAddId = 0;
+        bool frameAdditions = false;  // the source stored BlockAdditions beside the frames of this track
+        int64_t lastBlockRelMs = 0;   // the time of the track's last block, for a ReferenceBlock
         unsigned srcDisplayHeight = 0;
         int64_t endPaddingNs = 0;      // DiscardPadding for the track's last block (Opus, Vorbis), from the source
         uint64_t srcCodecDelayNs = 0;  // CodecDelay from the source's edit list (srccodecdelay), AAC from MP4
@@ -462,9 +469,10 @@ class MatroskaMuxer final : public AbstractMuxer
     void writePartChapters(int64_t partEndPts);
     std::string m_title;  // --title=, or the first source's title
     bool m_titleFromMuxOpt = false;
-    std::vector<std::vector<uint8_t>> m_sourceAttachments;                          // whole AttachedFile elements
-    std::vector<std::vector<uint8_t>> m_sourceTags;                                 // whole Tag elements
-    std::map<int, std::vector<AbstractDemuxer::SourceTrackTag>> m_sourceTrackTags;  // by stream index
+    std::vector<std::vector<uint8_t>> m_sourceAttachments;                                // whole AttachedFile elements
+    std::vector<std::vector<uint8_t>> m_sourceTags;                                       // whole Tag elements
+    std::map<int, std::vector<AbstractDemuxer::SourceTrackTag>> m_sourceTrackTags;        // by stream index
+    std::map<int, std::pair<uint64_t, std::vector<std::vector<uint8_t>>>> m_srcBlockAdd;  // setSourceBlockAdditions
     [[nodiscard]] uint64_t sourceAttachmentBytes() const;
     void writeSourceAttachments();
     void writeTags();

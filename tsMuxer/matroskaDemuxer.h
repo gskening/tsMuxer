@@ -100,6 +100,9 @@ class MatroskaDemuxer final : public IOContextDemuxer
     bool getCopySource(int pid, CopySource& out) const;
     // From now on, and in every later file of a join, hand the track on block for block (ParsedCopyTrackData).
     void setTrackCopy(int pid);
+    bool getBlockAdditionInfo(int pid, uint64_t& maxId, std::vector<std::vector<uint8_t>>& mappings) const override;
+    bool takeBlockAdditions(int pid, int64_t pts, std::vector<uint8_t>& out) override;
+    void keepBlockAdditions(const int pid) override { m_keepAdditionPids.insert(pid); }
 
    private:
     typedef Track MatroskaTrack;
@@ -110,6 +113,9 @@ class MatroskaDemuxer final : public IOContextDemuxer
     std::map<int, uint64_t> m_maxAddIds;                                             // MaxBlockAdditionID by pid
     std::map<const Track*, uint64_t> m_maxAddIdsByTrack;                             // while the header is read
     std::vector<uint8_t> m_pendingAdditions;  // the BlockAdditions of the BlockGroup being read
+    // The BlockAdditions of the blocks of every other track, by pid and time, until the muxer takes them
+    std::map<int, std::map<int64_t, std::vector<uint8_t>>> m_blockAddLog;
+    std::set<int> m_keepAdditionPids;  // keepBlockAdditions
     void applyTrackCopy();
     typedef IOContextTrackType MatroskaTrackType;
 

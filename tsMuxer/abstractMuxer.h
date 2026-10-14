@@ -45,6 +45,11 @@ class AbstractMuxer
     }
     // The source's tags about one track, by the stream index of the output track they now belong to
     virtual void setSourceTrackTags(const std::map<int, std::vector<AbstractDemuxer::SourceTrackTag>>& tags) {}
+    // The MaxBlockAdditionID and BlockAdditionMapping bodies of each source track whose frames carry BlockAdditions
+    virtual void setSourceBlockAdditions(
+        const std::map<int, std::pair<uint64_t, std::vector<std::vector<uint8_t>>>>& info)
+    {
+    }
 
     virtual void joinToMasterFile() {}
     virtual void setSubMode(AbstractMuxer* mainMuxer, bool flushInterleavedBlock) {}

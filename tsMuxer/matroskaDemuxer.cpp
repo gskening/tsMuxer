@@ -776,6 +776,9 @@ int MatroskaDemuxer::matroska_parse_block(uint8_t* data, int size, const int64_t
                     return res;
                 }
 
+                // The BlockAdditions of a video or audio track a Matroska output keeps them for, by the block's time
+                if (n == 0 && !m_pendingAdditions.empty() && m_keepAdditionPids.count(track + 1))
+                    m_blockAddLog[track + 1][pkt->pts] = m_pendingAdditions;
                 if (tracks[track]->parsed_priv_data != nullptr)
                 {
                     if (n == 0 && !m_pendingAdditions.empty())
@@ -1770,6 +1773,43 @@ bool MatroskaDemuxer::getCopySource(const int pid, CopySource& out) const
     const auto maxIt = m_maxAddIds.find(pid);
     out.maxBlockAddId = maxIt != m_maxAddIds.end() ? maxIt->second : 0;
     return true;
+}
+
+bool MatroskaDemuxer::getBlockAdditionInfo(const int pid, uint64_t& maxId,
+                                           std::vector<std::vector<uint8_t>>& mappings) const
+{
+    const auto maxIt = m_maxAddIds.find(pid);
+    if (maxIt == m_maxAddIds.end() || maxIt->second == 0)
+        return false;
+    maxId = maxIt->second;
+    const auto mapIt = m_addMappings.find(pid);
+    mappings = mapIt != m_addMappings.end() ? mapIt->second : std::vector<std::vector<uint8_t>>();
+    return true;
+}
+
+// The additions of the block nearest to pts, within 8 ms: the readers of a video track give its frames the times they
+// work out themselves, a fraction of a millisecond from the container's, which are whole milliseconds. Those before
+// it by more than 10 s were never asked for (a cut, a frame the reader left out) and go.
+bool MatroskaDemuxer::takeBlockAdditions(const int pid, const int64_t pts, std::vector<uint8_t>& out)
+{
+    const auto logIt = m_blockAddLog.find(pid);
+    if (logIt == m_blockAddLog.end() || logIt->second.empty())
+        return false;
+    auto& log = logIt->second;
+    static constexpr int64_t TOLERANCE = INTERNAL_PTS_PER_MS * 8;
+    auto best = log.end();
+    for (auto it = log.lower_bound(pts - TOLERANCE); it != log.end() && it->first <= pts + TOLERANCE; ++it)
+        if (best == log.end() || std::llabs(it->first - pts) < std::llabs(best->first - pts))
+            best = it;
+    bool found = false;
+    if (best != log.end())
+    {
+        out = std::move(best->second);
+        log.erase(best);
+        found = true;
+    }
+    log.erase(log.begin(), log.lower_bound(pts - 10 * INTERNAL_PTS_FREQ));
+    return found;
 }
 
 void MatroskaDemuxer::setTrackCopy(const int pid)

@@ -182,6 +182,17 @@ class AbstractDemuxer
     [[nodiscard]] virtual std::map<uint64_t, std::vector<SourceTrackTag>> getTrackTags() { return {}; }
     // The TrackUID of a track, 0 when the container has none
     [[nodiscard]] virtual uint64_t getTrackUid(int pid) const { return 0; }
+    // Data a container stores beside the frames of a track (Matroska BlockAdditions, such as HDR10+ metadata): the
+    // track's MaxBlockAdditionID and BlockAdditionMapping bodies, and the additions of the block at a time (the
+    // internal clock, as the demuxer gave it), taken out once asked for. False where there are none.
+    virtual bool getBlockAdditionInfo(int pid, uint64_t& maxId, std::vector<std::vector<uint8_t>>& mappings) const
+    {
+        return false;
+    }
+    virtual bool takeBlockAdditions(int pid, int64_t pts, std::vector<uint8_t>& out) { return false; }
+    // Keep them for this track from now on; only the tracks asked for are kept, so that nothing piles up for a
+    // track nobody muxes
+    virtual void keepBlockAdditions(int pid) {}
 
     [[nodiscard]] SubTrackFilter* getPidFilter(const int pid)
     {

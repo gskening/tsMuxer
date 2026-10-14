@@ -1094,6 +1094,18 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
         if (const auto it = m_containerReader.m_demuxers.find(fileList[0]);
             it != m_containerReader.m_demuxers.end() && it->second.m_demuxer)
             streamInfo.m_srcTrackUid = it->second.m_demuxer->getTrackUid(pid);
+    // A video or audio track of a Matroska output keeps the BlockAdditions of its frames: asked for before anything of
+    // the file is read, so that none is missed and none is kept for a track nobody muxes
+    if (m_matroskaOutput && dataReader == &m_containerReader && pid > 0 && !SubTrackFilter::isSubTrack(pid) &&
+        (codec[0] == 'V' || codec[0] == 'A'))
+        if (const auto it = m_containerReader.m_demuxers.find(fileList[0]);
+            it != m_containerReader.m_demuxers.end() && it->second.m_demuxer)
+        {
+            uint64_t maxId = 0;
+            std::vector<std::vector<uint8_t>> mappings;
+            if (it->second.m_demuxer->getBlockAdditionInfo(pid, maxId, mappings))  // the header declares them
+                it->second.m_demuxer->keepBlockAdditions(pid);
+        }
     streamInfo.m_codec = codec;
     streamInfo.m_addParams = addParams;
     int streamIndex = codecReader->getStreamIndex();
@@ -1430,6 +1442,39 @@ std::map<int, std::vector<AbstractDemuxer::SourceTrackTag>> METADemuxer::getTrac
             out[si.m_streamReader->getStreamIndex()] = t->second;
     }
     return out;
+}
+
+std::map<int, std::pair<uint64_t, std::vector<std::vector<uint8_t>>>> METADemuxer::getBlockAdditionInfoByStream()
+{
+    std::map<int, std::pair<uint64_t, std::vector<std::vector<uint8_t>>>> out;
+    for (const StreamInfo& si : m_codecInfo)
+    {
+        if (si.m_streamReader == nullptr || si.m_codec.empty() || (si.m_codec[0] != 'V' && si.m_codec[0] != 'A') ||
+            SubTrackFilter::isSubTrack(si.m_pid))
+            continue;
+        const auto dit = m_containerReader.m_demuxers.find(si.m_streamName);
+        if (dit == m_containerReader.m_demuxers.end() || dit->second.m_demuxer == nullptr)
+            continue;
+        uint64_t maxId = 0;
+        std::vector<std::vector<uint8_t>> mappings;
+        if (dit->second.m_demuxer->getBlockAdditionInfo(si.m_pid, maxId, mappings))
+            out[si.m_streamReader->getStreamIndex()] = {maxId, std::move(mappings)};
+    }
+    return out;
+}
+
+// The packets of a stream reach the muxer with its timeshift added (readPacket), the demuxer kept them without
+bool METADemuxer::takeBlockAdditions(const int streamIndex, const int64_t pts, std::vector<uint8_t>& out)
+{
+    for (const StreamInfo& si : m_codecInfo)
+    {
+        if (si.m_streamReader == nullptr || si.m_streamReader->getStreamIndex() != streamIndex)
+            continue;
+        const auto dit = m_containerReader.m_demuxers.find(si.m_streamName);
+        return dit != m_containerReader.m_demuxers.end() && dit->second.m_demuxer &&
+               dit->second.m_demuxer->takeBlockAdditions(si.m_pid, pts - si.m_timeShift, out);
+    }
+    return false;
 }
 
 std::vector<std::vector<uint8_t>> METADemuxer::getGlobalTags()

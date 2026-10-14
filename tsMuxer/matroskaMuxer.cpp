@@ -1800,6 +1800,33 @@ void MatroskaMuxer::openDestination()
 
 void MatroskaMuxer::refreshTrackProperties()
 {
+    // A track whose source stored BlockAdditions beside its frames keeps them, and so needs its MaxBlockAdditionID and
+    // the mappings that say what they are. The configuration-only mappings tsMuxeR writes itself, for Dolby Vision and
+    // 3D, are not taken over, or they would be there twice.
+    for (auto& [index, track] : m_tracks)
+    {
+        const auto src = m_srcBlockAdd.find(index);
+        if (src == m_srcBlockAdd.end() || track.codecID == CODEC_S_MKVCOPY || track.frameAdditions)
+            continue;
+        track.frameAdditions = true;
+        track.copyMaxBlockAddId = src->second.first;
+        for (const auto& mapping : src->second.second)
+        {
+            uint64_t type = 0;
+            for (size_t i = 0; i + 2 < mapping.size();)
+            {
+                const uint32_t id = static_cast<uint32_t>(mapping[i]) << 8 | mapping[i + 1];
+                const size_t len = mapping[i + 2] & 0x7F;  // these small elements have a one byte size
+                if (!(mapping[i + 2] & 0x80) || i + 3 + len > mapping.size())
+                    break;
+                if (id == MATROSKA_ID_BLOCKADDIDTYPE)
+                    for (size_t k = 0; k < len; ++k) type = type << 8 | mapping[i + 3 + k];
+                i += 3 + len;
+            }
+            if (type != 0x64766343 && type != 0x64767643 && type != 0x68766345 && type != 0x6D766343)
+                track.copyAddMappings.push_back(mapping);  // not dvcC, dvvC, hvcE or mvcC
+        }
+    }
     // Resolve exactly one default track per type. A MISSING FlagDefault means 1 in Matroska, so
     // writing nothing made every track claim to be the default, including two audio tracks at
     // once. Honour an explicit "default" where the meta gave one, otherwise the first track of
@@ -3506,6 +3533,52 @@ void MatroskaMuxer::writeBlock(MkvTrackInfo& track, const uint8_t* frameData, in
         m_clusterBlocks++;
         return;
     }
+
+    // A frame the source stored with BlockAdditions (HDR10+ metadata, for one) is a BlockGroup that carries them. A
+    // BlockGroup has no keyframe flag: a frame that is not one says so with a ReferenceBlock, to the block before.
+    if (track.frameAdditions && m_owner)
+    {
+        std::vector<uint8_t> additions;
+        if (m_owner->takeBlockAdditions(track.streamIndex, pts, additions) && !additions.empty())
+        {
+            uint8_t trackNumBuf[8];
+            const int trackNumLen = ebml_write_size(trackNumBuf, track.trackNumber);
+            const int blockPayloadSize = trackNumLen + 2 + 1 + frameSize;
+            uint8_t blockHeader[16];
+            int blockHeaderLen = ebml_write_id(blockHeader, MATROSKA_ID_BLOCK);
+            blockHeaderLen += ebml_write_size(blockHeader + blockHeaderLen, blockPayloadSize);
+            uint8_t referenceElement[16];
+            int referenceLen = 0;
+            if (!(pendingFlags & AVPacket::IS_IFRAME))
+            {
+                const int64_t ref = track.lastBlockRelMs - relMs;
+                referenceLen = ebml_write_sint(referenceElement, MATROSKA_ID_BLOCKREFERENCE, ref != 0 ? ref : -1);
+            }
+            uint8_t additionsHeader[16];
+            const int additionsHeaderLen =
+                ebml_write_master_open(additionsHeader, MATROSKA_ID_BLOCKADDITIONS, additions.size());
+            const int groupPayloadSize = blockHeaderLen + blockPayloadSize + referenceLen + additionsHeaderLen +
+                                         static_cast<int>(additions.size());
+            uint8_t groupHeader[16];
+            int groupHeaderLen = ebml_write_id(groupHeader, MATROSKA_ID_BLOCKGROUP);
+            groupHeaderLen += ebml_write_size(groupHeader + groupHeaderLen, groupPayloadSize);
+            m_clusterBuf.insert(m_clusterBuf.end(), groupHeader, groupHeader + groupHeaderLen);
+            m_clusterBuf.insert(m_clusterBuf.end(), blockHeader, blockHeader + blockHeaderLen);
+            m_clusterBuf.insert(m_clusterBuf.end(), trackNumBuf, trackNumBuf + trackNumLen);
+            m_clusterBuf.push_back(static_cast<uint8_t>((relTimeMs >> 8) & 0xFF));
+            m_clusterBuf.push_back(static_cast<uint8_t>(relTimeMs & 0xFF));
+            m_clusterBuf.push_back(0);  // Block flags: no lacing
+            m_clusterBuf.insert(m_clusterBuf.end(), frameData, frameData + frameSize);
+            m_clusterBuf.insert(m_clusterBuf.end(), referenceElement, referenceElement + referenceLen);
+            m_clusterBuf.insert(m_clusterBuf.end(), additionsHeader, additionsHeader + additionsHeaderLen);
+            m_clusterBuf.insert(m_clusterBuf.end(), additions.begin(), additions.end());
+            m_clusterDataSize += groupHeaderLen + groupPayloadSize;
+            m_clusterBlocks++;
+            track.lastBlockRelMs = relMs;
+            return;
+        }
+    }
+    track.lastBlockRelMs = relMs;
 
     // Write SimpleBlock
 
