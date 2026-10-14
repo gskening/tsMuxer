@@ -2508,7 +2508,8 @@ void TsMuxerWindow::onTsMuxerCodecInfoReceived()
             codecInfo->descr = QtCompat::strMid(procStdOutput[i], QString("Stream info: ").length());
         p = procStdOutput[i].indexOf("Stream lang: ");
         if (p >= 0)
-            codecInfo->lang = QtCompat::strMid(procStdOutput[i], QString("Stream lang: ").length());
+            codecInfo->lang = codecInfo->srcLang =
+                QtCompat::strMid(procStdOutput[i], QString("Stream lang: ").length());
         p = procStdOutput[i].indexOf("Stream delay: ");
         if (p >= 0)
         {
@@ -4788,7 +4789,11 @@ void TsMuxerWindow::updateMetaLines()
         {
             postfix += QString(", merge-ac3-file=") + quoteStr(codecInfo->mergeAc3File);
         }
-        if (!codecInfo->lang.isEmpty() && isLangCodeForMeta(codecInfo->lang))
+        // A Matroska output keeps the source's language by itself, and with it a BCP 47 tag such as de-CH or pt-BR
+        // that the three letter code in the box cannot carry. So lang= is written for it only when the language
+        // was changed.
+        const bool keepSourceLang = ui->radioButtonMKV->isChecked() && codecInfo->lang == codecInfo->srcLang;
+        if (!codecInfo->lang.isEmpty() && isLangCodeForMeta(codecInfo->lang) && !keepSourceLang)
             postfix += QString(", lang=") + codecInfo->lang;
         if (codecInfo->subTrack != 0)
             postfix += QString(", subTrack=") + QString::number(codecInfo->subTrack);

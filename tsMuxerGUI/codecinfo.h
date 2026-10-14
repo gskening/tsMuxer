@@ -61,6 +61,9 @@ struct QtvCodecInfo
     // said, which tsMuxeR keeps by itself, so the meta carries only what was changed.
     QString trackName;
     QString srcTrackName;
+    // The language tsMuxeR listed for the source track. A Matroska output left without lang= keeps the source's own
+    // language, its BCP 47 tag included, which a three letter lang= would replace.
+    QString srcLang;
     bool mkvFlags[6] = {};
     bool srcMkvFlags[6] = {};
 };
