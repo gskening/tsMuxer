@@ -29,6 +29,7 @@ extern "C"
 #include "hevcStreamReader.h"
 #include "lpcmStreamReader.h"
 #include "matroskaParser.h"
+#include "mkvCopyStreamReader.h"
 #include "mlpStreamReader.h"
 #include "mpeg2StreamReader.h"
 #include "mpegAudioStreamReader.h"
@@ -320,7 +321,14 @@ void MatroskaMuxer::intAddStream(const std::string& /*streamName*/, const std::s
     // E-AC3 and TrueHD, which both call themselves A_AC3, still come out right.
     const std::string metaCodecID = codecNameToMatroskaID(codecName, track.codecID);
     track.matroskaCodecID = codecNameToMatroskaID(codecReader->getCodecInfo().programName, track.codecID);
-    if (track.matroskaCodecID != metaCodecID)
+    // A subtitle copied from its Matroska source keeps the source's CodecID, whatever the meta line called it
+    if (const auto* copy = dynamic_cast<const MatroskaCopyStreamReader*>(codecReader))
+    {
+        track.matroskaCodecID = copy->sourceCodecId();
+        track.copyAddMappings = copy->addMappings();
+        track.copyMaxBlockAddId = copy->maxBlockAddId();
+    }
+    if (track.codecID != CODEC_S_MKVCOPY && track.matroskaCodecID != metaCodecID)
         LTRACE(LT_WARN, 2,
                "Warning: the meta asks for "
                    << codecName << " but the data is " << codecReader->getCodecInfo().programName
@@ -962,6 +970,11 @@ void MatroskaMuxer::buildCodecPrivate(MkvTrackInfo& track)
         // Optional for VP9, and kept as the source wrote it; VP8 has none.
         track.codecPrivate = track.srcVpxPrivate;
         break;
+    case CODEC_S_MKVCOPY:
+        // The source's own, as it stands: the ASS or SSA script header, the VobSub .idx, the DVB page ids
+        if (const auto* copy = dynamic_cast<const MatroskaCopyStreamReader*>(track.codecReader))
+            track.codecPrivate = copy->codecPrivate();
+        break;
     default:
         // AC3, DTS, LPCM, SRT, PGS, MPEG-2, VC-1 etc. – no codec private needed in MKV
         // (or it's handled differently)
@@ -1314,7 +1327,12 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
     // a track-name= of 2000 characters ran past the end of this buffer and corrupted the heap.
     const size_t bufSize = 1024 + track.codecPrivate.size() + track.dvElConfig.size() + 2 * track.mvcConfig.size() +
                            track.name.size() + track.language.size() + track.languageBCP47.size() +
-                           track.matroskaCodecID.size();
+                           track.matroskaCodecID.size() + [&track]
+    {
+        size_t n = 0;
+        for (const auto& m : track.copyAddMappings) n += m.size() + 16;
+        return n;
+    }();
     std::vector<uint8_t> inner(bufSize);
     int pos = 0;
 
@@ -1518,6 +1536,18 @@ std::vector<uint8_t> MatroskaMuxer::buildTrackEntry(const MkvTrackInfo& track, i
         }
     }
 
+    // A track copied as it is: the source's BlockAdditionMappings and MaxBlockAdditionID as they stand, so that the
+    // BlockAdditions its blocks carry still say what they are (RFC 9559, 5.1.4.1.17)
+    if (track.copyMaxBlockAddId > 0)
+        pos += ebml_write_uint(inner.data() + pos, MATROSKA_ID_MAXBLOCKADDITIONID, track.copyMaxBlockAddId);
+    for (const auto& mapping : track.copyAddMappings)
+    {
+        pos += ebml_write_master_open(inner.data() + pos, MATROSKA_ID_BLOCKADDITIONMAPPING,
+                                      static_cast<int>(mapping.size()));
+        memcpy(inner.data() + pos, mapping.data(), mapping.size());
+        pos += static_cast<int>(mapping.size());
+    }
+
     // Audio sub-element
     if (track.trackType == 2 && track.sampleRate > 0)
     {
@@ -1695,7 +1725,8 @@ void MatroskaMuxer::openDstFile()
     if (m_webm)
         for (const auto& [index, track] : m_tracks)
             if (track.codecID != CODEC_V_VP8 && track.codecID != CODEC_V_VP9 && track.codecID != CODEC_V_AV1 &&
-                track.codecID != CODEC_A_OPUS && track.codecID != CODEC_A_VORBIS && track.codecID != CODEC_S_SRT)
+                track.codecID != CODEC_A_OPUS && track.codecID != CODEC_A_VORBIS && track.codecID != CODEC_S_SRT &&
+                !(track.codecID == CODEC_S_MKVCOPY && track.matroskaCodecID == MATROSKA_CODEC_ID_WEBM_WEBVTT))
                 THROW(ERR_COMMON,
                       (track.codecReader ? track.codecReader->getCodecInfo().displayName : std::string("A track"))
                           << " cannot go into a WebM file, which holds VP8, VP9 and AV1 video, Opus and "
@@ -2176,7 +2207,8 @@ void MatroskaMuxer::writeDeferredHeader()
     // openDstFile could not tell. Still before the file is created.
     if (m_webm)
         for (const auto& [index, track] : m_tracks)
-            if (track.trackType == MKV_TRACK_TYPE_SUBTITLE && track.matroskaCodecID != MATROSKA_CODEC_ID_SRT)
+            if (track.trackType == MKV_TRACK_TYPE_SUBTITLE && track.matroskaCodecID != MATROSKA_CODEC_ID_SRT &&
+                track.matroskaCodecID != MATROSKA_CODEC_ID_WEBM_WEBVTT)
                 THROW(ERR_COMMON,
                       "A WebM file holds subtitles as text only, and this one is drawn into pictures. "
                       "Keep the subtitles as text, give the output an .mkv name, or leave the track out.")
@@ -3013,14 +3045,14 @@ void MatroskaMuxer::flushHeldText(const int64_t upToPts)
         const auto it = m_tracks.find(node.mapped().streamIndex);
         if (it != m_tracks.end())
             writeTextBlock(it->second, node.mapped().data.data(), static_cast<int>(node.mapped().data.size()),
-                           node.key(), node.mapped().duration);
+                           node.key(), node.mapped().duration, node.mapped().additions);
     }
 }
 
 // One text subtitle: a BlockGroup holding its Block and its BlockDuration, the form the Matroska codec
 // mapping gives S_TEXT/UTF8. A subtitle without a duration, shown until the next one, is a SimpleBlock.
 void MatroskaMuxer::writeTextBlock(MkvTrackInfo& track, const uint8_t* data, int size, const int64_t pts,
-                                   const int64_t duration)
+                                   const int64_t duration, const std::vector<uint8_t>& additions)
 {
     // WebVTT in WebM: a block is the cue's identifier, its settings and its text, a line each before the text. Both
     // are empty here.
@@ -3032,23 +3064,25 @@ void MatroskaMuxer::writeTextBlock(MkvTrackInfo& track, const uint8_t* data, int
         data = webVtt.data();
         size = static_cast<int>(webVtt.size());
     }
-    if (duration <= 0)
+    if (duration <= 0 && additions.empty())
     {
         writeBlock(track, data, size, pts, AVPacket::IS_IFRAME);
         return;
     }
     // The start and the end on the same millisecond grid as every other block, so that the end
-    // written is where the subtitle really ends, whatever the fraction of a millisecond the start had
+    // written is where the subtitle really ends, whatever the fraction of a millisecond the start had.
+    // A block copied with BlockAdditions but no duration is a BlockGroup without BlockDuration.
     int64_t relMs = internalToRoundedMs(pts - m_firstTimecode);
-    const int64_t durationMs = (std::max)(int64_t{1}, internalToRoundedMs(pts + duration - m_firstTimecode) - relMs);
+    const int64_t durationMs =
+        duration <= 0 ? 0 : (std::max)(int64_t{1}, internalToRoundedMs(pts + duration - m_firstTimecode) - relMs);
     if (!track.hasMaxBlockPts || pts > track.maxBlockPts)
     {
         track.maxBlockPts = pts;
         track.hasMaxBlockPts = true;
     }
-    if (!track.hasTextEnd || pts + duration > track.maxTextEnd)
+    if (!track.hasTextEnd || pts + (std::max)(int64_t{0}, duration) > track.maxTextEnd)
     {
-        track.maxTextEnd = pts + duration;
+        track.maxTextEnd = pts + (std::max)(int64_t{0}, duration);
         track.hasTextEnd = true;
     }
     const bool needNewCluster = !m_clusterOpen || relMs - m_clusterTimecodeMs >= CLUSTER_MAX_DURATION_MS ||
@@ -3067,8 +3101,15 @@ void MatroskaMuxer::writeTextBlock(MkvTrackInfo& track, const uint8_t* data, int
     blockHeaderLen += ebml_write_size(blockHeader + blockHeaderLen, blockPayloadSize);
     uint8_t durationElement[16];
     const int durationLen =
-        ebml_write_uint(durationElement, MATROSKA_ID_BLOCKDURATION, static_cast<uint64_t>(durationMs));
-    const int groupPayloadSize = blockHeaderLen + blockPayloadSize + durationLen;
+        durationMs > 0 ? ebml_write_uint(durationElement, MATROSKA_ID_BLOCKDURATION, static_cast<uint64_t>(durationMs))
+                       : 0;
+    uint8_t additionsHeader[16];
+    const int additionsHeaderLen =
+        additions.empty()
+            ? 0
+            : ebml_write_master_open(additionsHeader, MATROSKA_ID_BLOCKADDITIONS, static_cast<int>(additions.size()));
+    const int groupPayloadSize =
+        blockHeaderLen + blockPayloadSize + durationLen + additionsHeaderLen + static_cast<int>(additions.size());
     uint8_t groupHeader[16];
     int groupHeaderLen = ebml_write_id(groupHeader, MATROSKA_ID_BLOCKGROUP);
     groupHeaderLen += ebml_write_size(groupHeader + groupHeaderLen, groupPayloadSize);
@@ -3081,6 +3122,8 @@ void MatroskaMuxer::writeTextBlock(MkvTrackInfo& track, const uint8_t* data, int
     m_clusterBuf.push_back(0);  // Block flags: no lacing
     m_clusterBuf.insert(m_clusterBuf.end(), data, data + size);
     m_clusterBuf.insert(m_clusterBuf.end(), durationElement, durationElement + durationLen);
+    m_clusterBuf.insert(m_clusterBuf.end(), additionsHeader, additionsHeader + additionsHeaderLen);
+    m_clusterBuf.insert(m_clusterBuf.end(), additions.begin(), additions.end());
     m_clusterDataSize += groupHeaderLen + groupPayloadSize;
     m_clusterBlocks++;
 }
@@ -3563,6 +3606,32 @@ bool MatroskaMuxer::muxPacketInternal(AVPacket& avPacket)
     // ahead of the video and the clusters after it would go back in time. A file of subtitles alone
     // has nothing to wait for. Never merged with a packet of the same time: two subtitles may start
     // together.
+    // A subtitle copied as it is waits for the other tracks the same way. Its packet is the length of the block's
+    // BlockAdditions body (4 bytes), that body, and then the block's data (MatroskaCopyStreamReader).
+    if (track.codecID == CODEC_S_MKVCOPY)
+    {
+        if (avPacket.size < 4)
+            return true;
+        const uint8_t* p = avPacket.data;
+        const size_t addSize =
+            static_cast<size_t>(p[0]) << 24 | static_cast<size_t>(p[1]) << 16 | static_cast<size_t>(p[2]) << 8 | p[3];
+        if (4 + addSize > static_cast<size_t>(avPacket.size))
+            return true;
+        HeldText held{avPacket.stream_index, avPacket.duration,
+                      std::vector<uint8_t>(p + 4 + addSize, p + avPacket.size),
+                      std::vector<uint8_t>(p + 4, p + 4 + addSize)};
+        bool othersPresent = false;
+        for (const auto& [idx, t] : m_tracks) othersPresent |= t.trackType != MKV_TRACK_TYPE_SUBTITLE;
+        if (!othersPresent)
+        {
+            writeTextBlock(track, held.data.data(), static_cast<int>(held.data.size()), avPacket.pts, held.duration,
+                           held.additions);
+            return true;
+        }
+        m_heldText.emplace(avPacket.pts, std::move(held));
+        return true;
+    }
+
     if (track.codecID == CODEC_S_SRT)
     {
         if (avPacket.size <= 0)

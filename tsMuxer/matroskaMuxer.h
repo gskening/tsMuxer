@@ -91,6 +91,9 @@ class MatroskaMuxer final : public AbstractMuxer
         int srcFieldOrder = -1;              // srcfieldorder, -1 when the source gave none
         std::vector<uint8_t> srcProjection;  // the body of the source's Projection element
         std::vector<uint8_t> srcVpxPrivate;  // a VP9 source's CodecPrivate (srcvpxprivate)
+        // A track copied as it is (CODEC_S_MKVCOPY): the source's BlockAdditionMapping bodies and MaxBlockAdditionID
+        std::vector<std::vector<uint8_t>> copyAddMappings;
+        uint64_t copyMaxBlockAddId = 0;
         unsigned srcDisplayHeight = 0;
         int64_t endPaddingNs = 0;      // DiscardPadding for the track's last block (Opus, Vorbis), from the source
         uint64_t srcCodecDelayNs = 0;  // CodecDelay from the source's edit list (srccodecdelay), AAC from MP4
@@ -528,13 +531,15 @@ class MatroskaMuxer final : public AbstractMuxer
     void writeBlock(MkvTrackInfo& track, const uint8_t* frameData, int frameSize, int64_t pts, uint8_t pendingFlags);
     // Text subtitles: one BlockGroup with its BlockDuration per subtitle, held until the other tracks
     // reach its time so that every cluster is written in time order
-    void writeTextBlock(MkvTrackInfo& track, const uint8_t* data, int size, int64_t pts, int64_t duration);
+    void writeTextBlock(MkvTrackInfo& track, const uint8_t* data, int size, int64_t pts, int64_t duration,
+                        const std::vector<uint8_t>& additions = {});
     void flushHeldText(int64_t upToPts);
     struct HeldText
     {
         int streamIndex;
         int64_t duration;
         std::vector<uint8_t> data;
+        std::vector<uint8_t> additions;  // the BlockAdditions body of a block copied as it is
     };
     std::multimap<int64_t, HeldText> m_heldText;
     void drainHeldFrames(MkvTrackInfo& track, bool atEndOfStream);

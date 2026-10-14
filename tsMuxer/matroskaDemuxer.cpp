@@ -778,6 +778,9 @@ int MatroskaDemuxer::matroska_parse_block(uint8_t* data, int size, const int64_t
 
                 if (tracks[track]->parsed_priv_data != nullptr)
                 {
+                    if (n == 0 && !m_pendingAdditions.empty())
+                        tracks[track]->parsed_priv_data->setBlockAdditions(m_pendingAdditions.data(),
+                                                                           static_cast<int>(m_pendingAdditions.size()));
                     tracks[track]->parsed_priv_data->extractData(pkt, curPtr, slice_size + offset);
                 }
                 else if (slice_size + offset > 0)
@@ -865,6 +868,18 @@ int MatroskaDemuxer::matroska_parse_blockgroup(const int64_t cluster_time)
                 is_bframe = 1;
             break;
         }
+        case MATROSKA_ID_BLOCKADDITIONS:
+        {
+            // Kept for a track copied as it is; every other reader has no use for them and gets none
+            uint8_t* body = nullptr;
+            int bodySize = 0;
+            if ((res = ebml_read_binary(&id, &body, &bodySize)) < 0)
+                break;
+            if (body && bodySize > 0)
+                m_pendingAdditions.assign(body, body + bodySize);
+            delete[] body;
+            break;
+        }
         case EBML_ID_VOID:
         case EBML_ID_CRC32:
             res = ebml_read_skip();
@@ -889,15 +904,18 @@ int MatroskaDemuxer::matroska_parse_blockgroup(const int64_t cluster_time)
         if (res == -BufferedReader::DATA_EOF && data != nullptr)
         {
             const int blockRes = matroska_parse_block(data, size, pos, cluster_time, duration, is_keyframe, is_bframe);
+            m_pendingAdditions.clear();
             return blockRes ? blockRes : res;
         }
         // matroska_parse_block owns and frees the block; on any other early return it was leaked
         delete[] data;
+        m_pendingAdditions.clear();
         return res;
     }
 
     if (data != nullptr)
         res = matroska_parse_block(data, size, pos, cluster_time, duration, is_keyframe, is_bframe);
+    m_pendingAdditions.clear();
 
     return res;
 }
@@ -1718,10 +1736,60 @@ int MatroskaDemuxer::matroska_read_header()
                         new DvbSubDecoder(track->codec_priv, track->codec_priv_size, videoFps));
             }
         }
+        // The BlockAdditionMapping bodies by pid, the number getTrackList and the meta use (index + 1)
+        m_addMappings.clear();
+        for (int i = 0; i < num_tracks; i++)
+            if (const auto it = m_addMappingsByTrack.find(tracks[i]); it != m_addMappingsByTrack.end())
+                m_addMappings[i + 1] = it->second;
+        m_addMappingsByTrack.clear();
+        m_maxAddIds.clear();
+        for (int i = 0; i < num_tracks; i++)
+            if (const auto it = m_maxAddIdsByTrack.find(tracks[i]); it != m_maxAddIdsByTrack.end())
+                m_maxAddIds[i + 1] = it->second;
+        m_maxAddIdsByTrack.clear();
+        // A track to be copied stays copied in every later file of a join, whose header is read again
+        applyTrackCopy();
         res = 0;
     }
 
     return res;
+}
+
+bool MatroskaDemuxer::getCopySource(const int pid, CopySource& out) const
+{
+    if (pid < 1 || pid > num_tracks || tracks[pid - 1] == nullptr || tracks[pid - 1]->codec_id == nullptr)
+        return false;
+    const MatroskaTrack* track = tracks[pid - 1];
+    out.codecId = track->codec_id;
+    out.codecPrivate.clear();
+    if (track->codec_priv && track->codec_priv_size > 0)
+        out.codecPrivate.assign(track->codec_priv, track->codec_priv + track->codec_priv_size);
+    out.addMappings.clear();
+    if (const auto it = m_addMappings.find(pid); it != m_addMappings.end())
+        out.addMappings = it->second;
+    const auto maxIt = m_maxAddIds.find(pid);
+    out.maxBlockAddId = maxIt != m_maxAddIds.end() ? maxIt->second : 0;
+    return true;
+}
+
+void MatroskaDemuxer::setTrackCopy(const int pid)
+{
+    m_copyPids.insert(pid);
+    applyTrackCopy();
+}
+
+void MatroskaDemuxer::applyTrackCopy()
+{
+    for (const int pid : m_copyPids)
+    {
+        if (pid < 1 || pid > num_tracks || tracks[pid - 1] == nullptr)
+            continue;
+        MatroskaTrack* track = tracks[pid - 1];
+        if (dynamic_cast<ParsedCopyTrackData*>(track->parsed_priv_data))
+            continue;
+        delete track->parsed_priv_data;
+        track->parsed_priv_data = new ParsedCopyTrackData();
+    }
 }
 
 /* From here on, it's all XML-style DTD stuff... Needs no comments. */
@@ -4398,6 +4466,26 @@ int MatroskaDemuxer::matroska_add_stream()
             break;
         }
             /* we ignore these because they're nothing useful. */
+        case MATROSKA_ID_MAXBLOCKADDITIONID:
+        {
+            int64_t num = 0;
+            if ((res = ebml_read_uint(&id, &num)) < 0)
+                break;
+            m_maxAddIdsByTrack[track] = static_cast<uint64_t>(num);
+            break;
+        }
+        case MATROSKA_ID_BLOCKADDITIONMAPPING:
+        {
+            // Kept as it stands, for a track copied as it is into a Matroska output
+            uint8_t* body = nullptr;
+            int bodySize = 0;
+            if ((res = ebml_read_binary(&id, &body, &bodySize)) < 0)
+                break;
+            if (body && bodySize > 0)
+                m_addMappingsByTrack[track].emplace_back(body, body + bodySize);
+            delete[] body;
+            break;
+        }
         case EBML_ID_VOID:
         case EBML_ID_CRC32:
         case MATROSKA_ID_CODECINFOURL:

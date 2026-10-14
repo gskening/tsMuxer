@@ -29,6 +29,7 @@ static bool isKnownTrackParam(const std::string& name);
 #include "hevcStreamReader.h"
 #include "lpcmStreamReader.h"
 #include "matroskaDemuxer.h"
+#include "mkvCopyStreamReader.h"
 #include "mlpStreamReader.h"
 #include "movDemuxer.h"
 #include "mpeg2StreamReader.h"
@@ -511,7 +512,8 @@ int METADemuxer::readPacket(AVPacket& avPacket)
                 // next one, which can start sooner and even overlap it. Timed by its end, an overlapping
                 // subtitle was read after the other tracks had passed its start.
                 m_codecInfo[minDtsIndex].m_lastDTS =
-                    avPacket.dts + (avPacket.codecID == CODEC_S_SRT ? 0 : avPacket.duration);
+                    avPacket.dts +
+                    (avPacket.codecID == CODEC_S_SRT || avPacket.codecID == CODEC_S_MKVCOPY ? 0 : avPacket.duration);
             }
             else
             {  // flush all streams
@@ -949,7 +951,44 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
         }
     }
 
-    AbstractStreamReader* codecReader = createCodec(codec, readerParams, fileList[0], mergePlayItems(mplsInfoList));
+    // ** A MATROSKA OUTPUT KEEPS A SUBTITLE IN THE FORM ITS MATROSKA SOURCE HAS IT. ** The listing gives ASS, SSA and
+    // WebVTT as SRT and VobSub and DVB as PGS, because every other output needs them that way, and the meta line says
+    // so. Into a Matroska output they used to go converted as well: ASS lost its styles, colours and positions,
+    // WebVTT its cue settings, and VobSub and DVB were drawn again as PGS. Copied, every block stays as it was, with
+    // its CodecPrivate, its BlockAdditions and its times. Text is copied only when it is kept as text: without
+    // keep-text it is drawn into pictures, as asked. WebM holds subtitles only as WebVTT in its own form.
+    AbstractStreamReader* codecReader = nullptr;
+    if (m_matroskaOutput && pid > 0 &&
+        (codec == "S_HDMV/PGS" || (codec == "S_TEXT/UTF8" && addParams.count("keep-text"))))
+    {
+        const std::string srcExt = strToUpperCase(extractFileExt(unquoteStr(trimStr(fileList[0]))));
+        if (srcExt == "MKV" || srcExt == "MKA" || srcExt == "MKS" || srcExt == "MK3D" || srcExt == "WEBM")
+        {
+            MatroskaDemuxer probe(m_readManager);
+            probe.openFile(fileList[0]);
+            MatroskaDemuxer::CopySource src;
+            if (probe.getCopySource(pid, src))
+            {
+                const std::string& id = src.codecId;
+                const bool text =
+                    id == "S_TEXT/ASS" || id == "S_TEXT/SSA" || id == "S_TEXT/WEBVTT" || id == "D_WEBVTT/SUBTITLES";
+                const bool bitmap = id == "S_VOBSUB" || id == "S_DVBSUB";
+                const bool copy = m_matroskaOutput == 2
+                                      ? id == "D_WEBVTT/SUBTITLES"
+                                      : (text && codec == "S_TEXT/UTF8") || (bitmap && codec == "S_HDMV/PGS");
+                if (copy)
+                {
+                    LTRACE(LT_INFO, 2,
+                           "Track " << pid << " of " << unquoteStr(fileList[0]) << " is " << id
+                                    << ", and is copied into the output as it is.");
+                    codecReader = new MatroskaCopyStreamReader(id, std::move(src.codecPrivate),
+                                                               std::move(src.addMappings), src.maxBlockAddId);
+                }
+            }
+        }
+    }
+    if (codecReader == nullptr)
+        codecReader = createCodec(codec, readerParams, fileList[0], mergePlayItems(mplsInfoList));
     codecReader->setStreamIndex(static_cast<int>(m_codecInfo.size() + 1));
     codecReader->setStreamName(fileList[0]);
     codecReader->setTimeOffset(m_timeOffset);
@@ -3253,8 +3292,13 @@ bool ContainerToReaderWrapper::openStream(int readerID, const char* streamName, 
             tsDemuxer->setMPLSInfo(itr->second.m_playItems);
     }
 
-    if (codecInfo &&
-        (codecInfo->codecID == CODEC_S_PGS || codecInfo->codecID == CODEC_S_SUP || codecInfo->codecID == CODEC_S_SRT))
+    // A track copied as it is: every block of it from now on, and in every later file of a join
+    if (codecInfo && codecInfo->codecID == CODEC_S_MKVCOPY)
+        if (auto* mkv = dynamic_cast<MatroskaDemuxer*>(demuxer))
+            mkv->setTrackCopy(pid);
+
+    if (codecInfo && (codecInfo->codecID == CODEC_S_PGS || codecInfo->codecID == CODEC_S_SUP ||
+                      codecInfo->codecID == CODEC_S_SRT || codecInfo->codecID == CODEC_S_MKVCOPY))
         m_demuxers[streamName].m_pids[pid] = DemuxerReadPolicy::drpFragmented;
     else
     {

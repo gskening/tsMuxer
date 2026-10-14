@@ -2452,6 +2452,7 @@ int main(int argc, char** argv)
         if (mkvMode)
         {
             MuxerManager muxerManager(readManager, matroskaMuxerFactory);
+            muxerManager.setMatroskaOutput(fileExt2 == "WEBM" ? 2 : 1);
             muxerManager.openMetaFile(argv[1]);
 
             string dstFile = unquoteStr(argv[2]);

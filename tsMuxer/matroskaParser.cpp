@@ -779,6 +779,31 @@ void ParsedMarkedTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int 
     memcpy(dst, buff, size);
 }
 
+// ------------ a track copied as it is ---------------
+void ParsedCopyTrackData::extractData(AVPacket* pkt, uint8_t* buff, const int size)
+{
+    pkt->size = 4 + 8 + 8 + 1 + 4 + static_cast<int>(m_additions.size()) + 4 + size;
+    pkt->data = new uint8_t[pkt->size];
+    uint8_t* dst = pkt->data;
+    const auto be = [&dst](const uint64_t v, const int bytes)
+    {
+        for (int i = bytes - 1; i >= 0; --i) *dst++ = static_cast<uint8_t>(v >> (8 * i));
+    };
+    memcpy(dst, "MKCP", 4);
+    dst += 4;
+    be(static_cast<uint64_t>(pkt->pts), 8);
+    be(static_cast<uint64_t>(pkt->duration == AV_NOPTS_VALUE_INTERNAL ? -1 : pkt->duration), 8);
+    *dst++ = 1;  // subtitle blocks are each a point a player can start from
+    be(m_additions.size(), 4);
+    if (!m_additions.empty())
+        memcpy(dst, m_additions.data(), m_additions.size());
+    dst += m_additions.size();
+    m_additions.clear();
+    be(static_cast<uint32_t>(size), 4);
+    if (size > 0)
+        memcpy(dst, buff, size);
+}
+
 // ------------ Opus ---------------
 ParsedOpusTrackData::ParsedOpusTrackData(uint8_t* buff, const int size)
     : ParsedTrackPrivData(buff, size), m_firstPacket(true)

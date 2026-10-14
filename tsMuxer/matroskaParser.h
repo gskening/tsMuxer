@@ -153,6 +153,8 @@ static constexpr uint16_t MATROSKA_ID_BLOCKADDITIONMAPPING = 0x41E4;
 static constexpr uint16_t MATROSKA_ID_BLOCKADDIDVALUE = 0x41F0;
 static constexpr uint16_t MATROSKA_ID_BLOCKADDIDTYPE = 0x41E7;
 static constexpr uint16_t MATROSKA_ID_BLOCKADDIDEXTRADATA = 0x41ED;
+/* Data stored beside a block (RFC 9559, 5.1.3.5.2) */
+static constexpr uint16_t MATROSKA_ID_BLOCKADDITIONS = 0x75A1;
 
 /* Colour description and HDR mastering metadata, inside the Video master */
 static constexpr uint16_t MATROSKA_ID_VIDEOCOLOUR = 0x55B0;
@@ -472,6 +474,22 @@ class ParsedMarkedTrackData final : public ParsedTrackPrivData
     char m_mark[8];
     std::vector<uint8_t> m_codecPrivate;
     bool m_firstPacket = true;
+};
+
+// A track copied as it is into a Matroska output (MatroskaCopyStreamReader). Each block becomes a record that carries
+// what the copy needs and the reader cannot find again: "MKCP", the time and the duration (8 bytes each, big endian,
+// internal clock, the duration -1 when the block gives none), the keyframe flag (1 byte), the BlockAdditions body
+// (4 byte length, then the bytes) and the block itself (4 byte length, then the bytes).
+class ParsedCopyTrackData final : public ParsedTrackPrivData
+{
+   public:
+    ParsedCopyTrackData() = default;
+    ~ParsedCopyTrackData() override = default;
+    void extractData(AVPacket* pkt, uint8_t* buff, int size) override;
+    void setBlockAdditions(const uint8_t* body, const int size) override { m_additions.assign(body, body + size); }
+
+   private:
+    std::vector<uint8_t> m_additions;
 };
 
 class ParsedOpusTrackData final : public ParsedTrackPrivData

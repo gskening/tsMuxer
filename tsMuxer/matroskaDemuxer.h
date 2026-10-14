@@ -1,6 +1,9 @@
 #ifndef MATROSKA_STREAM_READER_H_
 #define MATROSKA_STREAM_READER_H_
 
+#include <map>
+#include <set>
+
 #include "bufferedFileReader.h"
 #include "ioContextDemuxer.h"
 #include "matroskaParser.h"
@@ -80,8 +83,29 @@ class MatroskaDemuxer final : public IOContextDemuxer
     // says when the stream reaches it.
     void setFileIterator(FileNameIterator* itr) override;
 
+    // What a track needs to be copied as it is into a Matroska output: the source's CodecID, CodecPrivate and
+    // BlockAdditionMapping bodies, from the header alone, so asking reads nothing else of the file.
+    struct CopySource
+    {
+        std::string codecId;
+        std::vector<uint8_t> codecPrivate;
+        std::vector<std::vector<uint8_t>> addMappings;
+        uint64_t maxBlockAddId = 0;  // MaxBlockAdditionID, 0 when the track's blocks have no BlockAdditions
+    };
+    bool getCopySource(int pid, CopySource& out) const;
+    // From now on, and in every later file of a join, hand the track on block for block (ParsedCopyTrackData).
+    void setTrackCopy(int pid);
+
    private:
     typedef Track MatroskaTrack;
+    // setTrackCopy's tracks, and every track's BlockAdditionMapping bodies, by the pid of getTrackList (index + 1).
+    std::set<int> m_copyPids;
+    std::map<int, std::vector<std::vector<uint8_t>>> m_addMappings;
+    std::map<const Track*, std::vector<std::vector<uint8_t>>> m_addMappingsByTrack;  // while the header is read
+    std::map<int, uint64_t> m_maxAddIds;                                             // MaxBlockAdditionID by pid
+    std::map<const Track*, uint64_t> m_maxAddIdsByTrack;                             // while the header is read
+    std::vector<uint8_t> m_pendingAdditions;  // the BlockAdditions of the BlockGroup being read
+    void applyTrackCopy();
     typedef IOContextTrackType MatroskaTrackType;
 
     typedef struct MatroskaLevel

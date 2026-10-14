@@ -34,6 +34,9 @@ class ParsedTrackPrivData
     // How the source framed its start codes, for the track types that rebuild Annex-B. Everything
     // else has no start codes to write and ignores it. See parseStartCodeRule in nalUnits.h.
     virtual void setStartCodeRule(const std::string& rule) {}
+    // The BlockAdditions of the block extractData gets next (the body of the element, its BlockMore elements), for the
+    // tracks that keep them. Called only for a block that has them.
+    virtual void setBlockAdditions(const uint8_t* body, int size) {}
 };
 
 enum class IOContextTrackType

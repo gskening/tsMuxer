@@ -29,6 +29,9 @@ static constexpr int CODEC_V_VP8 = 21;
 static constexpr int CODEC_V_VP9 = 22;
 static constexpr int CODEC_A_VORBIS = 23;
 static constexpr int CODEC_A_ALAC = 24;
+// A Matroska track copied block for block into a Matroska output, in its own form: ASS, SSA, WebVTT, VobSub and DVB
+// subtitles, which tsMuxeR otherwise converts. Its CodecID is the source's (MatroskaCopyStreamReader).
+static constexpr int CODEC_S_MKVCOPY = 25;
 
 struct CodecInfo
 {

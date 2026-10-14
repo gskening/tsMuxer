@@ -70,6 +70,8 @@ class MuxerManager final
     [[nodiscard]] bool isStereoMode() const;
 
     void setAllowStereoMux(bool value);
+    // Before openMetaFile: the output is Matroska (1) or WebM (2), so subtitles of a Matroska source keep their form
+    void setMatroskaOutput(const int kind) { m_metaDemuxer.setMatroskaOutput(kind); }
 
     [[nodiscard]] bool isMvcBaseViewR() const { return m_mvcBaseViewR; }
     [[nodiscard]] int64_t totalSize() const { return m_metaDemuxer.totalSize(); }

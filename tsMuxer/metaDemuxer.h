@@ -218,6 +218,9 @@ class METADemuxer final : public AbstractDemuxer
     // --keep-editions: a Matroska source is read as it is stored, not as its ordered edition plays it, and its
     // chapters and segment identity go to the output unchanged.
     void setKeepEditions(const bool value) { m_keepEditions = value; }
+    // The output is Matroska (1) or WebM (2), known before the meta is read: a subtitle of a Matroska source is then
+    // copied in its own form (MatroskaCopyStreamReader) instead of being converted.
+    void setMatroskaOutput(const int kind) { m_matroskaOutput = kind; }
     [[nodiscard]] SourceEditions getSourceEditions() override;
     [[nodiscard]] std::vector<std::vector<uint8_t>> getGlobalTags() override;
     // How long the sources say they run, without reading them: a playlist by its play items, a container by the
@@ -254,6 +257,7 @@ class METADemuxer final : public AbstractDemuxer
     std::chrono::steady_clock::time_point m_lastReportTime;
     std::set<std::string> m_timelinesReported;  // the Matroska files whose play timeline was said in the log
     bool m_keepEditions = false;                // --keep-editions (setKeepEditions)
+    int m_matroskaOutput = 0;                   // setMatroskaOutput: 0 other, 1 Matroska, 2 WebM
     double m_lastProgress = 0.0;                // the last value printed
     int64_t m_totalSize;
     bool m_flushDataMode;

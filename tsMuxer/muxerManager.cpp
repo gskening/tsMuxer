@@ -562,7 +562,8 @@ void MuxerManager::doMux(const string& outFileName, FileFactory* fileFactory)
             // A subtitle packet past the cut is dropped, but it does not end the cut. Its timestamp
             // can run more than a second ahead of the pictures still being read, so stopping at it
             // cut the video and audio short: 213 pictures of a 10 second cut instead of 240.
-            if (avPacket.codecID == CODEC_S_PGS || avPacket.codecID == CODEC_S_SRT || avPacket.codecID == CODEC_S_SUP)
+            if (avPacket.codecID == CODEC_S_PGS || avPacket.codecID == CODEC_S_SRT || avPacket.codecID == CODEC_S_SUP ||
+                avPacket.codecID == CODEC_S_MKVCOPY)
                 continue;
             break;
         }
