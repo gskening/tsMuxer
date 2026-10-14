@@ -1,6 +1,6 @@
 ## tsMuxeR 2.20.0
 
-This release is about Matroska. tsMuxeR now reads and writes it much more completely, as RFC 9559 describes it: subtitles in ASS, SSA, WebVTT, DVD (VobSub) and DVB form, ordered editions and linked files, track names and flags, chapters with every title and edition, attachments, tags, splitting, WebM, and new codecs. The changes are grouped below by area.
+This release is about Matroska. tsMuxeR now reads and writes it much more completely, as RFC 9559 describes it: subtitles in ASS, SSA, WebVTT, DVD (VobSub) and DVB form, ordered editions and linked files, track names and flags, chapters with every title and edition, attachments, tags, splitting, WebM, and new codecs. A remux into a Matroska file keeps each track in the form the source has it. The changes are grouped below by area.
 
 **The Intel macOS build has been back since 2.19.0, and Mac users are still asked to test.** It has been built and checked, but it has not been run on an Intel Mac, because no Mac is available here. If you have an Intel Mac, please try it and report whether it works. On any Mac, please also try changing the subtitle font and colour in the window, and report what happens.
 
@@ -18,13 +18,13 @@ This release is about Matroska. tsMuxeR now reads and writes it much more comple
 
 ### Matroska input
 
-* **ASS, SSA and WebVTT subtitles** are read as text: kept as text in a Matroska output, or drawn into PGS for a disc. Italic, bold and underline are kept. What is left out is listed below, under "What a Matroska output does not carry over".
+* **ASS, SSA and WebVTT subtitles** are read. A Matroska output gets them as they are, with their styles, colours and positions (see Matroska output below). A disc or a transport stream gets them drawn into PGS, with italic, bold and underline.
 
-* **DVD subtitles (VobSub) and DVB subtitles** are read and turned into PGS, with their colours, positions and timing. A forced DVD subtitle stays forced.
+* **DVD subtitles (VobSub) and DVB subtitles** are read. A Matroska output gets them as they are; a disc or a transport stream gets them turned into PGS, with their colours, positions and timing, and a forced DVD subtitle stays forced.
 
 * **Ordered editions and linked files.** A file whose default edition is ordered is read as a player plays it: its chapters one after the other, and a chapter from another file of the same folder where it says so. The first file of a set of linked files, named on its own, brings the files linked after it.
 
-* **Chapters** are read from the default edition, wherever they are in the file. Nested chapters are kept, hidden chapters are left out, and every title in every language and the end of each chapter are kept.
+* **Chapters** are read wherever they are in the file. A disc and a transport stream take the default edition: nested chapters kept, hidden ones left out, every title in every language and the end of each chapter. A Matroska output keeps every edition (see Matroska output below).
 
 * **BCP 47 language tags** (LanguageBCP47) are read. A disc gets the ISO 639-2 code they stand for.
 
@@ -50,7 +50,13 @@ This release is about Matroska. tsMuxeR now reads and writes it much more comple
 
 ### Matroska output
 
-* **A remux keeps what the source says about its tracks.** Track names, the forced, hearing impaired, visually impaired, text description, original and commentary flags, the container's colour and mastering data, display size, crop, field order and projection, the file title, tags and attached files are carried to a Matroska output. A remux used to keep only the language and the default flag.
+* **A remux keeps what the source says about its tracks.** Track names, the forced, hearing impaired, visually impaired, text description, original and commentary flags, the container's colour and mastering data, display size, crop, field order and projection, the file title, the tags about the file and about each track, and attached files are carried to a Matroska output. A remux used to keep only the language and the default flag. Of the tags about a track, the statistics tags are left out (BPS, DURATION and the others named in _STATISTICS_TAGS), because they count the bytes and frames of the source.
+
+* **Subtitles in their own form.** ASS, SSA, WebVTT, DVD (VobSub) and DVB subtitles of a Matroska source are copied into a Matroska output as they are, block for block, with their CodecPrivate, their BlockAdditions and their times. They used to be converted: ASS lost its styles, colours and positions, WebVTT its cue settings, and VobSub and DVB were drawn again as PGS. A text subtitle is copied when it is kept as text (keep-text, the default in the window); without keep-text it is drawn into PGS, as asked.
+
+* **Every edition and every chapter.** A Matroska source with more than one edition, or with hidden or nested chapters, keeps all of them in a Matroska output, with their UIDs, names and flags. A cut and a split move them the same way as the chapters of the default edition. They used to be flattened into one edition, without the hidden chapters.
+
+* **Data stored beside a frame** (BlockAdditions), such as HDR10+ metadata, stays on its frame in a Matroska output, with the track's MaxBlockAdditionID and BlockAdditionMappings. It used to be skipped when the source was read.
 
 * **WebM output.** An output named .webm is written as WebM: DocType webm and the WebM subset of Matroska. It holds VP8, VP9 and AV1 video, Opus and Vorbis audio, and text subtitles as WebVTT. Such a name used to start a demux into a folder of that name.
 
@@ -70,21 +76,17 @@ This release is about Matroska. tsMuxeR now reads and writes it much more comple
 
 * **Silence at the ends.** The padding at the end of an Opus track, the priming at the start of AAC from an MP4, and the delay and padding of a LAME MP3 are kept, so none of them plays as sound. The Xing frame at the start of an MP3 is left out.
 
-### What a Matroska output does not carry over
+### What is still converted or left out
 
-Some of what tsMuxeR now reads cannot be written to a Matroska file in its own form yet. It is converted, or left out:
+* **A WebM output** holds subtitles as WebVTT only. WebVTT stored in the WebM way (D_WEBVTT) is copied as it is. Other WebVTT, ASS and SSA become WebVTT text with italic, bold and underline, without their cue settings, styles, colours or positions. VobSub and DVB subtitles cannot go into a WebM file. A WebM output has no edition or chapter flags.
 
-* **ASS and SSA subtitles become SRT text.** The text is kept, with its line breaks, italic, bold and underline. Colours, positions, fonts, styles, karaoke effects and drawings are left out. ASS and SSA cannot be written yet.
+* **A transport stream and a disc** get every subtitle as PGS and the frames without their BlockAdditions, as before.
 
-* **WebVTT subtitles become SRT text** in a Matroska output, and stay WebVTT in a WebM output. In both, the cue positions and settings are left out, and so are tags other than italic, bold and underline. Text subtitles stored as S_TEXT/ASCII become SRT text with nothing lost.
+* **A demux** writes ASS, SSA and WebVTT subtitles as SRT.
 
-* **DVD (VobSub) and DVB subtitles become PGS.** Their pictures are drawn again as PGS, with their colours, positions and timing, and a forced DVD subtitle stays forced. The original track is not copied. DVB objects coded as characters, or coded progressively, are left out with a warning.
+* **The chapters of a join, and of a file played as its ordered edition,** are written as one edition, as before. --keep-editions keeps the chapters of one file exactly as they are, every edition and every link.
 
-* **Tags about one track are left out.** Only the tags about the whole file are copied, because the tracks of the output have other IDs, and figures such as a track's bit rate no longer hold.
-
-* **Hidden chapters and every edition but the default one are left out,** and an ordered edition becomes the timeline a player plays. --keep-editions keeps all of them exactly as they are.
-
-* **Data stored beside a block (BlockAdditions) is not read,** so it reaches no output. Some files store HDR10+ metadata there. Dolby Vision and 3D video are not affected, because their data is inside the video stream.
+* **Tags about an edition, a chapter or an attachment** are left out, as before.
 
 * **A V_VC1 track is written as V_MS/VFW/WVC1.** It is the same stream in the other form Matroska defines for VC-1, so nothing is lost.
 
