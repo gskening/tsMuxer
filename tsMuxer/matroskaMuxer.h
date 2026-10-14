@@ -348,6 +348,12 @@ class MatroskaMuxer final : public AbstractMuxer
     // --keep-editions: the source's Chapters body and segment identity, written as they stand.
     bool m_keepEditions = false;
     AbstractDemuxer::SourceEditions m_sourceEditions;
+    std::vector<uint8_t> m_sourceChapterTree;  // setSourceChapterTree
+    int64_t m_treeCutStartNs = 0;
+    int64_t m_treeCutEndNs = INT64_MAX;
+    bool m_writingPart = false;  // writePartChapters is writing the chapters of one part of a split
+    double m_partStartSec = 0, m_partEndSec = 0;
+    bool writeChapterTree();
 
    public:
     void setSourceEditions(const AbstractDemuxer::SourceEditions& editions)
@@ -355,6 +361,10 @@ class MatroskaMuxer final : public AbstractMuxer
         m_keepEditions = true;
         m_sourceEditions = editions;
     }
+    // A Matroska source's Chapters element and the cut, on the source's clock in ns (cutEnd INT64_MAX without one).
+    // Kept only when the flat list of the default edition would lose something: another edition, a hidden chapter or a
+    // nested one. Every edition is then written, moved by the cut and by each part of a split.
+    void setSourceChapterTree(const std::vector<uint8_t>& chapters, int64_t cutStartNs, int64_t cutEndNs);
 
    private:
     // Low-level: write bytes to the output file

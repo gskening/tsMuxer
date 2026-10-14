@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <random>
 #include <sstream>
 
@@ -2307,6 +2308,264 @@ void MatroskaMuxer::writeDeferredHeader()
     m_headerWritten = true;
 }
 
+// ---- every edition of a Matroska source ----
+
+namespace
+{
+struct EbmlNode
+{
+    uint32_t id = 0;
+    std::vector<uint8_t> body;       // a leaf's body
+    std::vector<EbmlNode> children;  // a master's children
+    bool master = false;
+};
+
+bool readEbmlNumber(const std::vector<uint8_t>& d, size_t& at, const size_t end, const bool keep, uint64_t& v)
+{
+    if (at >= end || d[at] == 0)
+        return false;
+    int width = 1;
+    uint8_t mask = 0x80;
+    while (!(d[at] & mask))
+    {
+        mask >>= 1;
+        ++width;
+    }
+    if (at + width > end)
+        return false;
+    v = keep ? d[at] : d[at] & (mask - 1);
+    for (int k = 1; k < width; ++k) v = v << 8 | d[at + k];
+    at += width;
+    return true;
+}
+
+// The masters of the Chapters element: EditionEntry, ChapterAtom, ChapterDisplay, ChapProcess, ChapProcessCommand,
+// ChapterTrack
+bool isChapterMaster(const uint32_t id)
+{
+    return id == MATROSKA_ID_EDITIONENTRY || id == MATROSKA_ID_CHAPTERATOM || id == 0x80 || id == 0x6944 ||
+           id == 0x6911 || id == 0x8F;
+}
+
+std::vector<EbmlNode> parseEbml(const std::vector<uint8_t>& d, size_t at, const size_t end)
+{
+    std::vector<EbmlNode> out;
+    while (at < end)
+    {
+        uint64_t id = 0, len = 0;
+        if (!readEbmlNumber(d, at, end, true, id) || !readEbmlNumber(d, at, end, false, len) || len > end - at)
+            break;
+        EbmlNode node;
+        node.id = static_cast<uint32_t>(id);
+        node.master = isChapterMaster(node.id);
+        if (node.master)
+            node.children = parseEbml(d, at, at + static_cast<size_t>(len));
+        else
+            node.body.assign(d.begin() + static_cast<std::ptrdiff_t>(at),
+                             d.begin() + static_cast<std::ptrdiff_t>(at + len));
+        out.push_back(std::move(node));
+        at += static_cast<size_t>(len);
+    }
+    return out;
+}
+
+uint64_t uintOf(const std::vector<uint8_t>& b)
+{
+    uint64_t v = 0;
+    for (const uint8_t c : b) v = v << 8 | c;
+    return v;
+}
+
+void writeEbml(const std::vector<EbmlNode>& nodes, std::vector<uint8_t>& out)
+{
+    for (const EbmlNode& n : nodes)
+    {
+        std::vector<uint8_t> body;
+        if (n.master)
+            writeEbml(n.children, body);
+        else
+            body = n.body;
+        uint8_t hdr[16];
+        const int h = ebml_write_master_open(hdr, n.id, body.size());
+        out.insert(out.end(), hdr, hdr + h);
+        out.insert(out.end(), body.begin(), body.end());
+    }
+}
+
+void setUint(EbmlNode& n, const uint64_t v)
+{
+    n.body.clear();
+    int bytes = 1;
+    while (bytes < 8 && v >> (8 * bytes)) ++bytes;
+    for (int i = bytes - 1; i >= 0; --i) n.body.push_back(static_cast<uint8_t>(v >> (8 * i)));
+}
+
+int64_t atomStart(const EbmlNode& atom)
+{
+    for (const EbmlNode& c : atom.children)
+        if (c.id == MATROSKA_ID_CHAPTERTIMESTART)
+            return static_cast<int64_t>(uintOf(c.body));
+    return 0;
+}
+
+// The atoms of one level that fall into [winStart, winEnd) of the source's clock, moved so that origin is 0. With
+// keepPlaying, the last atom that starts at or before winStart is kept as well, starting at winStart: the chapter
+// playing where a cut begins, as MuxerManager::readSourceChapters keeps it. An end is clipped to the window; where
+// nothing of an atom is left it is dropped, and an ordered edition, which needs every end, drops it altogether.
+void moveAtoms(std::vector<EbmlNode>& nodes, const int64_t origin, const int64_t winStart, const int64_t winEnd,
+               const bool keepPlaying, const bool ordered, const int64_t slack)
+{
+    // The chapter playing at the cut, and apart from it the hidden one in effect there: a hidden chapter is not what a
+    // player shows, so it must not take the place of the one it does
+    const auto hidden = [](const EbmlNode& atom)
+    {
+        for (const EbmlNode& c : atom.children)
+            if (c.id == MATROSKA_ID_CHAPTERFLAGHIDDEN)
+                return uintOf(c.body) != 0;
+        return false;
+    };
+    int playing = -1, playingHidden = -1;
+    if (keepPlaying)
+        for (int i = 0; i < static_cast<int>(nodes.size()); ++i)
+        {
+            if (nodes[i].id != MATROSKA_ID_CHAPTERATOM || atomStart(nodes[i]) > winStart)
+                continue;
+            int& which = hidden(nodes[i]) ? playingHidden : playing;
+            if (which < 0 || atomStart(nodes[i]) >= atomStart(nodes[which]))
+                which = i;
+        }
+    std::vector<EbmlNode> kept;
+    for (int i = 0; i < static_cast<int>(nodes.size()); ++i)
+    {
+        EbmlNode& n = nodes[i];
+        if (n.id != MATROSKA_ID_CHAPTERATOM)
+        {
+            kept.push_back(std::move(n));
+            continue;
+        }
+        const int64_t start = atomStart(n);
+        const bool inside =
+            keepPlaying ? start > winStart && start < winEnd : start >= winStart - slack && start < winEnd - slack;
+        if (!inside && i != playing && i != playingHidden)
+            continue;
+        const int64_t newStart = (std::max)(start, winStart) - origin;
+        bool drop = false;
+        std::vector<EbmlNode> children;
+        for (EbmlNode& c : n.children)
+        {
+            if (c.id == MATROSKA_ID_CHAPTERTIMESTART)
+                setUint(c, static_cast<uint64_t>((std::max)(int64_t{0}, newStart)));
+            else if (c.id == MATROSKA_ID_CHAPTERTIMEEND)
+            {
+                const int64_t end = (std::min)(static_cast<int64_t>(uintOf(c.body)), winEnd) - origin;
+                if (end <= newStart)
+                {
+                    drop = ordered;
+                    continue;  // nothing of it is left in the window: no end, as a chapter that is not ordered allows
+                }
+                setUint(c, static_cast<uint64_t>(end));
+            }
+            children.push_back(std::move(c));
+        }
+        if (drop)
+            continue;
+        n.children = std::move(children);
+        moveAtoms(n.children, origin, winStart, winEnd, keepPlaying, ordered, slack);
+        kept.push_back(std::move(n));
+    }
+    nodes = std::move(kept);
+}
+}  // namespace
+
+void MatroskaMuxer::setSourceChapterTree(const std::vector<uint8_t>& chapters, const int64_t cutStartNs,
+                                         const int64_t cutEndNs)
+{
+    m_sourceChapterTree.clear();
+    const std::vector<EbmlNode> editions = parseEbml(chapters, 0, chapters.size());
+    int editionCount = 0;
+    bool hiddenOrNested = false;
+    const std::function<void(const std::vector<EbmlNode>&, int)> look =
+        [&](const std::vector<EbmlNode>& nodes, const int depth)
+    {
+        for (const EbmlNode& n : nodes)
+        {
+            if (n.id == MATROSKA_ID_CHAPTERATOM)
+            {
+                if (depth > 0)
+                    hiddenOrNested = true;
+                for (const EbmlNode& c : n.children)
+                    if (c.id == MATROSKA_ID_CHAPTERFLAGHIDDEN && uintOf(c.body) != 0)
+                        hiddenOrNested = true;
+                look(n.children, depth + 1);
+            }
+        }
+    };
+    for (const EbmlNode& e : editions)
+        if (e.id == MATROSKA_ID_EDITIONENTRY)
+        {
+            ++editionCount;
+            look(e.children, 0);
+        }
+    // The flat list of the default edition says all of it otherwise, and is written as before
+    if (editionCount > 1 || hiddenOrNested)
+    {
+        m_sourceChapterTree = chapters;
+        m_treeCutStartNs = cutStartNs;
+        m_treeCutEndNs = cutEndNs;
+    }
+}
+
+// Every edition of the source, moved: for the whole output by the cut, for a part of a split to that part. The UIDs,
+// the names, the flags and the nesting stay as the source has them. EditionFlagHidden is left out, as from the
+// chapters tsMuxeR writes itself: RFC 9559 does not define it. False when nothing of any edition falls into the window.
+bool MatroskaMuxer::writeChapterTree()
+{
+    std::vector<EbmlNode> editions = parseEbml(m_sourceChapterTree, 0, m_sourceChapterTree.size());
+    int64_t origin = m_treeCutStartNs, winStart = m_treeCutStartNs, winEnd = m_treeCutEndNs;
+    bool keepPlaying = m_treeCutStartNs > 0;
+    if (m_writingPart)
+    {
+        origin = winStart = m_treeCutStartNs + static_cast<int64_t>(m_partStartSec * 1e9 + 0.5);
+        winEnd = m_partEndSec >= 1e299
+                     ? m_treeCutEndNs
+                     : (std::min)(m_treeCutEndNs, m_treeCutStartNs + static_cast<int64_t>(m_partEndSec * 1e9 + 0.5));
+        keepPlaying = false;
+    }
+    std::vector<EbmlNode> kept;
+    for (EbmlNode& e : editions)
+    {
+        if (e.id != MATROSKA_ID_EDITIONENTRY)
+            continue;
+        bool ordered = false;
+        std::vector<EbmlNode> children;
+        for (EbmlNode& c : e.children)
+        {
+            if (c.id == 0x45BD)  // EditionFlagHidden
+                continue;
+            if (c.id == MATROSKA_ID_EDITIONFLAGORDERED && uintOf(c.body) != 0)
+                ordered = true;
+            children.push_back(std::move(c));
+        }
+        e.children = std::move(children);
+        moveAtoms(e.children, origin, winStart, winEnd, keepPlaying, ordered, 500000);
+        if (std::any_of(e.children.begin(), e.children.end(),
+                        [](const EbmlNode& c) { return c.id == MATROSKA_ID_CHAPTERATOM; }))
+            kept.push_back(std::move(e));
+    }
+    if (kept.empty())
+        return false;
+    std::vector<uint8_t> body;
+    writeEbml(kept, body);
+    uint8_t hdr[16];
+    const int h = ebml_write_master_open(hdr, MATROSKA_ID_CHAPTERS, body.size() + CRC_ELEMENT_BYTES);
+    m_chaptersPos = m_file.pos() - m_segmentStartPos;
+    writeToFile(hdr, h);
+    beginCrc();
+    writeToFile(body.data(), static_cast<int>(body.size()));
+    endCrc();
+    return true;
+}
+
 // A Blu-ray playlist carries a couple of hundred chapter marks and an MKV source carries its own,
 // and until now neither reached Matroska output: the muxer had no chapter support at all, so a
 // remux silently dropped every one of them. The Blu-ray path already turns the same list into
@@ -2326,6 +2585,13 @@ void MatroskaMuxer::writeChapters()
         beginCrc();
         writeToFile(m_sourceEditions.chapters.data(), static_cast<int>(m_sourceEditions.chapters.size()));
         endCrc();
+        return;
+    }
+    // Every edition of a Matroska source, its hidden and nested chapters with them. Not for WebM, which has no
+    // editions and no chapter flags.
+    if (!m_sourceChapterTree.empty() && !m_webm)
+    {
+        writeChapterTree();
         return;
     }
     if (m_chapters.empty())
@@ -4530,7 +4796,11 @@ void MatroskaMuxer::writePartChapters(const int64_t partEndPts)
         }
         m_chapterInfo.push_back(info);
     }
+    m_writingPart = true;
+    m_partStartSec = partStart;
+    m_partEndSec = partEnd;
     writeChapters();
+    m_writingPart = false;
 }
 
 // ──────────────── SeekHead ───────────────────────────────────────────────────

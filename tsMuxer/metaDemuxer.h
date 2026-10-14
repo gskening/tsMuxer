@@ -223,6 +223,9 @@ class METADemuxer final : public AbstractDemuxer
     // copied in its own form (MatroskaCopyStreamReader) instead of being converted.
     void setMatroskaOutput(const int kind) { m_matroskaOutput = kind; }
     [[nodiscard]] SourceEditions getSourceEditions() override;
+    // The Chapters element of the one Matroska file the output takes its chapters from, as it stands; empty when
+    // they come from anything else: a playlist, a join, an ordered edition's timeline, another container.
+    [[nodiscard]] std::vector<uint8_t> getPlainMatroskaChapters();
     [[nodiscard]] std::vector<std::vector<uint8_t>> getGlobalTags() override;
     // The tags each source had about one of its tracks, by the stream index of that track here
     [[nodiscard]] std::map<int, std::vector<SourceTrackTag>> getTrackTagsByStream();

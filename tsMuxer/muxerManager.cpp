@@ -189,6 +189,19 @@ void MuxerManager::preinitMux(const std::string& outFileName, FileFactory* fileF
                     m_chapterInfo = sourceChapters();
                     for (const auto& chapter : m_chapterInfo)
                         m_chapters.push_back(static_cast<double>(chapter.start) / 1e9);
+                    // A Matroska output also gets every edition of a Matroska source, and its hidden and nested
+                    // chapters, moved by the cut the same way (MatroskaMuxer::setSourceChapterTree)
+                    if (auto* const mkv = dynamic_cast<MatroskaMuxer*>(m_mainMuxer.get());
+                        mkv && !m_chapterInfo.empty())
+                    {
+                        const auto toNano = [](const int64_t pts) {
+                            return static_cast<int64_t>(
+                                static_cast<double>(pts) * 1e9 / static_cast<double>(INTERNAL_PTS_FREQ) + 0.5);
+                        };
+                        mkv->setSourceChapterTree(m_metaDemuxer.getPlainMatroskaChapters(),
+                                                  m_cutStart > 0 ? toNano(m_cutStart) : 0,
+                                                  m_cutEnd > 0 ? toNano(m_cutEnd) : INT64_MAX);
+                    }
                 }
                 if (!m_chapters.empty())
                 {

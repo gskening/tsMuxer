@@ -1382,6 +1382,26 @@ std::vector<std::vector<uint8_t>> METADemuxer::getPassThroughAttachments()
     return out;
 }
 
+std::vector<uint8_t> METADemuxer::getPlainMatroskaChapters()
+{
+    // In the order getChapters asks, so that this is the file the output's chapters come from
+    for (const StreamInfo& stream : m_codecInfo)
+        if (m_mplsStreamMap.find(splitQuotedStr(stream.m_fullStreamName.c_str(), '+').front()) != m_mplsStreamMap.end())
+            return {};
+    for (auto& [name, demuxerData] : m_containerReader.m_demuxers)
+    {
+        if (!demuxerData.m_demuxer || demuxerData.m_demuxer->getChapters().empty())
+            continue;
+        auto* mkv = dynamic_cast<MatroskaDemuxer*>(demuxerData.m_demuxer);
+        const auto* join = dynamic_cast<const FileListIterator*>(demuxerData.m_iterator);
+        if (!mkv || (join && (join->getFiles().size() > 1 ||
+                              (!join->getRanges().empty() && join->getRanges().front().startNs >= 0))))
+            return {};
+        return mkv->getSourceEditions().chapters;
+    }
+    return {};
+}
+
 AbstractDemuxer::SourceEditions METADemuxer::getSourceEditions()
 {
     for (auto& [name, demuxerData] : m_containerReader.m_demuxers)
