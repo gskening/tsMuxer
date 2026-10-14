@@ -6,7 +6,7 @@
 
 This project is for tsMuxer - a transport stream muxer for remuxing/muxing elementary streams. This is very useful for transcoding and this project is used in other products such as Universal Media Server.
 
-EVO/VOB/MPG, MKV/MKA, MP4/MOV, TS, M2TS to TS, M2TS, or MKV.
+EVO/VOB/MPG, MKV/MKA/MK3D, WebM, MP4/MOV, TS, M2TS and IVF to TS, M2TS, MKV or WebM.
 
 Supported video codecs H.264/AVC, H.265/HEVC, H.266/VVC (Alpha release), AV1, VC-1, MPEG2, and VP8 and VP9 (from MKV, WebM or IVF; to MKV, or demuxed to IVF). 
 Supported audio codecs AAC, AC3 / E-AC3(DD+), DTS/ DTS-HD, TrueHD, Opus, FLAC, LPCM, MP3, Vorbis (from MKV or WebM; to MKV, or demuxed to Ogg) and ALAC (from MKV, to MKV).
@@ -24,7 +24,10 @@ Some of the major features include:
 * Ability to extract AC-3 core from E-AC3 (DD+) and TrueHD
 * Ability to join files
 * Output/Author to compliant Blu-ray Disc or AVCHD
-* Matroska (MKV/MKA) muxing support
+* Matroska (MKV/MKA) output, with track names and flags, chapters and ordered editions, attachments and tags, and splitting by size, duration or chapters
+* WebM output, for VP8, VP9 and AV1 video, Opus and Vorbis audio, and text subtitles as WebVTT
+* Text subtitles from Matroska (SRT, ASS, SSA and WebVTT), kept as text in a Matroska output or drawn into PGS for a disc
+* DVD (VobSub) subtitles from Matroska, and DVB subtitles from Matroska or a TS recording, turned into PGS
 * Blu-ray 3D support
 
 Additions in this fork (see [DISC_AUTHORING.md](docs/DISC_AUTHORING.md) for details):
