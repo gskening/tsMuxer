@@ -172,6 +172,16 @@ class AbstractDemuxer
     };
     [[nodiscard]] virtual SourceEditions getSourceEditions() { return {}; }
     [[nodiscard]] virtual std::vector<std::vector<uint8_t>> getGlobalTags() { return {}; }
+    // A Matroska source's tags about one track, by the source's TrackUID: the Targets' other children and the
+    // SimpleTag elements, as they stand. The statistics tags are left out: they count the source's bytes and frames.
+    struct SourceTrackTag
+    {
+        std::vector<uint8_t> targetsRest;
+        std::vector<uint8_t> simpleTags;
+    };
+    [[nodiscard]] virtual std::map<uint64_t, std::vector<SourceTrackTag>> getTrackTags() { return {}; }
+    // The TrackUID of a track, 0 when the container has none
+    [[nodiscard]] virtual uint64_t getTrackUid(int pid) const { return 0; }
 
     [[nodiscard]] SubTrackFilter* getPidFilter(const int pid)
     {

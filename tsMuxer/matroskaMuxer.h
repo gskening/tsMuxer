@@ -61,6 +61,7 @@ class MatroskaMuxer final : public AbstractMuxer
     void setChapterInfo(const std::vector<AVChapter>& info) override { m_chapterInfo = info; }
     void setSourceExtras(const std::string& title, const std::vector<std::vector<uint8_t>>& attachments,
                          const std::vector<std::vector<uint8_t>>& tags) override;
+    void setSourceTrackTags(const std::map<int, std::vector<AbstractDemuxer::SourceTrackTag>>& tags) override;
 
    private:
     std::vector<double> m_chapters;        // start times in seconds
@@ -451,8 +452,9 @@ class MatroskaMuxer final : public AbstractMuxer
     void writePartChapters(int64_t partEndPts);
     std::string m_title;  // --title=, or the first source's title
     bool m_titleFromMuxOpt = false;
-    std::vector<std::vector<uint8_t>> m_sourceAttachments;  // whole AttachedFile elements
-    std::vector<std::vector<uint8_t>> m_sourceTags;         // whole Tag elements
+    std::vector<std::vector<uint8_t>> m_sourceAttachments;                          // whole AttachedFile elements
+    std::vector<std::vector<uint8_t>> m_sourceTags;                                 // whole Tag elements
+    std::map<int, std::vector<AbstractDemuxer::SourceTrackTag>> m_sourceTrackTags;  // by stream index
     [[nodiscard]] uint64_t sourceAttachmentBytes() const;
     void writeSourceAttachments();
     void writeTags();

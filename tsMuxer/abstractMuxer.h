@@ -43,6 +43,8 @@ class AbstractMuxer
                                  const std::vector<std::vector<uint8_t>>& tags)
     {
     }
+    // The source's tags about one track, by the stream index of the output track they now belong to
+    virtual void setSourceTrackTags(const std::map<int, std::vector<AbstractDemuxer::SourceTrackTag>>& tags) {}
 
     virtual void joinToMasterFile() {}
     virtual void setSubMode(AbstractMuxer* mainMuxer, bool flushInterleavedBlock) {}

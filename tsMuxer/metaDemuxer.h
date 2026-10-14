@@ -66,6 +66,7 @@ struct StreamInfo
     int m_pid;
     bool m_flushed;
     int64_t m_timeShift;
+    uint64_t m_srcTrackUid = 0;  // the source's TrackUID, for the tags about this track (getTrackTags)
     std::string m_lang;
     std::string m_langBCP47;  // the source container's BCP 47 tag, when it had one
     std::string m_codec;
@@ -223,6 +224,8 @@ class METADemuxer final : public AbstractDemuxer
     void setMatroskaOutput(const int kind) { m_matroskaOutput = kind; }
     [[nodiscard]] SourceEditions getSourceEditions() override;
     [[nodiscard]] std::vector<std::vector<uint8_t>> getGlobalTags() override;
+    // The tags each source had about one of its tracks, by the stream index of that track here
+    [[nodiscard]] std::map<int, std::vector<SourceTrackTag>> getTrackTagsByStream();
     // How long the sources say they run, without reading them: a playlist by its play items, a container by the
     // length it states. A join counts its first file only and an elementary stream states nothing, so this can fall
     // short or be 0. It is only used to reckon how many parts a --split-duration makes.

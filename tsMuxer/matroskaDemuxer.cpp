@@ -3408,6 +3408,154 @@ std::vector<std::vector<uint8_t>> MatroskaDemuxer::getGlobalTags()
     return out;
 }
 
+// The tags about one track, read from the Tags element. Kept apart from getGlobalTags because a Matroska output gives
+// its tracks new UIDs: the muxer writes each of these again with the UID of the track it now belongs to.
+std::map<uint64_t, std::vector<AbstractDemuxer::SourceTrackTag>> MatroskaDemuxer::getTrackTags()
+{
+    std::map<uint64_t, std::vector<SourceTrackTag>> out;
+    if (m_sourceName.empty())
+        return out;
+    File f;
+    if (!f.open(m_sourceName.c_str(), File::ofRead))
+        return out;
+    const int64_t fileSize = f.size();
+    EbmlScan scan(f);
+    int64_t body = 0, size = 0;
+    if (!findTopLevelElement(scan, fileSize, MATROSKA_ID_TAGS, body, size) || size <= 0 || size > (64 << 20))
+        return out;
+    std::vector<uint8_t> d(static_cast<size_t>(size));
+    f.seek(body);
+    if (f.read(d.data(), static_cast<uint32_t>(d.size())) != static_cast<int>(d.size()))
+        return out;
+
+    // One element at i: its id (marker kept), where its body starts and where it ends; false at the end or on damage
+    const auto element = [&d](size_t& i, const size_t end, uint32_t& id, size_t& b, size_t& e)
+    {
+        const auto number = [&d, end](size_t& at, const bool keep, uint64_t& v)
+        {
+            if (at >= end || d[at] == 0)
+                return false;
+            int width = 1;
+            uint8_t mask = 0x80;
+            while (!(d[at] & mask))
+            {
+                mask >>= 1;
+                ++width;
+            }
+            if (at + width > end)
+                return false;
+            v = keep ? d[at] : d[at] & (mask - 1);
+            for (int k = 1; k < width; ++k) v = v << 8 | d[at + k];
+            at += width;
+            return true;
+        };
+        uint64_t idv = 0, len = 0;
+        size_t at = i;
+        if (!number(at, true, idv) || !number(at, false, len) || len > end - at)
+            return false;
+        id = static_cast<uint32_t>(idv);
+        b = at;
+        e = at + static_cast<size_t>(len);
+        i = e;
+        return true;
+    };
+    const auto uintOf = [&d](const size_t b, const size_t e)
+    {
+        uint64_t v = 0;
+        for (size_t k = b; k < e && k < b + 8; ++k) v = v << 8 | d[k];
+        return v;
+    };
+
+    size_t i = 0;
+    uint32_t id = 0;
+    size_t b = 0, e = 0;
+    while (element(i, d.size(), id, b, e))
+    {
+        if (id != MATROSKA_ID_TAG)
+            continue;
+        std::vector<uint64_t> trackUids;
+        bool aboutOther = false;
+        SourceTrackTag tag;
+        std::vector<std::pair<std::string, std::vector<uint8_t>>> simple;  // name, the whole element
+        std::string statistics;
+        size_t j = b;
+        uint32_t cid = 0;
+        size_t cb = 0, ce = 0;
+        while (element(j, e, cid, cb, ce))
+        {
+            if (cid == MATROSKA_ID_TAGTARGETS)
+            {
+                size_t k = cb;
+                uint32_t tid = 0;
+                size_t tb = 0, te = 0;
+                size_t tstart = k;
+                while (element(k, ce, tid, tb, te))
+                {
+                    const uint64_t value = uintOf(tb, te);
+                    if (tid == MATROSKA_ID_TAGTARGETS_TRACKUID)
+                    {
+                        if (value)
+                            trackUids.push_back(value);
+                    }
+                    else
+                    {
+                        if ((tid == 0x63C9 || tid == 0x63C4 || tid == 0x63C6) && value)
+                            aboutOther = true;  // TagEditionUID, TagChapterUID, TagAttachmentUID
+                        tag.targetsRest.insert(tag.targetsRest.end(), d.begin() + static_cast<std::ptrdiff_t>(tstart),
+                                               d.begin() + static_cast<std::ptrdiff_t>(te));
+                    }
+                    tstart = k;
+                }
+            }
+            else if (cid == MATROSKA_ID_SIMPLETAG)
+            {
+                std::string name, value;
+                size_t k = cb;
+                uint32_t sid = 0;
+                size_t sb = 0, se = 0;
+                while (element(k, ce, sid, sb, se))
+                    if (sid == MATROSKA_ID_TAGNAME)
+                        name.assign(d.begin() + static_cast<std::ptrdiff_t>(sb),
+                                    d.begin() + static_cast<std::ptrdiff_t>(se));
+                    else if (sid == MATROSKA_ID_TAGSTRING)
+                        value.assign(d.begin() + static_cast<std::ptrdiff_t>(sb),
+                                     d.begin() + static_cast<std::ptrdiff_t>(se));
+                if (name == "_STATISTICS_TAGS")
+                    statistics = " " + value + " ";
+            }
+        }
+        if (trackUids.empty() || aboutOther)
+            continue;
+        // The SimpleTags again, now that the list of statistics tags is known, each as it stands
+        j = b;
+        size_t start = j;
+        while (element(j, e, cid, cb, ce))
+        {
+            if (cid == MATROSKA_ID_SIMPLETAG)
+            {
+                std::string name;
+                size_t k = cb;
+                uint32_t sid = 0;
+                size_t sb = 0, se = 0;
+                while (element(k, ce, sid, sb, se))
+                    if (sid == MATROSKA_ID_TAGNAME)
+                        name.assign(d.begin() + static_cast<std::ptrdiff_t>(sb),
+                                    d.begin() + static_cast<std::ptrdiff_t>(se));
+                const bool isStatistics = name.rfind("_STATISTICS_", 0) == 0 ||
+                                          (!name.empty() && statistics.find(" " + name + " ") != std::string::npos);
+                if (!isStatistics)
+                    tag.simpleTags.insert(tag.simpleTags.end(), d.begin() + static_cast<std::ptrdiff_t>(start),
+                                          d.begin() + static_cast<std::ptrdiff_t>(ce));
+            }
+            start = j;
+        }
+        if (tag.simpleTags.empty())
+            continue;
+        for (const uint64_t uid : trackUids) out[uid].push_back(tag);
+    }
+    return out;
+}
+
 void MatroskaDemuxer::loadAttachments(const std::string& fileName)
 {
     File f;

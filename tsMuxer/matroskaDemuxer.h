@@ -78,6 +78,11 @@ class MatroskaDemuxer final : public IOContextDemuxer
     std::string getTitle() override { return m_title; }
     std::vector<std::vector<uint8_t>> getPassThroughAttachments() override;
     std::vector<std::vector<uint8_t>> getGlobalTags() override;
+    std::map<uint64_t, std::vector<SourceTrackTag>> getTrackTags() override;
+    [[nodiscard]] uint64_t getTrackUid(int pid) const override
+    {
+        return pid >= 1 && pid <= num_tracks && tracks[pid - 1] ? tracks[pid - 1]->uid : 0;
+    }
 
     // A joined input, "a"+"b": the files in the order they are read, so that each part is framed as its own record
     // says when the stream reaches it.

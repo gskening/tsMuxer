@@ -158,6 +158,7 @@ void MuxerManager::preinitMux(const std::string& outFileName, FileFactory* fileF
                 m_mainMuxer->parseMuxOpt(m_muxOpts);
                 m_mainMuxer->setSourceExtras(m_metaDemuxer.getTitle(), m_metaDemuxer.getPassThroughAttachments(),
                                              m_metaDemuxer.getGlobalTags());
+                m_mainMuxer->setSourceTrackTags(m_metaDemuxer.getTrackTagsByStream());
                 // --keep-editions: the source's chapters, every edition of them, and its segment identity, as they
                 // stand. They are times on the file's own timeline, which a cut would move, and they replace the
                 // chapters the output would otherwise get.

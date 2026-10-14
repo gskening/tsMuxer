@@ -4259,6 +4259,11 @@ void MatroskaMuxer::setSourceExtras(const std::string& title, const std::vector<
     m_sourceTags = tags;
 }
 
+void MatroskaMuxer::setSourceTrackTags(const std::map<int, std::vector<AbstractDemuxer::SourceTrackTag>>& tags)
+{
+    m_sourceTrackTags = tags;
+}
+
 uint64_t MatroskaMuxer::sourceAttachmentBytes() const
 {
     uint64_t total = 0;
@@ -4277,16 +4282,44 @@ void MatroskaMuxer::writeSourceAttachments()
 // The source's file-wide tags, before the clusters as RFC 9559 (25.3.1) lays a file out.
 void MatroskaMuxer::writeTags()
 {
-    if (m_sourceTags.empty())
+    // The source's tags about one track, each again with the UID the track has in this file: the source's UID names
+    // a track that is not here. Everything else in the Tag as the source had it.
+    std::vector<std::vector<uint8_t>> trackTags;
+    for (const auto& [index, tags] : m_sourceTrackTags)
+    {
+        const auto it = m_tracks.find(index);
+        if (it == m_tracks.end())
+            continue;
+        for (const auto& t : tags)
+        {
+            uint8_t uidElement[16];
+            const int uidLen = ebml_write_uint(uidElement, MATROSKA_ID_TAGTARGETS_TRACKUID, it->second.trackUID);
+            const uint64_t targetsBody = t.targetsRest.size() + uidLen;
+            uint8_t targetsHeader[16];
+            const int targetsHeaderLen = ebml_write_master_open(targetsHeader, MATROSKA_ID_TAGTARGETS, targetsBody);
+            uint8_t tagHeader[16];
+            const int tagHeaderLen = ebml_write_master_open(tagHeader, MATROSKA_ID_TAG,
+                                                            targetsHeaderLen + targetsBody + t.simpleTags.size());
+            std::vector<uint8_t> raw(tagHeader, tagHeader + tagHeaderLen);
+            raw.insert(raw.end(), targetsHeader, targetsHeader + targetsHeaderLen);
+            raw.insert(raw.end(), t.targetsRest.begin(), t.targetsRest.end());
+            raw.insert(raw.end(), uidElement, uidElement + uidLen);
+            raw.insert(raw.end(), t.simpleTags.begin(), t.simpleTags.end());
+            trackTags.push_back(std::move(raw));
+        }
+    }
+    if (m_sourceTags.empty() && trackTags.empty())
         return;
     uint64_t total = 0;
     for (const auto& raw : m_sourceTags) total += raw.size();
+    for (const auto& raw : trackTags) total += raw.size();
     m_tagsPos = m_file.pos() - m_segmentStartPos;
     uint8_t header[16];
     const int hdrLen = ebml_write_master_open(header, MATROSKA_ID_TAGS, total + CRC_ELEMENT_BYTES);
     writeToFile(header, hdrLen);
     beginCrc();
     for (const auto& raw : m_sourceTags) writeToFile(raw);
+    for (const auto& raw : trackTags) writeToFile(raw);
     endCrc();
 }
 

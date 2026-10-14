@@ -1088,6 +1088,12 @@ int METADemuxer::addStream(const string& codec, const string& codecStreamName, c
     }
 
     StreamInfo& streamInfo = *m_codecInfo.rbegin();
+    // The track's own UID in its source, for the tags that source has about it. Its header has been read by now, and
+    // asking reads nothing else. A sub-track is half of a track the output writes as one, or two of: it gets none.
+    if (dataReader == &m_containerReader && pid > 0 && !SubTrackFilter::isSubTrack(pid))
+        if (const auto it = m_containerReader.m_demuxers.find(fileList[0]);
+            it != m_containerReader.m_demuxers.end() && it->second.m_demuxer)
+            streamInfo.m_srcTrackUid = it->second.m_demuxer->getTrackUid(pid);
     streamInfo.m_codec = codec;
     streamInfo.m_addParams = addParams;
     int streamIndex = codecReader->getStreamIndex();
@@ -1384,6 +1390,26 @@ AbstractDemuxer::SourceEditions METADemuxer::getSourceEditions()
                 !editions.chapters.empty() || !editions.segmentUid.empty())
                 return editions;
     return {};
+}
+
+std::map<int, std::vector<AbstractDemuxer::SourceTrackTag>> METADemuxer::getTrackTagsByStream()
+{
+    std::map<int, std::vector<SourceTrackTag>> out;
+    std::map<std::string, std::map<uint64_t, std::vector<SourceTrackTag>>> byFile;
+    for (const StreamInfo& si : m_codecInfo)
+    {
+        if (si.m_srcTrackUid == 0 || si.m_streamReader == nullptr)
+            continue;
+        const auto dit = m_containerReader.m_demuxers.find(si.m_streamName);
+        if (dit == m_containerReader.m_demuxers.end() || dit->second.m_demuxer == nullptr)
+            continue;
+        auto [fit, added] = byFile.try_emplace(si.m_streamName);
+        if (added)
+            fit->second = dit->second.m_demuxer->getTrackTags();
+        if (const auto t = fit->second.find(si.m_srcTrackUid); t != fit->second.end())
+            out[si.m_streamReader->getStreamIndex()] = t->second;
+    }
+    return out;
 }
 
 std::vector<std::vector<uint8_t>> METADemuxer::getGlobalTags()
