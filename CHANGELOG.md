@@ -18,7 +18,7 @@ This release is about Matroska. tsMuxeR now reads and writes it much more comple
 
 ### Matroska input
 
-* **ASS, SSA and WebVTT subtitles** are read as text: kept as text in a Matroska output, or drawn into PGS for a disc. Italic, bold and underline are kept. The colours, positions, fonts and styles of ASS and SSA are left out, and a Matroska output carries the text as SRT.
+* **ASS, SSA and WebVTT subtitles** are read as text: kept as text in a Matroska output, or drawn into PGS for a disc. Italic, bold and underline are kept. What is left out is listed below, under "What a Matroska output does not carry over".
 
 * **DVD subtitles (VobSub) and DVB subtitles** are read and turned into PGS, with their colours, positions and timing. A forced DVD subtitle stays forced.
 
@@ -69,6 +69,24 @@ This release is about Matroska. tsMuxeR now reads and writes it much more comple
 * **File structure.** Block times to the nearest millisecond, an audio DefaultDuration, BitDepth for FLAC and DTS-HD, FlagInterlaced 2 for progressive MPEG-2, H.264 and VC-1 video, the version in MuxingApp, a CRC-32 in every top-level element, and the SeekHead at the front listing every element.
 
 * **Silence at the ends.** The padding at the end of an Opus track, the priming at the start of AAC from an MP4, and the delay and padding of a LAME MP3 are kept, so none of them plays as sound. The Xing frame at the start of an MP3 is left out.
+
+### What a Matroska output does not carry over
+
+Some of what tsMuxeR now reads cannot be written to a Matroska file in its own form yet. It is converted, or left out:
+
+* **ASS and SSA subtitles become SRT text.** The text is kept, with its line breaks, italic, bold and underline. Colours, positions, fonts, styles, karaoke effects and drawings are left out. ASS and SSA cannot be written yet.
+
+* **WebVTT subtitles become SRT text** in a Matroska output, and stay WebVTT in a WebM output. In both, the cue positions and settings are left out, and so are tags other than italic, bold and underline. Text subtitles stored as S_TEXT/ASCII become SRT text with nothing lost.
+
+* **DVD (VobSub) and DVB subtitles become PGS.** Their pictures are drawn again as PGS, with their colours, positions and timing, and a forced DVD subtitle stays forced. The original track is not copied. DVB objects coded as characters, or coded progressively, are left out with a warning.
+
+* **Tags about one track are left out.** Only the tags about the whole file are copied, because the tracks of the output have other IDs, and figures such as a track's bit rate no longer hold.
+
+* **Hidden chapters and every edition but the default one are left out,** and an ordered edition becomes the timeline a player plays. --keep-editions keeps all of them exactly as they are.
+
+* **Data stored beside a block (BlockAdditions) is not read,** so it reaches no output. Some files store HDR10+ metadata there. Dolby Vision and 3D video are not affected, because their data is inside the video stream.
+
+* **A V_VC1 track is written as V_MS/VFW/WVC1.** It is the same stream in the other form Matroska defines for VC-1, so nothing is lost.
 
 ### Subtitles
 
