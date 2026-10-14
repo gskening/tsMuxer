@@ -1,3 +1,107 @@
+## tsMuxeR 2.20.0
+
+This release is about Matroska. tsMuxeR now reads and writes it much more completely, as RFC 9559 describes it: subtitles in ASS, SSA, WebVTT, DVD (VobSub) and DVB form, ordered editions and linked files, track names and flags, chapters with every title and edition, attachments, tags, splitting, WebM, and new codecs. The changes are grouped below by area.
+
+**The Intel macOS build has been back since 2.19.0, and Mac users are still asked to test.** It has been built and checked, but it has not been run on an Intel Mac, because no Mac is available here. If you have an Intel Mac, please try it and report whether it works. On any Mac, please also try changing the subtitle font and colour in the window, and report what happens.
+
+**If something goes wrong, please report it** with the bug report form on GitHub, and include as much as you can: the version line and the full log, the meta file (the text in the Meta file box of the window), what you expected and what happened instead, and the player you used. A short sample of the source helps most.
+
+### Worth acting on
+
+* **A join of two dual layer Dolby Vision files could pair every picture of the second file with the enhancement layer of its neighbour.** When the enhancement layer of the first file lacks a picture its base layer has, every enhancement picture after the next IDR was placed one picture early. On a disc, and in a Matroska output, each picture of the second file then carried the enhancement layer and the metadata of the next one. The enhancement layer now keeps its place. Mux joins of dual layer Dolby Vision again.
+
+* **A join of Matroska files could lose the end of the last file.** When the files were small enough for the last one to arrive in one read, the track reader took the data of that read for the end of the stream. Two files of 1.26 MB each gave 209 of 254 pictures, and the job stopped with "the output is incomplete". Such joins are now read to the end.
+
+* **A join of Matroska files with Opus audio lost the first packets of every file after the first, and its sound came seconds late.** Two files of 6 s gave a second half that started 3.8 s late, in a Matroska output and in a transport stream alike. Every packet is now kept, with no gap at the joint.
+
+* **In a join of Matroska files, the subtitles of every file after the first were shown at the times of the first file's.** They now follow the video, as the chapters of a join always did.
+
+### Matroska input
+
+* **ASS, SSA and WebVTT subtitles** are read as text: kept as text in a Matroska output, or drawn into PGS for a disc. Italic, bold and underline are kept.
+
+* **DVD subtitles (VobSub) and DVB subtitles** are read and turned into PGS, with their colours, positions and timing. A forced DVD subtitle stays forced.
+
+* **Ordered editions and linked files.** A file whose default edition is ordered is read as a player plays it: its chapters one after the other, and a chapter from another file of the same folder where it says so. The first file of a set of linked files, named on its own, brings the files linked after it.
+
+* **Chapters** are read from the default edition, wherever they are in the file. Nested chapters are kept, hidden chapters are left out, and every title in every language and the end of each chapter are kept.
+
+* **BCP 47 language tags** (LanguageBCP47) are read. A disc gets the ISO 639-2 code they stand for.
+
+* **WebM and .mk3d files** are read.
+
+* **VP8, VP9, Vorbis and ALAC tracks** are read and muxed into a Matroska output, every frame as the source has it. A VP8 or VP9 track used to be listed as AV1 and written out as an AV1 track that does not decode, and Vorbis and ALAC were not recognised. None of the four has a form in a transport stream or on a Blu-ray disc.
+
+* **A video track without a DefaultDuration**, as many WebM files have, takes its frame rate from the times of its first pictures. It was taken to be 25 and every picture retimed: a 30 fps file of 8 s came out 9.6 s long.
+
+* **An encrypted track** is refused with a message instead of being muxed as noise.
+
+* **VVC and VC-1.** VVC tracks written as the Matroska mapping describes them, and V_VC1 tracks, are read.
+
+* **FLAC.** A FLAC frame is found only where its checksum matches, so no audio is lost to a false frame start.
+
+* **TrackTimestampScale** is applied.
+
+* **A track no reader accepts** is listed with its Matroska codec, so the message says which codec it is.
+
+### MP4 input
+
+* **An MP4 whose fragments come after the first media data** is read to its end.
+
+### Matroska output
+
+* **A remux keeps what the source says about its tracks.** Track names, the forced, hearing impaired, visually impaired, text description, original and commentary flags, the container's colour and mastering data, display size, crop, field order and projection, the file title, tags and attached files are carried to a Matroska output. A remux used to keep only the language and the default flag.
+
+* **WebM output.** An output named .webm is written as WebM: DocType webm and the WebM subset of Matroska. It holds VP8, VP9 and AV1 video, Opus and Vorbis audio, and text subtitles as WebVTT. Such a name used to start a demux into a folder of that name.
+
+* **--keep-editions** keeps a Matroska file's chapters exactly as they are, every edition and every link to another file, and its segment identity, so ordered editions and linked files still work after a remux.
+
+* **Splitting.** --split-size, --split-duration and --split-chapters work for a Matroska output. Each part's first picture is at 0, and a keyframe exactly on the length asked for starts the next part.
+
+* **The track flags can be set from the meta:** forced, hearing-impaired, visual-impaired, text-descriptions, original, commentary. --title= sets the file title.
+
+* **A 3D Matroska source keeps its two views in one video track.** Such a remux came out as two video tracks and played as flat 2D.
+
+* **The end of the last frame.** The Duration of a file whose last Opus, Vorbis or ALAC frame is short ends where that frame ends: a file whose last Opus packet was shorter said 1200 ms for 1100 ms.
+
+* **Codec configuration.** A real VVC configuration record, complete H.264 and HEVC configuration records, and the AV1 record with its sequence header.
+
+* **File structure.** Block times to the nearest millisecond, an audio DefaultDuration, BitDepth for FLAC and DTS-HD, FlagInterlaced 2 for progressive MPEG-2, H.264 and VC-1 video, the version in MuxingApp, a CRC-32 in every top-level element, and the SeekHead at the front listing every element.
+
+* **Silence at the ends.** The padding at the end of an Opus track, the priming at the start of AAC from an MP4, and the delay and padding of a LAME MP3 are kept, so none of them plays as sound. The Xing frame at the start of an MP3 is left out.
+
+### Subtitles
+
+* **A PGS stream rescaled to another video size** was placed below the picture and its colours had too much red. Both are fixed.
+
+### Transport stream input
+
+* **DVB subtitles in a transport stream** are muxed as PGS, as they already are from a Matroska source. They used to be listed as not supported and left out.
+
+### Demux and elementary files
+
+* **VP8, VP9 and Vorbis.** VP8 and VP9 tracks are demuxed into IVF files, and Vorbis tracks into Ogg files. IVF files are read as VP8 and VP9 input, their frame rate taken from the frame times.
+
+* **A demuxed Opus or Vorbis file ends where the source ends.** The samples the source trims from its last packet were played: 13.5 ms for a usual Opus encoder.
+
+### Window
+
+* **MKV output** has a title field and a box to keep the editions and links of a Matroska source. A .webm output name chooses MKV output, and the split options are offered for it.
+
+* **The Matroska page of the track options** has the track name and the six flags, filled from the source and used for an MKV output. The track listing prints a Matroska track's name and the flags it has set.
+
+* **A BCP 47 language of the source is kept in an MKV output.** The window writes lang= for it only when the language in the box was changed.
+
+* **New files.** The open dialog offers .ivf files, and Vorbis, VP8 and VP9 tracks can be demuxed.
+
+### Other
+
+* **lang= in a meta also takes a BCP 47 tag** such as de, pt-BR or zh-Hant. A disc, a transport stream and a demuxed file name get the ISO 639-2 code it stands for, and a Matroska output writes the tag as well.
+
+* **A file named twice in a join** ("a.mkv"+"a.mkv") is read twice.
+
+* **The progress line** no longer shows values below zero.
+
 ## tsMuxeR 2.19.4
 
 Two fixes for MP4 and M4A files: a mux that had read the whole file could still end with "The output is incomplete", and a file with its moov after a large mdat could fail at random with "moov atom not found".
