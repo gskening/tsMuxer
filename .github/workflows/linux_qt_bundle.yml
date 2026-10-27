@@ -16,7 +16,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libfreetype-dev zlib1g-dev ninja-build patchelf libxcb-cursor0
+        sudo apt-get install -y libfreetype-dev zlib1g-dev ninja-build patchelf libxcb-cursor0 file
 
     - name: Install Qt
       uses: jurplel/install-qt-action@v4
@@ -109,9 +109,54 @@ jobs:
         tar -czf "$STAGE.tar.gz" "$STAGE"
         sha256sum "$STAGE.tar.gz"
 
+    - name: Build AppImage (single-file executable)
+      run: |
+        set -eu
+        STAGE="tsMuxeR-linux-x64-portable"
+        APPDIR="AppDir"
+        mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" "$APPDIR/usr/plugins"
+        cp "$STAGE/tsMuxerGUI.bin" "$APPDIR/usr/bin/"
+        cp "$STAGE/lib/." "$APPDIR/usr/lib/"
+        cp -r "$STAGE/plugins/." "$APPDIR/usr/plugins/"
+
+        cat > "$APPDIR/AppRun" <<'APPRUN'
+        #!/bin/sh
+        HERE="$(cd "$(dirname "$0")" && pwd)"
+        export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        export QT_PLUGIN_PATH="$HERE/usr/plugins"
+        exec "$HERE/usr/bin/tsMuxerGUI.bin" "$@"
+        APPRUN
+        chmod +x "$APPDIR/AppRun"
+
+        cat > "$APPDIR/tsMuxerGUI.desktop" <<'DESKTOP'
+        [Desktop Entry]
+        Type=Application
+        Name=tsMuxerGUI
+        Comment=Blu-ray muxer GUI
+        Exec=tsMuxerGUI
+        Icon=tsMuxerGUI
+        Categories=AudioVideo;Video;
+        Terminal=false
+        DESKTOP
+
+        cp tsMuxerGUI/images/icon.png "$APPDIR/tsMuxerGUI.png"
+
+        curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+        chmod +x appimagetool
+        ./appimagetool --appimage-extract
+        ARCH=x86_64 ./squashfs-root/AppRun "$APPDIR" tsMuxerGUI-x86_64.AppImage
+        ls -lh tsMuxerGUI-x86_64.AppImage
+
     - name: Upload artifact
       uses: actions/upload-artifact@v6
       with:
         name: tsMuxeR-linux-x64-portable-qt
         path: tsMuxeR-linux-x64-portable.tar.gz
+        retention-days: 30
+
+    - name: Upload AppImage artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: tsMuxerGUI-AppImage
+        path: tsMuxerGUI-x86_64.AppImage
         retention-days: 30
