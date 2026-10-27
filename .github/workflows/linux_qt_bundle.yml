@@ -16,7 +16,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libfreetype-dev zlib1g-dev ninja-build patchelf
+        sudo apt-get install -y libfreetype-dev zlib1g-dev ninja-build patchelf libxcb-cursor0
 
     - name: Install Qt
       uses: jurplel/install-qt-action@v4
@@ -68,6 +68,22 @@ jobs:
         } | awk '{print $3}' | grep -F "$QT_LIBS" | sort -u | while read -r lib; do
           cp -L "$lib" "$STAGE/lib/"
         done
+
+        # Qt >= 6.5 xcb platform dlopen()s libxcb-cursor.so.0 at runtime, so ldd
+        # never lists it. Bundle it explicitly together with its own dependencies.
+        for lib in libxcb-cursor.so.0 libxcb-util.so.1 libxcb-image.so.0 libxcb-render-util.so.0; do
+          src="$(find /usr/lib/x86_64-linux-gnu -maxdepth 1 -name "$lib" -print -quit || true)"
+          if [ -n "$src" ]; then
+            cp -L "$src" "$STAGE/lib/"
+            echo "bundled $lib"
+          else
+            echo "::warning::$lib not found on the runner"
+          fi
+        done
+        if [ ! -f "$STAGE/lib/libxcb-cursor.so.0" ]; then
+          echo "::error::libxcb-cursor.so.0 was not bundled; the xcb platform plugin will fail to load."
+          exit 1
+        fi
 
         patchelf --set-rpath '$ORIGIN/lib' "$STAGE/tsMuxerGUI.bin"
         printf '[Paths]\nPrefix = .\nPlugins = plugins\n' > "$STAGE/qt.conf"
