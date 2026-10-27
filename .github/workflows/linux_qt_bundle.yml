@@ -116,6 +116,7 @@ jobs:
         APPDIR="AppDir"
         mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" "$APPDIR/usr/plugins"
         cp "$STAGE/tsMuxerGUI.bin" "$APPDIR/usr/bin/"
+        cp "$STAGE/tsMuxeR" "$APPDIR/usr/bin/"
         cp -r "$STAGE/lib/." "$APPDIR/usr/lib/"
         cp -r "$STAGE/plugins/." "$APPDIR/usr/plugins/"
 
@@ -124,6 +125,7 @@ jobs:
         HERE="$(cd "$(dirname "$0")" && pwd)"
         export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         export QT_PLUGIN_PATH="$HERE/usr/plugins"
+        export PATH="$HERE/usr/bin:$PATH"
         exec "$HERE/usr/bin/tsMuxerGUI.bin" "$@"
         APPRUN
         chmod +x "$APPDIR/AppRun"
