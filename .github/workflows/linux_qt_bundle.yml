@@ -116,7 +116,7 @@ jobs:
         APPDIR="AppDir"
         mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" "$APPDIR/usr/plugins"
         cp "$STAGE/tsMuxerGUI.bin" "$APPDIR/usr/bin/"
-        cp "$STAGE/lib/." "$APPDIR/usr/lib/"
+        cp -r "$STAGE/lib/." "$APPDIR/usr/lib/"
         cp -r "$STAGE/plugins/." "$APPDIR/usr/plugins/"
 
         cat > "$APPDIR/AppRun" <<'APPRUN'
