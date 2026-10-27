@@ -54,14 +54,19 @@ jobs:
         echo "Qt libs dir: $QT_LIBS"
         echo "Qt plugins dir: $QT_PLUGINS"
 
-        ldd "$STAGE/tsMuxerGUI.bin" | awk '{print $3}' | grep -F "$QT_LIBS" | sort -u | while read -r lib; do
-          cp -L "$lib" "$STAGE/lib/"
-        done
-
         for d in platforms imageformats iconengines platforminputcontexts tls multimedia xcbglintegrations; do
           if [ -d "$QT_PLUGINS/$d" ]; then
             cp -rL "$QT_PLUGINS/$d" "$STAGE/plugins/"
           fi
+        done
+
+        # Collect Qt libs needed by the binary AND by every bundled plugin
+        # (e.g. libqxcb.so needs libQt6XcbQpa.so.6, which the binary does not link)
+        {
+          ldd "$STAGE/tsMuxerGUI.bin"
+          find "$STAGE/plugins" -name '*.so' -exec ldd {} +
+        } | awk '{print $3}' | grep -F "$QT_LIBS" | sort -u | while read -r lib; do
+          cp -L "$lib" "$STAGE/lib/"
         done
 
         patchelf --set-rpath '$ORIGIN/lib' "$STAGE/tsMuxerGUI.bin"
@@ -77,8 +82,9 @@ jobs:
         chmod +x "$STAGE/tsMuxerGUI"
 
         cd "$STAGE"
-        if LD_LIBRARY_PATH="$PWD/lib" ldd tsMuxerGUI.bin | grep 'not found'; then
-          echo "::error::The bundle misses shared libraries (see above)."
+        missing=$( { LD_LIBRARY_PATH="$PWD/lib" ldd tsMuxerGUI.bin; find plugins -name '*.so' -exec env LD_LIBRARY_PATH="$PWD/lib" ldd {} +; } | grep 'not found' | grep -E 'libQt6|libicu' || true )
+        if [ -n "$missing" ]; then
+          echo "::error::The bundle misses Qt libraries: $missing"
           exit 1
         fi
         cd ..
