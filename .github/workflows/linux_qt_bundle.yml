@@ -1,0 +1,95 @@
+name: Build Linux (Qt bundled)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux-qt:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+      name: checkout
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libfreetype-dev zlib1g-dev ninja-build patchelf
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '6.7.*'
+        modules: 'qtmultimedia'
+
+    - name: Build
+      run: |
+        set -eu
+        mkdir build
+        cd build
+        cmake ../ -G Ninja -DTSMUXER_GUI=ON -DCMAKE_BUILD_TYPE=Release
+        ninja
+
+    - name: Bundle Qt into a portable package
+      run: |
+        set -eu
+        STAGE="tsMuxeR-linux-x64-portable"
+        mkdir -p "$STAGE/lib" "$STAGE/plugins"
+
+        find build -maxdepth 3 -type f -iname tsmuxer    -exec cp {} "$STAGE/tsMuxeR" \;
+        find build -maxdepth 3 -type f -iname tsmuxergui -exec cp {} "$STAGE/tsMuxerGUI.bin" \;
+        for f in tsMuxeR tsMuxerGUI.bin; do
+          if [ ! -f "$STAGE/$f" ]; then
+            echo "::error::$STAGE/$f was not built."
+            exit 1
+          fi
+        done
+        chmod +x "$STAGE/tsMuxeR" "$STAGE/tsMuxerGUI.bin"
+
+        QMAKE_BIN="$(command -v qmake6 || command -v qmake)"
+        QT_LIBS="$("$QMAKE_BIN" -query QT_INSTALL_LIBS)"
+        QT_PLUGINS="$("$QMAKE_BIN" -query QT_INSTALL_PLUGINS)"
+        echo "Qt libs dir: $QT_LIBS"
+        echo "Qt plugins dir: $QT_PLUGINS"
+
+        ldd "$STAGE/tsMuxerGUI.bin" | awk '{print $3}' | grep -F "$QT_LIBS" | sort -u | while read -r lib; do
+          cp -L "$lib" "$STAGE/lib/"
+        done
+
+        for d in platforms imageformats iconengines platforminputcontexts tls multimedia xcbglintegrations; do
+          if [ -d "$QT_PLUGINS/$d" ]; then
+            cp -rL "$QT_PLUGINS/$d" "$STAGE/plugins/"
+          fi
+        done
+
+        patchelf --set-rpath '$ORIGIN/lib' "$STAGE/tsMuxerGUI.bin"
+        printf '[Paths]\nPrefix = .\nPlugins = plugins\n' > "$STAGE/qt.conf"
+
+        cat > "$STAGE/tsMuxerGUI" <<'LAUNCHER'
+        #!/bin/sh
+        cd "$(dirname "$0")" || exit 1
+        export LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        export QT_PLUGIN_PATH="$PWD/plugins"
+        exec "$PWD/tsMuxerGUI.bin" "$@"
+        LAUNCHER
+        chmod +x "$STAGE/tsMuxerGUI"
+
+        cd "$STAGE"
+        if LD_LIBRARY_PATH="$PWD/lib" ldd tsMuxerGUI.bin | grep 'not found'; then
+          echo "::error::The bundle misses shared libraries (see above)."
+          exit 1
+        fi
+        cd ..
+
+        "$STAGE/tsMuxeR" 2>&1 | head -n 1 || true
+        tar -czf "$STAGE.tar.gz" "$STAGE"
+        sha256sum "$STAGE.tar.gz"
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: tsMuxeR-linux-x64-portable-qt
+        path: tsMuxeR-linux-x64-portable.tar.gz
+        retention-days: 30
