@@ -1,5 +1,164 @@
 name: Build Linux Static (Qt static, single-file binaries)
 
+# åæä»¶éææå»ºï¼
+#  - tsMuxeR   : TSMUXER_STATIC_BUILD=ON -> -static -static-libgcc -static-libstdc++
+#                ï¼å ä¹å¨éæï¼æ  Qt ä¾èµçåæä»¶ CLIï¼
+#  - tsMuxerGUI: éæç¼è¯ Qt6 (qtbase 6.8.3) å¹¶éæé¾æ¥è¿ GUI -> åæä»¶ ELFï¼ä¸ä¾èµ libQt6
+# è§¦åæ¹å¼    : ä»åº Actions é¡µæå¨è¿è¡ï¼workflow_dispatchï¼
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux-static:
+    runs-on: ubuntu-latest
+    env:
+      QT_VERSION: '6.8.3'
+    steps:
+      - uses: actions/checkout@v5
+        name: checkout
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build pkg-config file zip \
+            libxcb1-dev libxcb-util-dev libxcb-image0-dev libxcb-keysyms1-dev \
+            libxcb-render-util0-dev libxcb-shape0-dev libxcb-shm0-dev \
+            libxcb-xfixes0-dev libxcb-xinerama0-dev libxcb-xkb-dev \
+            libxcb-cursor-dev libxcb-randr0-dev libxcb-icccm4-dev libxcb-sync-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libgl-dev libglx-dev libgles-dev \
+            libfontconfig1-dev libfreetype-dev libharfbuzz-dev \
+            libglib2.0-dev libpulse-dev libssl-dev libudev-dev \
+            zlib1g-dev libpng-dev libbrotli-dev libbz2-dev libexpat1-dev \
+            libzstd-dev
+
+      - name: Cache static Qt
+        id: cache-qt
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/qt6-static
+          key: qt6-static-linux-${{ env.QT_VERSION }}-ninja-${{ hashFiles('.github/workflows/linux_static.yml') }}
+          restore-keys: |
+            qt6-static-linux-${{ env.QT_VERSION }}-ninja-
+
+      - name: Build static Qt (qtbase)
+        if: steps.cache-qt.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          QT_SRC="${{ runner.temp }}/qtbase-src"
+          QT_BUILD="${{ runner.temp }}/qtbase-build"
+          QT_INSTALL="${{ runner.temp }}/qt6-static"
+          mkdir -p "$QT_BUILD" "$QT_INSTALL"
+          curl -fsSL -o "${{ runner.temp }}/qtbase.zip" "https://github.com/qt/qtbase/archive/refs/tags/v${QT_VERSION}.zip"
+          unzip -q "${{ runner.temp }}/qtbase.zip" -d "${{ runner.temp }}"
+          mv "${{ runner.temp }}/qtbase-${QT_VERSION}" "$QT_SRC"
+          cmake -S "$QT_SRC" -B "$QT_BUILD" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$QT_INSTALL" \
+            -DFEATURE_static=ON \
+            -DFEATURE_shared=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DQT_BUILD_EXAMPLES=OFF \
+            -DQT_BUILD_TESTS=OFF \
+            -DQT_BUILD_DOCUMENTATION=OFF \
+            -DFEATURE_icu=OFF \
+            -DFEATURE_dbus=OFF \
+            -DFEATURE_sql_psql=OFF \
+            -DFEATURE_sql_mysql=OFF \
+            -DFEATURE_developer_build=OFF
+          cmake --build "$QT_BUILD" -j"$(nproc)"
+          cmake --install "$QT_BUILD"
+          echo "qtbase static build done"
+
+      - name: Build qttools (lrelease / lupdate)
+        if: steps.cache-qt.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          QT_INSTALL="${{ runner.temp }}/qt6-static"
+          TT_SRC="${{ runner.temp }}/qttools-src"
+          TT_BUILD="${{ runner.temp }}/qttools-build"
+          curl -fsSL -o "${{ runner.temp }}/qttools.zip" "https://github.com/qt/qttools/archive/refs/tags/v${QT_VERSION}.zip"
+          unzip -q "${{ runner.temp }}/qttools.zip" -d "${{ runner.temp }}"
+          mv "${{ runner.temp }}/qttools-${QT_VERSION}" "$TT_SRC"
+          # runner éå llvm-22 åä¸å®æ´ï¼ç¼º libclangBasic.aï¼ï¼qttools æ¢æµ libclang ä¼ fatalã
+          # æä»¬åªé linguist å·¥å·ï¼æ¾å¼ç¦ç¨ clang ç¸å³ç¹æ§/æ¥æ¾ï¼ç»å¼è¯¥å·²ç¥é®é¢ã
+          cmake -S "$TT_SRC" -B "$TT_BUILD" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_INSTALL" \
+            -DCMAKE_INSTALL_PREFIX="$QT_INSTALL" \
+            -DCMAKE_DISABLE_FIND_PACKAGE_Clang=ON \
+            -DQT_BUILD_EXAMPLES=OFF \
+            -DQT_BUILD_TESTS=OFF \
+            -DFEATURE_assistant=OFF \
+            -DFEATURE_designer=OFF \
+            -DFEATUTERE_qdoc=OFF \
+            -DFEATURE_clang=OFF \
+            -DFEATURE_clangcodeview=OFF \
+            -DFEATURE_qtattributionsscanner=OFF \
+            cmake --build "$TT_BUILD" -j"$(nproc)"
+          cmake --install "$TT_BUILD"
+          echo "qttools (linguist) build done"
+
+      - name: Build tsMuxeR + tsMuxerGUI (static, single-file)
+        run: |
+          set -eu
+          QT_INSTALL="${{ runner.temp }}/qt6-static"
+          # è®© pkg_check_modules è¾åº --static ç§æä¾èµï¼png/brotli/bz2/zlib ç­ï¼ï¼
+          # ä¿è¯ tsMuxeR å¨éæé¾æ¥è½é­å freetype ä¾èµé¾
+          sed -i 's/pkg_check_modules (${prefix} ${req_or_opt} ${package})/pkg_check_modules (${prefix} ${req_or_opt} STATIC ${package})/' tsMuxer/CMakeLists.txt
+          mkdir -p build bin
+          cd build
+          cmake ../ -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_INSTALL" \
+            -DTSMUXER_STATIC_BUILD=ON \
+            -DTSMUXER_GUI=ON
+          ninja
+          cd ..
+          find build -maxdepth 3 -type f -iname tsmuxer    -exec cp {} bin/tsMuxeR \;
+          find build -maxdepth 3 -type f -iname tsmuxergui -exec cp {} bin/tsMuxerGUI \;
+          chmod +x bin/tsMuxeR bin/tsMuxerGUI
+          for f in bin/tsMuxeR bin/tsMuxerGUI; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f was not built."
+              exit 1
+            fi
+          done
+          echo "=== file type ==="
+          file bin/tsMuxeR bin/tsMuxerGUI
+          echo "=== tsMuxeR dynamic deps ==="
+          ldd bin/tsMuxeR || true
+          echo "=== tsMuxerGUI dynamic deps ==="
+          ldd bin/tsMuxerGUI || true
+          echo "=== tsMuxeR smoke test ==="
+          ./bin/tsMuxeR 2>&1 | head -n 3 || true
+
+      - name: Package
+        run: |
+          set -eu
+          ver="2.20.0"
+          asset="tsMuxeR-${ver}-linux-x64-static.zip"
+          echo "ASSET=${asset}" >> "$GITHUB_ENV"
+          cd bin
+          ls -lh
+          zip -9 "$asset" tsMuxeR tsMuxerGUI
+          sha256sum "$asset" > "$asset.sha256"
+          cat "$asset.sha256"
+          cd ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: tsMuxeR-linux-x64-static
+          path: bin/${{ env.ASSET }}
+          retention-days: 30
+name: Build Linux Static (Qt static, single-file binaries)
+
 # 单文件静态构建：
 #  - tsMuxeR   : TSMUXER_STATIC_BUILD=ON -> -static -static-libgcc -static-libstdc++
 #                （几乎全静态，无 Qt 依赖的单文件 CLI）
